@@ -1,0 +1,144 @@
+/* 三栏布局 */
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.layout-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.layout-sidebar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-sidebar);
+  overflow: hidden;
+  /* 背景向右延伸 1px 盖住分隔线，消除白缝 */
+  position: relative;
+}
+
+.layout-sidebar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--bg-sidebar);
+}
+
+.layout-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-primary);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.layout-editor.collapsed {
+  width: 0 !important;
+  flex: none !important;
+}
+
+.layout-preview {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-secondary);
+  overflow: hidden;
+  /* transition 在收起/展开时由 .collapsed 类单独控制 */
+}
+
+.layout-divider {
+  /* hit area 7px（左右各溢出 3px 到相邻 panel），视觉上仍只显示中间 1px */
+  width: 7px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+
+.layout-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 1px;
+  bottom: 0;
+  background-color: var(--border-color);
+  transition: background-color var(--transition);
+  pointer-events: none;
+}
+
+.layout-divider:hover::before {
+  background-color: var(--accent-color);
+}
+
+/* 区域标题栏 - 横线延伸接上左右 divider */
+.panel-header {
+  height: var(--header-height);
+  min-height: var(--header-height);
+  max-height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-tertiary);
+  flex-shrink: 0;
+  user-select: none;
+  box-sizing: border-box;
+  margin-left: -1px;
+  margin-right: -1px;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.panel-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--border-radius);
+  color: var(--text-secondary);
+  transition: background-color var(--transition), color var(--transition);
+}
+
+.panel-action-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 收起/展开状态 - 有过渡动画 */
+.layout-sidebar.collapsed {
+  width: 0 !important;
+  border-right: none;
+  transition: width var(--transition);
+}
+
+.layout-preview.collapsed {
+  width: 0 !important;
+  border-left: none;
+  transition: width var(--transition);
+}
