@@ -13,7 +13,13 @@ const api = {
     delete: (id: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_DELETE, id),
     move: (id: string, newParentId: string | null): Promise<void> =>
-      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_MOVE, id, newParentId)
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_MOVE, id, newParentId),
+    // 回收站相关
+    listDeleted: (): Promise<Notebook[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_LIST_DELETED),
+    restore: (id: string): Promise<{ restoredNotebooks: string[] }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_RESTORE, id),
+    purge: (id: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_PURGE, id)
   },
 
   notes: {
@@ -27,7 +33,20 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_DELETE, id),
     move: (id: string, newParentId: string | null): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_MOVE, id, newParentId),
-    search: (keyword: string): Promise<Note[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTE_SEARCH, keyword)
+    search: (keyword: string): Promise<Note[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTE_SEARCH, keyword),
+    // 回收站相关
+    listDeleted: (): Promise<Note[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTE_LIST_DELETED),
+    restore: (id: string): Promise<{ restoredNotebooks: string[] }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTE_RESTORE, id),
+    purge: (id: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTE_PURGE, id)
+  },
+
+  recycleBin: {
+    purgeExpired: (): Promise<{ notes: number; notebooks: number }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.RECYCLE_BIN_PURGE_EXPIRED),
+    empty: (): Promise<{ notes: number; notebooks: number }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.RECYCLE_BIN_EMPTY)
   },
 
   settings: {
@@ -90,6 +109,8 @@ const api = {
     ipcRenderer.on('menu:find', () => callback('find'))
     ipcRenderer.on('menu:oss-settings', () => callback('oss-settings'))
     ipcRenderer.on('menu:show-shortcuts', () => callback('show-shortcuts'))
+    ipcRenderer.on(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN, () => callback('open-recycle-bin'))
+    ipcRenderer.on(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS, () => callback('recycle-bin-settings'))
     ipcRenderer.on('menu:rebuild', () => callback('menu-rebuild'))
     ipcRenderer.on('menu:reload', () => callback('reload'))
     ipcRenderer.on('menu:devtools', () => callback('devtools'))
@@ -108,6 +129,8 @@ const api = {
       ipcRenderer.removeAllListeners('menu:find')
       ipcRenderer.removeAllListeners('menu:oss-settings')
       ipcRenderer.removeAllListeners('menu:show-shortcuts')
+      ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN)
+      ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS)
       ipcRenderer.removeAllListeners('menu:rebuild')
       ipcRenderer.removeAllListeners('menu:reload')
       ipcRenderer.removeAllListeners('menu:devtools')

@@ -29,6 +29,18 @@ interface AppState {
   deleteNotebook: (id: string) => Promise<void>
   deleteNote: (id: string) => Promise<void>
 
+  // ============ 回收站 ============
+  deletedNotes: Note[]
+  deletedNotebooks: Notebook[]
+  /** 回收站里的总条数（笔记+笔记本），用于 sidebar badge */
+  recycleBinCount: number
+  loadRecycleBin: () => Promise<void>
+  restoreNote: (id: string) => Promise<{ restoredNotebooks: string[] }>
+  restoreNotebook: (id: string) => Promise<{ restoredNotebooks: string[] }>
+  purgeNote: (id: string) => Promise<void>
+  purgeNotebook: (id: string) => Promise<void>
+  emptyRecycleBin: () => Promise<{ notes: number; notebooks: number }>
+
   // 甯冨眬
   sidebarVisible: boolean
   previewVisible: boolean
@@ -36,6 +48,10 @@ interface AppState {
   toggleSidebar: () => void
   togglePreview: () => void
   toggleEditor: () => void
+
+  // 主视图模式：'notes' 显示编辑器/预览，'recycle-bin' 显示回收站
+  viewMode: 'notes' | 'recycle-bin'
+  setViewMode: (mode: 'notes' | 'recycle-bin') => void
 
   // 淇濆瓨鐘舵€?  saveStatus: { saving: boolean; lastSaved: number | null }
   setSaveStatus: (status: { saving?: boolean; lastSaved?: number | null }) => void
@@ -85,13 +101,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ notes })
   },
   selectNote: async (id) => {
-    set({ selectedNoteId: id })
+    // 任何时候选中笔记都切回笔记视图（从回收站视图点回笔记时尤其需要）
+    set({ selectedNoteId: id, viewMode: 'notes' })
     if (!id) {
       set({ currentNote: null })
       return
     }
     const note = await window.inkslateApi.notes.get(id)
     set({ currentNote: note })
+    // 代码/富文本笔记不需要预览面板：选中的瞬间自动收起
+    if (note && (note.format === 'code' || note.format === 'richtext')) {
+      const layout = get().settings?.layout
+      if (layout && layout.previewVisible) {
+        // 同步到 settings，下次开 markdown 笔记时不会自动冒出来
+        get().updateSettings({ layout: { ...layout, previewVisible: false } })
+      }
+      set({ previewVisible: false })
+    }
   },
   createNotebook: async (name, parentId, icon) => {
     await window.inkslateApi.notebooks.create(name, parentId, icon)
@@ -142,6 +168,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteNotebook: async (id) => {
     await window.inkslateApi.notebooks.delete(id)
     await get().loadNotebooks()
+    await get().loadRecycleBin()
   },
   deleteNote: async (id) => {
     await window.inkslateApi.notes.delete(id)
@@ -149,6 +176,46 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ selectedNoteId: null, currentNote: null })
     }
     await get().loadNotes()
+    await get().loadRecycleBin()
+  },
+
+  // ============ 回收站 actions ============
+  deletedNotes: [],
+  deletedNotebooks: [],
+  recycleBinCount: 0,
+  loadRecycleBin: async () => {
+    const [deletedNotes, deletedNotebooks] = await Promise.all([
+      window.inkslateApi.notes.listDeleted(),
+      window.inkslateApi.notebooks.listDeleted()
+    ])
+    set({
+      deletedNotes,
+      deletedNotebooks,
+      recycleBinCount: deletedNotes.length + deletedNotebooks.length
+    })
+  },
+  restoreNote: async (id) => {
+    const result = await window.inkslateApi.notes.restore(id)
+    await Promise.all([get().loadNotebooks(), get().loadNotes(), get().loadRecycleBin()])
+    return result
+  },
+  restoreNotebook: async (id) => {
+    const result = await window.inkslateApi.notebooks.restore(id)
+    await Promise.all([get().loadNotebooks(), get().loadNotes(), get().loadRecycleBin()])
+    return result
+  },
+  purgeNote: async (id) => {
+    await window.inkslateApi.notes.purge(id)
+    await get().loadRecycleBin()
+  },
+  purgeNotebook: async (id) => {
+    await window.inkslateApi.notebooks.purge(id)
+    await get().loadRecycleBin()
+  },
+  emptyRecycleBin: async () => {
+    const result = await window.inkslateApi.recycleBin.empty()
+    await get().loadRecycleBin()
+    return result
   },
 
   sidebarVisible: true,
@@ -169,6 +236,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ editorVisible: visible })
     get().updateSettings({ layout: { ...get().settings!.layout, editorVisible: visible } })
   },
+
+  viewMode: 'notes',
+  setViewMode: (mode) => set({ viewMode: mode }),
 
   saveStatus: { saving: false, lastSaved: null },
   setSaveStatus: (status) => set(s => ({

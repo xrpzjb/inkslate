@@ -87,6 +87,16 @@ export function buildMenuData(): MenuData[] {
         { type: 'separator' },
         { id: 'save', label: '保存', accelerator: 'Ctrl+S' },
         { type: 'separator' },
+        {
+          id: 'recycle-bin', label: '回收站',
+          submenu: [
+            { id: 'open-recycle-bin', label: '打开回收站', accelerator: 'Ctrl+Shift+Backspace' },
+            { type: 'separator' },
+            { id: 'empty-recycle-bin', label: '清空回收站' },
+            { id: 'recycle-bin-settings', label: '保留天数设置...' }
+          ]
+        },
+        { type: 'separator' },
         { id: 'quit', label: '退出' }
       ]
     },
@@ -142,7 +152,7 @@ export function buildMenuData(): MenuData[] {
   ]
 }
 
-export function handleMenuClick(id: string, arg: any) {
+export async function handleMenuClick(id: string, arg: any) {
   switch (id) {
     // 文件 → 新建
     case 'new-markdown': pickNewNote({ format: 'markdown' }); return
@@ -164,6 +174,25 @@ export function handleMenuClick(id: string, arg: any) {
     case 'new-code-md': pickNewNote({ format: 'code', language: 'plaintext' }); return
     case 'new-notebook': sendToRenderer(IPC_CHANNELS.MENU_NEW_NOTEBOOK); return
     case 'save': sendToRenderer(IPC_CHANNELS.MENU_SAVE); return
+    case 'open-recycle-bin': sendToRenderer(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN); return
+    case 'recycle-bin-settings': sendToRenderer(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS); return
+    case 'empty-recycle-bin': {
+      const win = BrowserWindow.getFocusedWindow()
+      const result = win
+        ? await dialog.showMessageBox(win, {
+            type: 'warning',
+            title: '清空回收站',
+            message: '确定要清空回收站吗？所有已删除的笔记和笔记本将被永久删除，无法恢复。',
+            buttons: ['取消', '永久删除'],
+            defaultId: 0,
+            cancelId: 0
+          })
+        : { response: 0 }
+      if (result.response === 1) {
+        sendToRenderer('menu:empty-recycle-bin')
+      }
+      return
+    }
     case 'quit': app.quit(); return
     // 编辑
     case 'undo': sendToRenderer('menu:edit', 'undo'); return

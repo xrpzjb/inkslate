@@ -3,6 +3,7 @@ import { useAppStore } from '../store/app'
 import { Sidebar } from './Sidebar'
 import { Editor } from './Editor'
 import { Preview } from './Preview'
+import { RecycleBinView } from './RecycleBinView'
 import '../styles/layout.css'
 
 /** 侧栏 / 编辑器 / 预览 之间的水平拖拽 resize */
@@ -71,6 +72,8 @@ export function Layout() {
   const toggleEditor = useAppStore(s => s.toggleEditor)
   const settings = useAppStore(s => s.settings)
   const currentNote = useAppStore(s => s.currentNote)
+  const viewMode = useAppStore(s => s.viewMode)
+  const isRecycleBin = viewMode === 'recycle-bin'
 
   const [sidebarWidth, setSidebarWidth] = useState(settings?.layout.sidebarWidth ?? 260)
   const [previewWidth, setPreviewWidth] = useState(420)
@@ -80,7 +83,8 @@ export function Layout() {
   const previewRef = useRef<HTMLDivElement>(null)
 
   const isRichText = currentNote?.format === 'richtext'
-  const effectivePreviewVisible = previewVisible && !isRichText
+  const isCode = currentNote?.format === 'code'
+  const effectivePreviewVisible = previewVisible && !isRichText && !isCode
 
   useHorizontalResize(
     sidebarDividerRef,
@@ -134,30 +138,45 @@ export function Layout() {
 
             {sidebarVisible && <div ref={sidebarDividerRef} className="layout-divider" />}
 
-            <div
-        className={`layout-editor ${!editorVisible ? 'collapsed' : ''}`}
-        style={{ width: editorVisible ? 'auto' : 0, flex: editorVisible ? 1 : 'none' }}
-      >
-        {editorVisible && <Editor />}
-      </div>
+            {isRecycleBin ? (
+              <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+                <RecycleBinView />
+              </div>
+            ) : (
+              <>
+                <div
+                  className={`layout-editor ${!editorVisible ? 'collapsed' : ''}`}
+                  style={{ width: editorVisible ? 'auto' : 0, flex: editorVisible ? 1 : 'none' }}
+                >
+                  {editorVisible && <Editor />}
+                </div>
 
-            {sidebarVisible && <div ref={previewDividerRef} className="layout-divider" />}
+                <div
+                  ref={previewDividerRef}
+                  className="layout-divider"
+                  style={{
+                    visibility: effectivePreviewVisible ? 'visible' : 'hidden',
+                    pointerEvents: effectivePreviewVisible ? 'auto' : 'none'
+                  }}
+                />
 
-            <div
-        ref={previewRef}
-        className={`layout-preview ${!effectivePreviewVisible ? 'collapsed' : ''}`}
-        style={{
-          width: effectivePreviewVisible
-            ? (editorVisible ? previewWidth : '100%')
-            : 0,
-          flex: effectivePreviewVisible && !editorVisible ? 1 : 'none'
-        }}
-      >
-        <div className="panel-header">
-          <span className="panel-title">预览</span>
-        </div>
-        {effectivePreviewVisible && <Preview />}
-      </div>
+                <div
+                  ref={previewRef}
+                  className={`layout-preview ${!effectivePreviewVisible ? 'collapsed' : ''}`}
+                  style={{
+                    width: effectivePreviewVisible
+                      ? (editorVisible ? previewWidth : '100%')
+                      : 0,
+                    flex: effectivePreviewVisible && !editorVisible ? 1 : 'none'
+                  }}
+                >
+                  <div className="panel-header">
+                    <span className="panel-title">预览</span>
+                  </div>
+                  {effectivePreviewVisible && <Preview />}
+                </div>
+              </>
+            )}
     </div>
   )
 }

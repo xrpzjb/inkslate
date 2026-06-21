@@ -1,10 +1,17 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
+import hljs from 'highlight.js'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import mermaid from 'mermaid'
+// @ts-ignore - 无官方 ESM 类型
+import markdownItKatex from '@traptitech/markdown-it-katex'
 import { useAppStore } from '../store/app'
 import { FileText, Maximize2 } from 'lucide-react'
 import { attachHeadingIds } from '../utils/headings'
 import { TableOfContents } from './TableOfContents'
+import 'highlight.js/styles/github.css'
 import '../styles/preview.css'
 
 const md = new MarkdownIt({
@@ -12,6 +19,7 @@ const md = new MarkdownIt({
   linkify: true,
   typographer: true,
   breaks: false,
+  // GFM 表格 markdown-it 默认开启
   highlight: (str, lang) => {
     if (lang && hljs.getLanguage(lang)) {
       try {
@@ -21,6 +29,35 @@ const md = new MarkdownIt({
     return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`
   }
 })
+
+// 数学公式插件：$...$ 行内 + $$...$$ 块级
+md.use(markdownItKatex, { throwOnError: false, katex })
+
+// mermaid 初始化（主题跟随全局主题，按需重新初始化以切换主题）
+function ensureMermaidTheme(theme: string) {
+  const mermaidTheme = (theme === 'dark' || theme === 'dracula' || theme === 'cyberpunk' || theme === 'forest') ? 'dark' : 'default'
+  try {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: mermaidTheme,
+      securityLevel: 'strict',
+      fontFamily: 'inherit',
+      themeVariables: mermaidTheme === 'dark' ? { background: '#1e1e1e' } : {}
+    })
+  } catch {}
+}
+
+// 自定义 fence 渲染：mermaid 代码块输出 <pre class="mermaid"> 以便 mermaid.run() 自动渲染
+const defaultFence = md.renderer.rules.fence!.bind(md.renderer.rules)
+md.renderer.rules.fence = (tokens: any, idx: number, options: any, env: any, self: any) => {
+  const token = tokens[idx]
+  const lang = (token.info || '').trim().split(/\s+/)[0]
+  if (lang === 'mermaid') {
+    const src = token.content
+    return `<pre class="mermaid">${md.utils.escapeHtml(src)}</pre>\n`
+  }
+  return defaultFence(tokens, idx, options, env, self)
+}
 
 md.use((md) => {
   md.core.ruler.after('inline', 'github-task-lists', (state) => {
@@ -89,6 +126,71 @@ export function Preview() {
   const currentNote = useAppStore(s => s.currentNote)
   const settings = useAppStore(s => s.settings)
   const containerRef = useRef<HTMLDivElement>(null)
+  const markdownBodyRef = useRef<HTMLDivElement>(null)
+  const [tocOpen, setTocOpen] = useState(false)
+
+  // 监听编辑器滚动：把"最靠上标题"的 id 同步到预览位置
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<string | null>).detail
+      const container = containerRef.current
+      if (!container || !id) return
+      const el = container.querySelector(`#${CSS.escape(id)}`) as HTMLElement | null
+      if (!el) return
+      const containerRect = container.getBoundingClientRect()
+      const elRect = el.getBoundingClientRect()
+      const offset = elRect.top - containerRect.top + container.scrollTop - 12
+      container.scrollTo({ top: offset, behavior: 'auto' })
+    }
+    window.addEventListener('inkslate:editor-top-heading', handler)
+    return () => window.removeEventListener('inkslate:editor-top-heading', handler)
+  }, [currentNote?.id])
+
+  // 渲染 mermaid：每次 markdown 内容/主题变化时重跑
+  useEffect(() => {
+    if (!markdownBodyRef.current) return
+    if (currentNote?.format !== 'markdown') return
+    const theme = settings?.theme ?? 'light'
+    ensureMermaidTheme(theme)
+    const nodes = Array.from(markdownBodyRef.current.querySelectorAll('pre.mermaid')) as HTMLElement[]
+    if (nodes.length === 0) return
+
+    let cancelled = false
+    ;(async () => {
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i]
+        // 跳过已渲染的（mermaid 会给 pre 加 data-processed="true"）
+        if (node.getAttribute('data-processed') === 'true') continue
+        const source = node.textContent || ''
+        if (!source.trim()) continue
+        const id = `mermaid-${Date.now()}-${i}`
+        try {
+          const { svg } = await mermaid.render(id, source)
+          if (cancelled) return
+          // mermaid.render 输出 SVG 字符串；替换 pre 内容为 svg（保留 mermaid 类以便再次识别）
+          const wrap = document.createElement('div')
+          wrap.className = 'mermaid-rendered'
+          wrap.innerHTML = svg
+          // 让 SVG 可缩放
+          const svgEl = wrap.querySelector('svg')
+          if (svgEl) {
+            svgEl.style.maxWidth = '100%'
+            svgEl.style.height = 'auto'
+          }
+          node.replaceWith(wrap)
+        } catch (e) {
+          // 渲染失败：保留原文 + 错误提示
+          if (cancelled) return
+          const err = document.createElement('div')
+          err.className = 'mermaid-error'
+          err.style.cssText = 'border:1px solid #d33;background:#fee;padding:8px;border-radius:4px;color:#a00;font-size:12px;font-family:var(--font-mono);white-space:pre-wrap;'
+          err.textContent = `Mermaid 渲染失败：${(e as Error).message}\n\n${source}`
+          node.replaceWith(err)
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [currentNote?.content, currentNote?.format, settings?.theme])
 
   const html = useMemo(() => {
     if (!currentNote?.content) return ''
@@ -96,8 +198,18 @@ export function Preview() {
       try {
         const raw = md.render(currentNote.content)
         return DOMPurify.sanitize(raw, {
-          ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr', 'strong', 'em', 'del', 'u', 'a', 'img', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'input', 'span', 'div', 'details', 'summary'],
-          ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'type', 'checked', 'disabled', 'target', 'rel']
+          ALLOWED_TAGS: [
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr',
+            'strong', 'em', 'del', 'u', 'a', 'img', 'code', 'pre',
+            'blockquote', 'ul', 'ol', 'li',
+            'table', 'thead', 'tbody', 'tr', 'th', 'td',
+            'input', 'span', 'div', 'details', 'summary',
+            // katex 数学标签
+            'math', 'semantics', 'mrow', 'mi', 'mn', 'mo', 'msup', 'msub', 'mfrac', 'msqrt', 'mtext', 'annotation', 'mover', 'munder', 'munderover', 'mspace', 'mstyle', 'mpadded'
+          ],
+          ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'type', 'checked', 'disabled', 'target', 'rel', 'style', 'aria-hidden', 'data-mermaid-id'],
+          // katex 输出大量 style 属性，必须放行
+          ADD_TAGS: ['style']
         })
       } catch (e) {
         console.error('preview render error:', e)
@@ -172,12 +284,15 @@ export function Preview() {
     <div className="preview" ref={containerRef}>
       <div className="preview-inner">
         <div
+          ref={markdownBodyRef}
           className="markdown-body"
           dangerouslySetInnerHTML={{ __html: html }}
         />
         <TableOfContents
           source={currentNote.content ?? ''}
           containerRef={containerRef}
+          open={tocOpen}
+          onToggle={() => setTocOpen(o => !o)}
         />
       </div>
     </div>

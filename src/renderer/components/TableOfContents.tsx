@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { List } from 'lucide-react'
+import { useEffect, useMemo } from 'react'
+import { List, X } from 'lucide-react'
 import { extractHeadings, Heading } from '../utils/headings'
 
 interface Props {
@@ -7,12 +7,13 @@ interface Props {
   source: string
   /** 滚动容器（一般是 .preview div）的 ref，用于 scroll-spy 和点击定位 */
   containerRef: React.RefObject<HTMLElement>
+  /** 是否展开（状态由父组件管） */
+  open: boolean
+  /** 切换展开/折叠的回调 */
+  onToggle: () => void
 }
 
-export function TableOfContents({ source, containerRef }: Props) {
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [collapsed, setCollapsed] = useState(false)
-
+export function TableOfContents({ source, containerRef, open, onToggle }: Props) {
   const headings: Heading[] = useMemo(() => extractHeadings(source), [source])
 
   // 归一化层级：把文档里最小的标题层级当顶层，避免文档从 h3 开始时缩进太深
@@ -40,15 +41,9 @@ export function TableOfContents({ source, containerRef }: Props) {
           .filter(e => e.isIntersecting)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
         if (visible.length > 0) {
-          setActiveId(visible[0].target.id)
-          return
-        }
-        // 视口里没有标题：取"刚滚出去"那个（即 top < 0 中位置最大的）
-        const above = entries
-          .filter(e => !e.isIntersecting && e.boundingClientRect.top < 0)
-          .sort((a, b) => b.boundingClientRect.top - a.boundingClientRect.top)
-        if (above.length > 0) {
-          setActiveId(above[0].target.id)
+          // 用 data-active 写在 DOM 上（避免 React 状态更新导致重渲染影响观察器）
+          for (const e of entries) e.target.classList.remove('toc-active')
+          visible[0].target.classList.add('toc-active')
         }
       },
       {
@@ -75,40 +70,55 @@ export function TableOfContents({ source, containerRef }: Props) {
     const elRect = el.getBoundingClientRect()
     const offset = elRect.top - containerRect.top + container.scrollTop - 12
     container.scrollTo({ top: offset, behavior: 'smooth' })
-    setActiveId(id)
   }
 
   return (
     <nav
-      className={'toc' + (collapsed ? ' toc-collapsed' : '')}
+      className={'toc' + (open ? ' toc-open' : ' toc-collapsed')}
       aria-label="目录"
     >
-      <div
-        className="toc-header"
-        onClick={() => setCollapsed(c => !c)}
-        title={collapsed ? '展开目录' : '折叠目录'}
-      >
-        <List size={14} />
-        {!collapsed && <span className="toc-title">目录</span>}
-        {!collapsed && <span className="toc-count">{headings.length}</span>}
-      </div>
-      {!collapsed && (
-        <ul className="toc-list">
-          {headings.map((h, i) => {
-            const indent = h.level - minLevel
-            return (
-              <li
-                key={`${h.id}-${i}`}
-                className={'toc-item toc-lv' + h.level + (activeId === h.id ? ' active' : '')}
-                style={{ paddingLeft: 10 + indent * 12 }}
-                onClick={() => handleClick(h.id)}
-                title={h.text}
-              >
-                <span className="toc-item-text">{h.text}</span>
-              </li>
-            )
-          })}
-        </ul>
+      {open ? (
+        <>
+          <div className="toc-header">
+            <List size={14} />
+            <span className="toc-title">目录</span>
+            <span className="toc-count">{headings.length}</span>
+            <button
+              className="toc-close"
+              onClick={onToggle}
+              title="收起目录"
+              aria-label="收起目录"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <ul className="toc-list">
+            {headings.map((h, i) => {
+              const indent = h.level - minLevel
+              return (
+                <li
+                  key={`${h.id}-${i}`}
+                  className={'toc-item toc-lv' + h.level}
+                  data-toc-id={h.id}
+                  style={{ paddingLeft: 10 + indent * 12 }}
+                  onClick={() => handleClick(h.id)}
+                  title={h.text}
+                >
+                  <span className="toc-item-text">{h.text}</span>
+                </li>
+              )
+            })}
+          </ul>
+        </>
+      ) : (
+        <button
+          className="toc-fab"
+          onClick={onToggle}
+          title="展开目录"
+          aria-label="展开目录"
+        >
+          <List size={16} />
+        </button>
       )}
     </nav>
   )

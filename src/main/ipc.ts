@@ -26,6 +26,19 @@ export function setupIpcHandlers(): void {
     return dbApi.moveNotebook(id, newParentId)
   })
 
+  // ============ 回收站 - 笔记本 ============
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_LIST_DELETED, async (): Promise<Notebook[]> => {
+    return dbApi.listDeletedNotebooks()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_RESTORE, async (_, id: string): Promise<{ restoredNotebooks: string[] }> => {
+    return dbApi.restoreNotebook(id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_PURGE, async (_, id: string): Promise<void> => {
+    return dbApi.purgeNotebook(id)
+  })
+
   // ============ 绗旇 ============
   ipcMain.handle(IPC_CHANNELS.NOTE_LIST, async (_, notebookId?: string): Promise<Note[]> => {
     return dbApi.listNotes(notebookId)
@@ -55,6 +68,19 @@ export function setupIpcHandlers(): void {
     return dbApi.searchNotes(keyword)
   })
 
+  // ============ 回收站 - 笔记 ============
+  ipcMain.handle(IPC_CHANNELS.NOTE_LIST_DELETED, async (): Promise<Note[]> => {
+    return dbApi.listDeletedNotes()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTE_RESTORE, async (_, id: string): Promise<{ restoredNotebooks: string[] }> => {
+    return dbApi.restoreNote(id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTE_PURGE, async (_, id: string): Promise<void> => {
+    return dbApi.purgeNote(id)
+  })
+
   // ============ 璁剧疆 ============
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, async (): Promise<AppSettings> => {
     return dbApi.getSettings()
@@ -62,6 +88,19 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, async (_, settings: Partial<AppSettings>): Promise<AppSettings> => {
     return dbApi.updateSettings(settings)
+  })
+
+  // ============ 回收站 - 通用 ============
+  ipcMain.handle(IPC_CHANNELS.RECYCLE_BIN_PURGE_EXPIRED, async (): Promise<{ notes: number; notebooks: number }> => {
+    const settings = dbApi.getSettings()
+    if (!settings.recycleBin.autoCleanup || settings.recycleBin.retentionDays <= 0) {
+      return { notes: 0, notebooks: 0 }
+    }
+    return dbApi.purgeExpired(settings.recycleBin.retentionDays)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.RECYCLE_BIN_EMPTY, async (): Promise<{ notes: number; notebooks: number }> => {
+    return dbApi.emptyRecycleBin()
   })
 
   // ============ OSS ============

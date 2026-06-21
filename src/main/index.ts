@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { setupIpcHandlers } from './ipc'
 import { buildMenuData, handleMenuClick, installAppMenu, setMenuThemeId } from './menu'
-import { initDatabase, closeDatabase } from './db'
+import { initDatabase, closeDatabase, dbApi } from './db'
 import { OssManager } from './oss/manager'
 
 let mainWindow: BrowserWindow | null = null
@@ -63,10 +63,25 @@ async function bootstrap(): Promise<void> {
 
   installAppMenu()
 
+  // 启动后自动清理回收站过期项（按 settings.recycleBin.autoCleanup + retentionDays）
+  setTimeout(() => {
+    try {
+      const settings = dbApi.getSettings()
+      if (settings.recycleBin?.autoCleanup && settings.recycleBin.retentionDays > 0) {
+        const result = dbApi.purgeExpired(settings.recycleBin.retentionDays)
+        if (result.notes + result.notebooks > 0) {
+          console.log(`[recycleBin] auto-purged ${result.notes} notes, ${result.notebooks} notebooks`)
+        }
+      }
+    } catch (e) {
+      console.error('[recycleBin] auto-purge failed:', e)
+    }
+  }, 3000)
+
   ipcMain.handle('menu:get-data', () => buildMenuData())
   // 接收菜单点击
   ipcMain.on('menu:clicked', (_e, id: string, arg: any) => {
-    handleMenuClick(id, arg)
+    handleMenuClick(id, arg).catch(err => console.error('[menu] handler failed:', err))
   })
   ipcMain.on('menu:theme-changed', (_e, id: string) => {
     setMenuThemeId(id)

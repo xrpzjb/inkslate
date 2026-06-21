@@ -21,6 +21,8 @@ export interface Note {
   createdAt: number
   updatedAt: number
   isDeleted: boolean
+  /** 删除时间戳（毫秒），仅在 isDeleted=true 时有意义 */
+  deletedAt?: number
   icon?: string
 }
 
@@ -32,6 +34,8 @@ export interface Notebook {
   updatedAt: number
   icon?: string
   isDeleted: boolean
+  /** 删除时间戳（毫秒），仅在 isDeleted=true 时有意义 */
+  deletedAt?: number
 }
 
 export interface NoteTreeNode {
@@ -65,6 +69,13 @@ export interface AppSettings {
     configured: boolean
   }
   autoSync: boolean
+  /** 回收站设置 */
+  recycleBin: {
+    /** 保留天数；0 表示不自动清理 */
+    retentionDays: number
+    /** 启动时自动清理过期项 */
+    autoCleanup: boolean
+  }
 }
 
 export interface SyncStatus {
@@ -89,6 +100,11 @@ export const IPC_CHANNELS = {
   NOTEBOOK_DELETE: 'notebook:delete',
   NOTEBOOK_MOVE: 'notebook:move',
 
+  // 回收站 - 笔记本
+  NOTEBOOK_LIST_DELETED: 'notebook:list-deleted',
+  NOTEBOOK_RESTORE: 'notebook:restore',
+  NOTEBOOK_PURGE: 'notebook:purge',
+
   // 绗旇
   NOTE_LIST: 'note:list',
   NOTE_GET: 'note:get',
@@ -97,6 +113,15 @@ export const IPC_CHANNELS = {
   NOTE_DELETE: 'note:delete',
   NOTE_MOVE: 'note:move',
   NOTE_SEARCH: 'note:search',
+
+  // 回收站 - 笔记
+  NOTE_LIST_DELETED: 'note:list-deleted',
+  NOTE_RESTORE: 'note:restore',
+  NOTE_PURGE: 'note:purge',
+
+  // 回收站 - 通用
+  RECYCLE_BIN_PURGE_EXPIRED: 'recycle-bin:purge-expired',
+  RECYCLE_BIN_EMPTY: 'recycle-bin:empty',
 
   // 璁剧疆
   SETTINGS_GET: 'settings:get',
@@ -125,5 +150,9 @@ export const IPC_CHANNELS = {
   MENU_NEW_NOTEBOOK: 'menu:new-notebook',
   MENU_SAVE: 'menu:save',
   MENU_TOGGLE_SIDEBAR: 'menu:toggle-sidebar',
-  MENU_TOGGLE_PREVIEW: 'menu:toggle-preview'
+  MENU_TOGGLE_PREVIEW: 'menu:toggle-preview',
+
+  // 回收站菜单事件
+  MENU_OPEN_RECYCLE_BIN: 'menu:open-recycle-bin',
+  MENU_RECYCLE_BIN_SETTINGS: 'menu:recycle-bin-settings'
 } as const

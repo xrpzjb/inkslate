@@ -22,7 +22,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     provider: 'aliyun',
     configured: false
   },
-  autoSync: false
+  autoSync: false,
+  recycleBin: {
+    retentionDays: 30,
+    autoCleanup: true
+  }
 }
 
 export async function initDatabase(): Promise<void> {
@@ -48,6 +52,7 @@ export async function initDatabase(): Promise<void> {
       updated_at INTEGER NOT NULL,
       icon TEXT,
       is_deleted INTEGER DEFAULT 0,
+      deleted_at INTEGER,
       FOREIGN KEY (parent_id) REFERENCES notebooks(id) ON DELETE CASCADE
     )
   `)
@@ -66,6 +71,7 @@ export async function initDatabase(): Promise<void> {
       updated_at INTEGER NOT NULL,
       icon TEXT,
       is_deleted INTEGER DEFAULT 0,
+      deleted_at INTEGER,
       FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
     )
   `)
@@ -80,6 +86,17 @@ export async function initDatabase(): Promise<void> {
   if (!hasLanguage) {
     db.exec(`ALTER TABLE notes ADD COLUMN language TEXT`)
   }
+  const hasDeletedAtNotes = columns.some(c => c.name === 'deleted_at')
+  if (!hasDeletedAtNotes) {
+    db.exec(`ALTER TABLE notes ADD COLUMN deleted_at INTEGER`)
+  }
+
+  // 兼容老库：notebooks 表如果没有 deleted_at 列则补上
+  const nbColumns = db.prepare("PRAGMA table_info(notebooks)").all() as { name: string }[]
+  const hasDeletedAtNotebooks = nbColumns.some(c => c.name === 'deleted_at')
+  if (!hasDeletedAtNotebooks) {
+    db.exec(`ALTER TABLE notebooks ADD COLUMN deleted_at INTEGER`)
+  }
 
   // 设置表
   db.exec(`
@@ -93,6 +110,8 @@ export async function initDatabase(): Promise<void> {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_notes_notebook ON notes(notebook_id)`)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_notes_parent ON notes(parent_id)`)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_notebooks_parent ON notebooks(parent_id)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_notes_deleted_at ON notes(is_deleted, deleted_at)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_notebooks_deleted_at ON notebooks(is_deleted, deleted_at)`)
 
   const existing = db.prepare('SELECT value FROM settings WHERE key = ?').get('app_settings') as { value: string } | undefined
   if (!existing) {
@@ -147,7 +166,8 @@ function rowToNotebook(row: any): Notebook {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     icon: row.icon,
-    isDeleted: !!row.is_deleted
+    isDeleted: !!row.is_deleted,
+    deletedAt: row.deleted_at ?? undefined
   }
 }
 
@@ -164,7 +184,8 @@ function rowToNote(row: any, content: string = ''): Note {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     icon: row.icon,
-    isDeleted: !!row.is_deleted
+    isDeleted: !!row.is_deleted,
+    deletedAt: row.deleted_at ?? undefined
   }
 }
 
@@ -188,8 +209,12 @@ const dbMethods = {
     getDatabase().prepare('UPDATE notebooks SET name = ?, updated_at = ? WHERE id = ?').run(newName, Date.now(), id)
   },
 
+  /**
+   * 软删除笔记本：仅标记 is_deleted=1 + deleted_at=now
+   * 不动子笔记的 is_deleted 状态——它们各自独立管理是否进回收站
+   */
   deleteNotebook(id: string): void {
-    getDatabase().prepare('UPDATE notebooks SET is_deleted = 1, updated_at = ? WHERE id = ?').run(Date.now(), id)
+    getDatabase().prepare('UPDATE notebooks SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id)
   },
 
   moveNotebook(id: string, newParentId: string | null): void {
@@ -275,13 +300,12 @@ const dbMethods = {
     return rowToNote({ ...row, title: newTitle, icon: newIcon, format: newFormat, updated_at: now }, content)
   },
 
+  /**
+ * 软删除笔记：标记 is_deleted=1 + deleted_at=now
+   * 重要：磁盘文件保留不动，以便后续还原能完整恢复内容
+   */
   deleteNote(id: string): void {
-    const d = getDatabase()
-    const row = d.prepare('SELECT path FROM notes WHERE id = ?').get(id) as any
-    if (row?.path && fs.existsSync(row.path)) {
-      try { fs.unlinkSync(row.path) } catch {}
-    }
-    d.prepare('UPDATE notes SET is_deleted = 1, updated_at = ? WHERE id = ?').run(Date.now(), id)
+    getDatabase().prepare('UPDATE notes SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id)
   },
 
   moveNote(id: string, newParentId: string | null): void {
@@ -294,12 +318,147 @@ const dbMethods = {
     return rows.map((row: any) => rowToNote(row))
   },
 
+  // ============ 回收站操作 ============
+
+  /** 列出所有已删除笔记，按 deleted_at 倒序（最近删除的在前） */
+  listDeletedNotes(): Note[] {
+    const rows = getDatabase().prepare('SELECT * FROM notes WHERE is_deleted = 1 ORDER BY deleted_at DESC').all()
+    return rows.map((row: any) => rowToNote(row))
+  },
+
+  /** 列出所有已删除笔记本，按 deleted_at 倒序 */
+  listDeletedNotebooks(): Notebook[] {
+    const rows = getDatabase().prepare('SELECT * FROM notebooks WHERE is_deleted = 1 ORDER BY deleted_at DESC').all()
+    return rows.map(rowToNotebook)
+  },
+
+  /**
+   * 还原笔记 + 级联还原已删除的祖先笔记本链
+   * 关键约束：只还原这条笔记路径上的笔记本，**不动同笔记本里其他笔记的 is_deleted**
+   */
+  restoreNote(id: string): { restoredNotebooks: string[] } {
+    const d = getDatabase()
+    const now = Date.now()
+    const restoredNotebooks: string[] = []
+
+    // 1. 还原笔记本身（先读出来拿 notebook_id）
+    const noteRow = d.prepare('SELECT notebook_id FROM notes WHERE id = ? AND is_deleted = 1').get(id) as any
+    if (!noteRow) return { restoredNotebooks }
+
+    d.prepare('UPDATE notes SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ?').run(now, id)
+
+    // 2. 级联向上：把已删除的祖先笔记本也还原
+    let currentNotebookId: string | null = noteRow.notebook_id
+    const guard = new Set<string>() // 防止意外环
+    while (currentNotebookId && !guard.has(currentNotebookId)) {
+      guard.add(currentNotebookId)
+      const nbRow = d.prepare('SELECT id, parent_id, is_deleted FROM notebooks WHERE id = ?').get(currentNotebookId) as any
+      if (!nbRow) break // 笔记本已被物理删除，停止向上
+      if (nbRow.is_deleted) {
+        d.prepare('UPDATE notebooks SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ?').run(now, nbRow.id)
+        restoredNotebooks.push(nbRow.id)
+      }
+      currentNotebookId = nbRow.parent_id ?? null
+    }
+
+    return { restoredNotebooks }
+  },
+
+  /**
+   * 还原笔记本 + 级联还原已删除的祖先笔记本链
+   * 不级联到子笔记——子笔记各自独立管理是否在回收站
+   */
+  restoreNotebook(id: string): { restoredNotebooks: string[] } {
+    const d = getDatabase()
+    const now = Date.now()
+    const restoredNotebooks: string[] = [id]
+
+    d.prepare('UPDATE notebooks SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ? AND is_deleted = 1').run(now, id)
+
+    let currentNotebookId: string | null = id
+    const guard = new Set<string>([id])
+    while (currentNotebookId && !guard.has(currentNotebookId)) {
+      guard.add(currentNotebookId)
+      const nbRow = d.prepare('SELECT id, parent_id, is_deleted FROM notebooks WHERE id = ?').get(currentNotebookId) as any
+      if (!nbRow) break
+      if (nbRow.is_deleted) {
+        d.prepare('UPDATE notebooks SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ?').run(now, nbRow.id)
+        restoredNotebooks.push(nbRow.id)
+      }
+      currentNotebookId = nbRow.parent_id ?? null
+    }
+
+    return { restoredNotebooks }
+  },
+
+  /** 物理删除单条笔记：删文件 + DELETE 行 */
+  purgeNote(id: string): void {
+    const d = getDatabase()
+    const row = d.prepare('SELECT path FROM notes WHERE id = ? AND is_deleted = 1').get(id) as any
+    if (row?.path && fs.existsSync(row.path)) {
+      try { fs.unlinkSync(row.path) } catch {}
+    }
+    d.prepare('DELETE FROM notes WHERE id = ?').run(id)
+  },
+
+  /** 物理删除单本笔记本：不动子笔记（保留它们的 is_deleted 状态，让用户决定） */
+  purgeNotebook(id: string): void {
+    getDatabase().prepare('DELETE FROM notebooks WHERE id = ? AND is_deleted = 1').run(id)
+  },
+
+  /**
+   * 批量物理删除：超过 retentionDays 的已删除项全部清除
+   * @returns 被清理的笔记数 + 笔记本数
+   */
+  purgeExpired(retentionDays: number): { notes: number; notebooks: number } {
+    if (retentionDays <= 0) return { notes: 0, notebooks: 0 }
+    const d = getDatabase()
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000
+
+    // 找出过期的笔记，先删文件再删行
+    const expiredNoteRows = d.prepare('SELECT id, path FROM notes WHERE is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at < ?').all(cutoff) as any[]
+    for (const row of expiredNoteRows) {
+      if (row.path && fs.existsSync(row.path)) {
+        try { fs.unlinkSync(row.path) } catch {}
+      }
+    }
+    const noteResult = d.prepare('DELETE FROM notes WHERE is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at < ?').run(cutoff)
+
+    const nbResult = d.prepare('DELETE FROM notebooks WHERE is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at < ?').run(cutoff)
+
+    return { notes: noteResult.changes, notebooks: nbResult.changes }
+  },
+
+  /**
+   * 清空回收站：无视天数，物理删除全部已删除项
+   */
+  emptyRecycleBin(): { notes: number; notebooks: number } {
+    const d = getDatabase()
+    const expiredNoteRows = d.prepare('SELECT id, path FROM notes WHERE is_deleted = 1').all() as any[]
+    for (const row of expiredNoteRows) {
+      if (row.path && fs.existsSync(row.path)) {
+        try { fs.unlinkSync(row.path) } catch {}
+      }
+    }
+    const noteResult = d.prepare('DELETE FROM notes WHERE is_deleted = 1').run()
+    const nbResult = d.prepare('DELETE FROM notebooks WHERE is_deleted = 1').run()
+    return { notes: noteResult.changes, notebooks: nbResult.changes }
+  },
+
   // ============ 设置 ============
   getSettings(): AppSettings {
     const row = getDatabase().prepare('SELECT value FROM settings WHERE key = ?').get('app_settings') as { value: string } | undefined
     if (!row) return DEFAULT_SETTINGS
     try {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(row.value) }
+      const parsed = JSON.parse(row.value)
+      // 嵌套对象合并：recycleBin / layout / oss 老存档可能缺字段
+      return {
+        ...DEFAULT_SETTINGS,
+        ...parsed,
+        layout: { ...DEFAULT_SETTINGS.layout, ...(parsed.layout ?? {}) },
+        oss: { ...DEFAULT_SETTINGS.oss, ...(parsed.oss ?? {}) },
+        recycleBin: { ...DEFAULT_SETTINGS.recycleBin, ...(parsed.recycleBin ?? {}) }
+      }
     } catch {
       return DEFAULT_SETTINGS
     }
@@ -307,7 +466,13 @@ const dbMethods = {
 
   updateSettings(updates: Partial<AppSettings>): AppSettings {
     const current = this.getSettings()
-    const merged = { ...current, ...updates, layout: { ...current.layout, ...(updates.layout ?? {}) }, oss: { ...current.oss, ...(updates.oss ?? {}) } }
+    const merged = {
+      ...current,
+      ...updates,
+      layout: { ...current.layout, ...(updates.layout ?? {}) },
+      oss: { ...current.oss, ...(updates.oss ?? {}) },
+      recycleBin: { ...current.recycleBin, ...(updates.recycleBin ?? {}) }
+    }
     getDatabase().prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('app_settings', JSON.stringify(merged))
     return merged
   }

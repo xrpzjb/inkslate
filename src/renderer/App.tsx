@@ -7,6 +7,7 @@ import { TitleBar } from './components/TitleBar'
 import { StatusBar } from './components/StatusBar'
 import { OssSettingsDialog } from './components/OssSettingsDialog'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
+import { RecycleBinSettingsDialog } from './components/RecycleBinSettingsDialog'
 import { useState } from 'react'
 
 export default function App() {
@@ -23,6 +24,10 @@ export default function App() {
 
   const [ossDialogOpen, setOssDialogOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [recycleBinSettingsOpen, setRecycleBinSettingsOpen] = useState(false)
+
+  const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
+  const setViewMode = useAppStore(s => s.setViewMode)
 
   // 应用主题（auto 走 CSS 媒体查询，其他主题动态注入 CSS 变量）
   useEffect(() => {
@@ -56,6 +61,7 @@ export default function App() {
     loadSettings()
     loadNotebooks()
     loadNotes()
+    loadRecycleBin()
   }, [])
 
   // 监听系统主题（仅在 theme === 'auto' 时生效）
@@ -120,6 +126,22 @@ export default function App() {
         case 'show-shortcuts':
           setShortcutsOpen(true)
           break
+        case 'open-recycle-bin':
+          loadRecycleBin()
+          setViewMode('recycle-bin')
+          break
+        case 'recycle-bin-settings':
+          setRecycleBinSettingsOpen(true)
+          break
+        case 'empty-recycle-bin': {
+          const empty = useAppStore.getState().emptyRecycleBin
+          empty().then((r) => {
+            alert(`已清理 ${r.notes} 条笔记 + ${r.notebooks} 个笔记本`)
+          }).catch((e) => {
+            alert('清空失败：' + (e as Error).message)
+          })
+          break
+        }
         case 'reload':
           window.location.reload()
           break
@@ -230,6 +252,10 @@ export default function App() {
       )}
       {shortcutsOpen && createPortal(
         <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />,
+        document.body
+      )}
+      {recycleBinSettingsOpen && createPortal(
+        <RecycleBinSettingsDialog onClose={() => setRecycleBinSettingsOpen(false)} />,
         document.body
       )}
     </div>

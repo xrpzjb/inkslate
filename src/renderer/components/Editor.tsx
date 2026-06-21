@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
-import { Bold, Italic, Heading1, Heading2, Heading3, Link, Image, Code, Code2, List, ListOrdered, ListChecks, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3 } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
 
@@ -72,8 +72,90 @@ export function Editor() {
     return () => window.removeEventListener('inkslate:save-current', onSaveEvent)
   }, [currentNote, content, title])
 
-  const insertText = useCallback((before: string, after: string, placeholder: string) => {
-    codeEditorRef.current?.insertText(before, after, placeholder)
+  const insertText = useCallback((before: string, after: string, placeholder: string, cursorOffset?: number) => {
+    codeEditorRef.current?.insertText(before, after, placeholder, cursorOffset)
+  }, [])
+
+  // ============ 表格弹窗 ============
+  const [tableDlg, setTableDlg] = useState({ open: false, rows: 3, cols: 3 })
+
+  const confirmMarkdownTable = useCallback(() => {
+    const rows = Math.max(2, Math.min(20, tableDlg.rows))
+    const cols = Math.max(2, Math.min(8, tableDlg.cols))
+    // 表头：| 列1 | 列2 | ... |
+    // 分隔：| --- | --- | ... |
+    // 数据行 N-2 行：|     |     | ... |
+    const sep = '| ' + Array(cols).fill('---').join(' | ') + ' |'
+    const header = '| ' + Array.from({ length: cols }, (_, i: number) => `列${i + 1}`).join(' | ') + ' |'
+    const dataLine = '| ' + Array(cols).fill('     ').join(' | ') + ' |'
+    const data = Array(rows - 1).fill(dataLine).join('\n')
+    // 模板：表头 \n 分隔 \n 第一行数据（光标落在第一行第一个单元格内）
+    const block = `\n${header}\n${sep}\n${data}\n`
+    // 光标落在 header 第一格 "列1" 之后 - "before.length + 3" = 跳过 "| 列"
+    const cursorOffset = block.indexOf('列1') + 2 // "列1" 两个字中间，让用户直接覆盖
+    insertText(block, '', '', cursorOffset)
+    setTableDlg(d => ({ ...d, open: false }))
+  }, [tableDlg, insertText])
+
+  // ============ Mermaid 图表弹窗 ============
+  const insertMermaid = useCallback((type: string) => {
+    const templates: Record<string, { code: string; offset: number }> = {
+      flowchart: {
+        code: `\n\`\`\`mermaid\ngraph TD\n    A[开始] --> B{判断}\n    B -->|是| C[结束]\n    B -->|否| B\n\`\`\`\n`,
+        offset: 0 // 落地在代码块起始，光标已在图代码内
+      },
+      sequence: {
+        code: `\n\`\`\`mermaid\nsequenceDiagram\n    participant A as 用户\n    participant B as 系统\n    A->>B: 请求\n    B-->>A: 响应\n\`\`\`\n`,
+        offset: 0
+      },
+      classDiagram: {
+        code: `\n\`\`\`mermaid\nclassDiagram\n    class Animal {\n        +String name\n        +makeSound()\n    }\n    class Dog {\n        +fetch()\n    }\n    Animal <|-- Dog\n\`\`\`\n`,
+        offset: 0
+      },
+      gantt: {
+        code: `\n\`\`\`mermaid\ngantt\n    title 项目计划\n    dateFormat YYYY-MM-DD\n    section 阶段\n    需求 :a1, 2024-01-01, 7d\n    开发 :a2, after a1, 14d\n    测试 :a3, after a2, 7d\n\`\`\`\n`,
+        offset: 0
+      },
+      pie: {
+        code: `\n\`\`\`mermaid\npie title 数据分布\n    \"A\" : 40\n    \"B\" : 30\n    \"C\" : 20\n    \"D\" : 10\n\`\`\`\n`,
+        offset: 0
+      },
+      stateDiagram: {
+        code: `\n\`\`\`mermaid\nstateDiagram-v2\n    [*] --> 待处理\n    待处理 --> 处理中: 开始\n    处理中 --> 已完成: 完成\n    已完成 --> [*]\n\`\`\`\n`,
+        offset: 0
+      }
+    }
+    const t = templates[type] ?? templates.flowchart
+    insertText(t.code, '', '', t.code.indexOf('mermaid') + 8) // 光标落在 ```mermaid 之后
+  }, [insertText])
+
+  // 通用：选中多行文本时整段前缀；单行时只对当前行加
+  const prefixLines = useCallback((prefix: string) => {
+    const view = (codeEditorRef.current as any)?.view
+    if (!view) return
+    // 直接调 CodeMirror：所有选中行行首加前缀
+    const { state, dispatch } = view
+    const sel = state.selection.main
+    const fromLine = state.doc.lineAt(sel.from)
+    const toLine = state.doc.lineAt(sel.to)
+    const changes = []
+    for (let i = fromLine.number; i <= toLine.number; i++) {
+      const line = state.doc.line(i)
+      changes.push({ from: line.from, insert: prefix })
+    }
+    dispatch({ changes })
+    view.focus()
+  }, [])
+
+  const handleFormatCode = useCallback(() => {
+    const result = codeEditorRef.current?.formatCode()
+    if (!result) return
+    if (!result.ok && result.message) {
+      alert(result.message)
+    } else if (result.ok && result.message) {
+      // 成功 + 提示，短暂显示在 saveStatus（复用 setSaveStatus 通道）
+      setSaveStatus({ saving: false, lastSaved: Date.now() })
+    }
   }, [])
 
   const fontSize = settings?.fontSize ?? 14
@@ -139,7 +221,7 @@ export function Editor() {
         )}
       </div>
 
-            {currentNote.format !== 'richtext' && (
+            {(currentNote.format === 'markdown' || currentNote.format === 'html') && (
         <div style={{
           display: 'flex',
           gap: 2,
@@ -147,23 +229,113 @@ export function Editor() {
           borderBottom: '1px solid var(--border-color)',
           background: 'var(--bg-tertiary)',
           flexShrink: 0,
-          marginLeft: -1, // 璁?border-bottom 寤朵几鎺ヤ笂宸︿晶 divider
-          marginRight: -1 // 璁?border-bottom 寤朵几鎺ヤ笂鍙充晶 divider
+          marginLeft: -1,
+          marginRight: -1,
+          flexWrap: 'wrap'
         }}>
           <ToolbarBtn icon={<Bold size={14} />} title="粗体 (Ctrl+B)" onClick={() => insertText('**', '**', 'bold')} />
           <ToolbarBtn icon={<Italic size={14} />} title="斜体 (Ctrl+I)" onClick={() => insertText('*', '*', 'italic')} />
+          <ToolbarBtn icon={<Underline size={14} />} title="下划线" onClick={() => insertText('<u>', '</u>', 'text')} />
+          <ToolbarBtn icon={<Strikethrough size={14} />} title="删除线" onClick={() => insertText('~~', '~~', 'text')} />
+          <ToolbarBtn icon={<Highlighter size={14} />} title="高亮 (==text==)" onClick={() => insertText('==', '==', 'text')} />
           <Divider />
           <ToolbarBtn icon={<Heading1 size={14} />} title="标题 1" onClick={() => insertText('\n# ', '\n', 'heading')} />
           <ToolbarBtn icon={<Heading2 size={14} />} title="标题 2" onClick={() => insertText('\n## ', '\n', 'heading')} />
+          <ToolbarBtn icon={<Heading3 size={14} />} title="标题 3" onClick={() => insertText('\n### ', '\n', 'heading')} />
+          <ToolbarBtn icon={<Heading4 size={14} />} title="标题 4" onClick={() => insertText('\n#### ', '\n', 'heading')} />
           <Divider />
           <ToolbarBtn icon={<Link size={14} />} title="链接" onClick={() => insertText('[', '](https://)', 'link')} />
           <ToolbarBtn icon={<Image size={14} />} title="图片" onClick={() => insertText('![', '](https://)', 'alt')} />
-          <ToolbarBtn icon={<Code size={14} />} title="代码" onClick={() => insertText('`', '`', 'code')} />
+          <ToolbarBtn icon={<Code size={14} />} title="行内代码" onClick={() => insertText('`', '`', 'code')} />
+          <ToolbarBtn icon={<Code2 size={14} />} title="代码块" onClick={() => {
+            const t = '\n```js\n\n```\n'
+            insertText(t, '', '', t.indexOf('\n', 4) + 1)
+          }} />
           <Divider />
           <ToolbarBtn icon={<List size={14} />} title="无序列表" onClick={() => insertText('\n- ', '\n', 'item')} />
           <ToolbarBtn icon={<ListOrdered size={14} />} title="有序列表" onClick={() => insertText('\n1. ', '\n', 'item')} />
+          <ToolbarBtn icon={<ListTodo size={14} />} title="任务列表" onClick={() => insertText('\n- [ ] ', '\n', 'task')} />
+          <ToolbarBtn icon={<ListChecks size={14} />} title="勾选任务" onClick={() => insertText('\n- [x] ', '\n', 'done')} />
           <ToolbarBtn icon={<Quote size={14} />} title="引用" onClick={() => insertText('\n> ', '\n', 'quote')} />
+          <ToolbarBtn icon={<Minus size={14} />} title="分割线" onClick={() => insertText('\n---\n', '', '')} />
+          <Divider />
+          <ToolbarBtn icon={<Table size={14} />} title="插入表格" onClick={() => setTableDlg({ open: true, rows: 3, cols: 3 })} />
+          <Divider />
+          <ToolbarBtn icon={<Sigma size={14} />} title="行内公式 $E=mc^2$" onClick={() => insertText('$', '$', 'E=mc^2')} />
+          <ToolbarBtn icon={<SquareSigma size={14} />} title="公式块" onClick={() => {
+            const t = '\n$$\nE = mc^2\n$$\n'
+            insertText(t, '', '', t.indexOf('E ='))
+          }} />
+          <MermaidMenu onInsert={insertMermaid} />
           <div style={{ flex: 1 }} />
+          <ToolbarBtn
+            icon={<Wand2 size={14} />}
+            title="格式化代码（按 language 自动检测）"
+            onClick={handleFormatCode}
+          />
+          <ToolbarBtn icon={<Save size={14} />} title="保存 (Ctrl+S)" onClick={handleSave} />
+        </div>
+      )}
+
+      {/* 表格弹窗（Markdown 模式） */}
+      {createPortal(
+        <ModalShell
+          open={tableDlg.open}
+          title="插入 Markdown 表格"
+          onClose={() => setTableDlg(d => ({ ...d, open: false }))}
+          onConfirm={confirmMarkdownTable}
+          confirmText="插入"
+        >
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Field label="行数（含表头）">
+              <input
+                type="number"
+                min={2}
+                max={20}
+                value={tableDlg.rows}
+                onChange={e => setTableDlg(d => ({ ...d, rows: Math.max(2, Math.min(20, parseInt(e.target.value) || 2)) }))}
+                style={inputStyle}
+              />
+            </Field>
+            <Field label="列数">
+              <input
+                type="number"
+                min={2}
+                max={8}
+                value={tableDlg.cols}
+                onChange={e => setTableDlg(d => ({ ...d, cols: Math.max(2, Math.min(8, parseInt(e.target.value) || 2)) }))}
+                style={inputStyle}
+              />
+            </Field>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-tertiary)' }}>
+            将插入 {tableDlg.rows} 行 × {tableDlg.cols} 列的 GFM 表格，光标落在第一个单元格
+          </div>
+        </ModalShell>,
+        document.body
+      )}
+
+      {currentNote.format === 'code' && (
+        <div style={{
+          display: 'flex',
+          gap: 2,
+          padding: '4px 8px',
+          borderBottom: '1px solid var(--border-color)',
+          background: 'var(--bg-tertiary)',
+          flexShrink: 0,
+          alignItems: 'center',
+          marginLeft: -1,
+          marginRight: -1
+        }}>
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)', padding: '0 8px' }}>
+            语言: {getLangLabel(currentNote.language)}
+          </span>
+          <div style={{ flex: 1 }} />
+          <ToolbarBtn
+            icon={<Wand2 size={14} />}
+            title="格式化代码 (按当前语言)"
+            onClick={handleFormatCode}
+          />
           <ToolbarBtn icon={<Save size={14} />} title="保存 (Ctrl+S)" onClick={handleSave} />
         </div>
       )}
@@ -780,6 +952,85 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{label}</div>
       {children}
+    </div>
+  )
+}
+
+/** 把代码语言 id 翻成中文显示名（用于工具栏展示） */
+function getLangLabel(lang?: string): string {
+  const map: Record<string, string> = {
+    plaintext: '纯文本', javascript: 'JavaScript', typescript: 'TypeScript',
+    python: 'Python', java: 'Java', go: 'Go', rust: 'Rust',
+    c: 'C', cpp: 'C++', csharp: 'C#', ruby: 'Ruby', php: 'PHP',
+    html: 'HTML', css: 'CSS', json: 'JSON', xml: 'XML', yaml: 'YAML',
+    markdown: 'Markdown', shell: 'Shell', sql: 'SQL',
+    kotlin: 'Kotlin', swift: 'Swift', dart: 'Dart'
+  }
+  return map[lang ?? ''] ?? lang ?? '纯文本'
+}
+
+/** 图表按钮：点击展开 6 种 mermaid 模板下拉 */
+function MermaidMenu({ onInsert }: { onInsert: (type: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDocClick = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  const items = [
+    { id: 'flowchart', label: '流程图 (graph)' },
+    { id: 'sequence', label: '时序图 (sequence)' },
+    { id: 'classDiagram', label: '类图 (classDiagram)' },
+    { id: 'stateDiagram', label: '状态图 (stateDiagram)' },
+    { id: 'gantt', label: '甘特图 (gantt)' },
+    { id: 'pie', label: '饼图 (pie)' }
+  ]
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', display: 'inline-block' }}>
+      <ToolbarBtn
+        icon={<ChartBar size={14} />}
+        title="插入图表"
+        onClick={() => setOpen(o => !o)}
+      />
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          marginTop: 4,
+          background: 'var(--bg-primary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 4,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          zIndex: 100,
+          minWidth: 180,
+          padding: '4px 0'
+        }}>
+          {items.map(it => (
+            <div
+              key={it.id}
+              onClick={() => { onInsert(it.id); setOpen(false) }}
+              style={{
+                padding: '6px 12px',
+                fontSize: 12,
+                cursor: 'pointer',
+                color: 'var(--text-primary)'
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              {it.label}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

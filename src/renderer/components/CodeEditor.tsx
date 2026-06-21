@@ -8,7 +8,11 @@ import { javascript } from '@codemirror/lang-javascript'
 import { history, defaultKeymap, historyKeymap } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
+import { format as formatSql } from 'sql-formatter'
+// @ts-ignore - js-beautify 没有官方的 ESM 类型，但 default 导出是 CJS 互操作
+import beautify from 'js-beautify'
 import { useAppStore } from '../store/app'
+import { uniqueSlug } from '../utils/headings'
 
 // ============ 缂栬緫鍣ㄤ富棰橈細涓?appTheme id 涓€涓€瀵瑰簲 ============
 import type { AppThemeId } from '../themes'
@@ -363,7 +367,9 @@ const editorThemes: Record<AppThemeId, () => Extension> = {
 }
 
 export interface CodeEditorHandle {
-  insertText: (before: string, after?: string, placeholder?: string) => void
+  insertText: (before: string, after?: string, placeholder?: string, cursorOffset?: number) => void
+  /** 格式化当前代码。返回 { ok, message? }，message 是错误时给用户看的提示。 */
+  formatCode: () => { ok: boolean; message?: string }
 }
 
 interface CodeEditorProps {
@@ -386,7 +392,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const theme: AppThemeId = ((settingsTheme === 'auto' || !settingsTheme) ? 'light' : settingsTheme) as AppThemeId
 
   useImperativeHandle(ref, () => ({
-    insertText: (before: string, after = '', placeholder = '') => {
+    insertText: (before: string, after = '', placeholder = '', cursorOffset?: number) => {
       const view = viewRef.current
       if (!view) return
       const { from, to } = view.state.selection.main
@@ -394,13 +400,81 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       const text = selected || placeholder
 
       const insert = before + text + after
+      // 默认光标停在插入文本末尾；cursorOffset 给出时停在 from + cursorOffset
+      const cursorPos = cursorOffset !== undefined ? from + cursorOffset : from + insert.length
       view.dispatch({
         changes: { from, to, insert },
-        selection: { anchor: from + insert.length }
+        selection: { anchor: cursorPos }
       })
       view.focus()
+    },
+    formatCode: (): { ok: boolean; message?: string } => {
+      const view = viewRef.current
+      if (!view) return { ok: false, message: '编辑器未就绪' }
+      const text = view.state.doc.toString()
+      if (!text.trim()) return { ok: true }
+
+      const lang = (language ?? '').toLowerCase()
+      try {
+        let formatted: string
+        let used = ''
+
+        // 1. 优先按 language 分发
+        if (lang === 'json') {
+          formatted = JSON.stringify(JSON.parse(text), null, 2)
+          used = 'JSON'
+        } else if (lang === 'sql') {
+          formatted = formatSql(text, { language: 'sql', tabWidth: 2, keywordCase: 'upper', indentStyle: 'standard' })
+          used = 'SQL'
+        } else if (lang === 'javascript' || lang === 'typescript') {
+          formatted = (beautify as any).js(text, { indent_size: 2, space_in_empty_paren: true, end_with_newline: false })
+          used = 'JavaScript'
+        } else if (lang === 'html') {
+          formatted = (beautify as any).html(text, { indent_size: 2, wrap_line_length: 120, end_with_newline: false })
+          used = 'HTML'
+        } else if (lang === 'css') {
+          formatted = (beautify as any).css(text, { indent_size: 2, end_with_newline: false })
+          used = 'CSS'
+        } else {
+          // 2. 没有 language 或不支持的 language：自动嗅探
+          const trimmed = text.trim()
+          // 试 JSON
+          if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+            try {
+              formatted = JSON.stringify(JSON.parse(trimmed), null, 2)
+              used = 'JSON (自动检测)'
+            } catch {}
+          }
+          // 试 SQL（看是否含 SQL 关键字）
+          if (!used && /\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|FROM|WHERE)\b/i.test(trimmed)) {
+            try {
+              formatted = formatSql(trimmed, { language: 'sql', tabWidth: 2, keywordCase: 'upper', indentStyle: 'standard' })
+              used = 'SQL (自动检测)'
+            } catch {}
+          }
+          // 试 JS/TS（看是否像代码）
+          if (!used && /[{};]/.test(trimmed)) {
+            try {
+              formatted = (beautify as any).js(trimmed, { indent_size: 2, space_in_empty_paren: true, end_with_newline: false })
+              used = 'JavaScript (自动检测)'
+            } catch {}
+          }
+          if (!used) {
+            return { ok: false, message: '未识别到可格式化的代码（试试 JSON/SQL/JS）' }
+          }
+        }
+
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: formatted },
+          selection: { anchor: 0 }
+        })
+        view.focus()
+        return { ok: true, message: `已按 ${used} 格式化` }
+      } catch (e) {
+        return { ok: false, message: '格式化失败：' + (e as Error).message }
+      }
     }
-  }), [])
+  }), [language])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -464,7 +538,36 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
     viewRef.current = view
 
+    // 同步滚动：编辑器滚动时把"最靠近顶部的标题"id 派发给 Preview
+    // 复用 utils/headings.ts 的 uniqueSlug，id 跟 attachHeadingIds 注入到 DOM 的一致
+    let scrollTimer: number | null = null
+    const onEditorScroll = () => {
+      if (scrollTimer !== null) window.clearTimeout(scrollTimer)
+      scrollTimer = window.setTimeout(() => {
+        const doc = view.state.doc
+        const scrollTop = view.scrollDOM.scrollTop
+        const usedIds = new Set<string>()
+        let topId: string | null = null
+        for (let i = 1; i <= doc.lines; i++) {
+          const lineText = doc.line(i).text
+          const m = /^(#{1,6})\s+(.+?)\s*$/.exec(lineText)
+          if (!m) continue
+          const id = uniqueSlug(m[2], usedIds)
+          const block = view.lineBlockAt(i)
+          if (block.top <= scrollTop + 30) {
+            topId = id
+          } else {
+            break
+          }
+        }
+        window.dispatchEvent(new CustomEvent('inkslate:editor-top-heading', { detail: topId }))
+      }, 60)
+    }
+    view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
+
     return () => {
+      view.scrollDOM.removeEventListener('scroll', onEditorScroll)
+      if (scrollTimer !== null) window.clearTimeout(scrollTimer)
       view.destroy()
       viewRef.current = null
     }

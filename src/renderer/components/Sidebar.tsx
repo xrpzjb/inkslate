@@ -3,8 +3,8 @@ import { useAppStore, buildNoteTree } from '../store/app'
 import { NoteTreeNode, Note } from '@shared/types'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
-  Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1, Code2,
-  FileDown, FileCode
+  Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
+  FileDown, FileCode, Globe, Inbox
 } from 'lucide-react'
 
 /** Markdown 专属图标：圆角文件壳 + M↓ 标识
@@ -26,6 +26,31 @@ function MarkdownIcon({ size = 14 }: { size?: number }) {
   )
 }
 
+/** 代码笔记专属图标：圆角文件壳 + </> 标识
+ *  跟 MarkdownIcon 同款文件壳，里面换成 </>，跟 MD 一眼区分（同时跟 lucide 所有 </> 风格也都不一样）
+ */
+function CodeIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label="Code"
+    >
+      {/* 文件壳 */}
+      <path d="M3.5 1.5h5.379a1.5 1.5 0 0 1 1.06.44l3.122 3.12a1.5 1.5 0 0 1 .439 1.061v6.379a2 2 0 0 1-2 2H3.5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zm0 1a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H11.5a1 1 0 0 0 1-1V6.621a.5.5 0 0 0-.146-.354L9.232 3.146A.5.5 0 0 0 8.879 3H3.5z" />
+      {/* <  */}
+      <path d="M6.1 6.4L4.5 8l1.6 1.6a.6.6 0 0 1-.85.85l-2.1-2.1a.6.6 0 0 1 0-.85l2.1-2.1a.6.6 0 0 1 .85.85z" />
+      {/* >  */}
+      <path d="M9.9 6.4L11.5 8l-1.6 1.6a.6.6 0 0 0 .85.85l2.1-2.1a.6.6 0 0 0 0-.85l-2.1-2.1a.6.6 0 0 0-.85.85z" />
+      {/* / */}
+      <path d="M8.95 4.5a.5.5 0 0 0-.6.3l-1.6 6.4a.5.5 0 0 0 .95.3l1.6-6.4a.5.5 0 0 0-.3-.6z" />
+    </svg>
+  )
+}
+
 export function Sidebar() {
   const notebooks = useAppStore(s => s.notebooks)
   const notes = useAppStore(s => s.notes)
@@ -37,6 +62,10 @@ export function Sidebar() {
   const renameNote = useAppStore(s => s.renameNote)
   const deleteNotebook = useAppStore(s => s.deleteNotebook)
   const deleteNote = useAppStore(s => s.deleteNote)
+  const viewMode = useAppStore(s => s.viewMode)
+  const setViewMode = useAppStore(s => s.setViewMode)
+  const recycleBinCount = useAppStore(s => s.recycleBinCount)
+  const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
 
   const tree = useMemo(() => buildNoteTree(notebooks, notes), [notebooks, notes])
   const [expanded, setExpanded] = useState<Set<string>>(new Set(notebooks.map(n => n.id)))
@@ -52,6 +81,8 @@ export function Sidebar() {
         return new Set([...prev, note.parentId!])
       })
     }
+    // 选中变化时关闭重命名（防止输入框卡在另一行）
+    setRenaming(prev => (prev && prev.id !== selectedNoteId ? null : prev))
   }, [selectedNoteId])
 
   const toggleExpand = (id: string) => {
@@ -150,7 +181,7 @@ export function Sidebar() {
           <div
             className={`tree-row ${isSelected ? 'selected' : ''}`}
             style={{ paddingLeft: 8 + depth * 12 }}
-            onClick={() => toggleExpand(node.id)}
+            onClick={() => { setRenaming(null); toggleExpand(node.id) }}
             onContextMenu={(e) => handleContextMenu(e, node)}
             onDoubleClick={() => handleRename(node)}
           >
@@ -188,10 +219,10 @@ export function Sidebar() {
     // 绗旇鑺傜偣
     const noteFormat = notes.find(n => n.id === node.id)?.format
     const formatInfo = {
-      markdown: { Icon: MarkdownIcon, color: 'var(--text-secondary)', title: 'Markdown' },
-      html: { Icon: FileCode2, color: '#e67e22', title: 'HTML' },
+      markdown: { Icon: MarkdownIcon, color: '#7d8590', title: 'Markdown' },
+      html: { Icon: Globe, color: '#e67e22', title: 'HTML' },
       richtext: { Icon: FileType2, color: '#9b59b6', title: '富文本' },
-      code: { Icon: Code2, color: '#4a90e2', title: '代码' }
+      code: { Icon: CodeIcon, color: '#4a90e2', title: '代码' }
     }[noteFormat ?? 'markdown'] ?? { Icon: MarkdownIcon, color: 'var(--text-secondary)', title: '笔记' }
     const { Icon: FormatIcon, color: formatColor, title: formatTitle } = formatInfo
     const hasChildren = node.children.length > 0
@@ -200,8 +231,8 @@ export function Sidebar() {
       <div key={node.id}>
         <div
           className={`tree-row ${isSelected ? 'selected' : ''}`}
-          style={{ paddingLeft: 8 + depth * 12 + 16 }}
-          onClick={() => selectNote(node.id)}
+          style={{ paddingLeft: 8 + depth * 12 }}
+          onClick={() => { setRenaming(null); selectNote(node.id) }}
           onContextMenu={(e) => handleContextMenu(e, node)}
           onDoubleClick={() => handleRename(node)}
         >
@@ -242,16 +273,17 @@ export function Sidebar() {
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }} onClick={closeContextMenu}>
-      <div className="tree" style={{ padding: '4px 0' }}>
-        {tree.length === 0 ? (
-          <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
-            还没有笔记本
-            <br />
-            <span style={{ fontSize: 11, opacity: 0.7 }}>右键或菜单"文件"→"新建"</span>
-          </div>
-        ) : (
-          tree.map(node => renderNode(node))
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }} onClick={closeContextMenu}>
+        <div className="tree" style={{ padding: '4px 0' }}>
+          {tree.length === 0 ? (
+            <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              还没有笔记本
+              <br />
+              <span style={{ fontSize: 11, opacity: 0.7 }}>右键或菜单"文件"→"新建"</span>
+            </div>
+          ) : (
+            tree.map(node => renderNode(node))
         )}
       </div>
 
@@ -306,7 +338,7 @@ export function Sidebar() {
                 createNote('未命名富文本', noteData?.notebookId ?? notebooks[0]?.id ?? '', node.id, undefined, 'richtext')
               }
             }} />
-            <SubMenuItem icon={<Code2 size={14} />} label="代码笔记">
+            <SubMenuItem icon={<CodeIcon size={14} />} label="代码笔记">
               {(['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'cpp', 'csharp', 'html', 'css', 'json', 'sql', 'shell', 'plaintext'] as const).map(lang => (
                 <MenuItem key={lang} icon={<FileCode2 size={14} />} label={lang} onClick={() => {
                   closeContextMenu()
@@ -375,6 +407,61 @@ export function Sidebar() {
           white-space: nowrap;
         }
       `}</style>
+      </div>
+
+      {/* 底部：回收站入口（带 badge） */}
+      <div style={{
+        borderTop: '1px solid var(--border-color)',
+        flexShrink: 0,
+        padding: '4px 0'
+      }}>
+        <div
+          onClick={() => {
+            if (viewMode !== 'recycle-bin') {
+              loadRecycleBin()
+              setViewMode('recycle-bin')
+            } else {
+              setViewMode('notes')
+            }
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            height: 28,
+            padding: '0 12px',
+            gap: 8,
+            cursor: 'pointer',
+            color: viewMode === 'recycle-bin' ? 'var(--accent-color)' : 'var(--text-secondary)',
+            background: viewMode === 'recycle-bin' ? 'var(--bg-active)' : 'transparent',
+            fontSize: 12
+          }}
+          onMouseEnter={(e) => {
+            if (viewMode !== 'recycle-bin') {
+              e.currentTarget.style.background = 'var(--bg-hover)'
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (viewMode !== 'recycle-bin') {
+              e.currentTarget.style.background = 'transparent'
+            }
+          }}
+        >
+          <Inbox size={13} />
+          <span style={{ flex: 1 }}>回收站</span>
+          {recycleBinCount > 0 && (
+            <span style={{
+              fontSize: 10,
+              background: viewMode === 'recycle-bin' ? 'var(--accent-color)' : 'var(--bg-tertiary)',
+              color: viewMode === 'recycle-bin' ? '#fff' : 'var(--text-tertiary)',
+              padding: '1px 6px',
+              borderRadius: 8,
+              fontWeight: 500
+            }}>
+              {recycleBinCount}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
