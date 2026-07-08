@@ -36,6 +36,7 @@
     "dompurify": "^3.1.7",
     "exceljs": "^4.4.0",
     "highlight.js": "^11.10.0",
+    "isomorphic-git": "^1.38.6",
     "js-beautify": "^1.15.1",
     "katex": "^0.16.11",
     "lucide-react": "^0.460.0",

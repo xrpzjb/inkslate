@@ -137,10 +137,10 @@ export function buildMenuData(): MenuData[] {
     {
       label: '笔记本',
       submenu: [
-        { id: 'sync-push', label: '同步到云端', accelerator: 'Ctrl+Shift+S' },
-        { id: 'sync-pull', label: '从云端拉取', accelerator: 'Ctrl+Shift+D' },
+        { id: 'git-push', label: '推送到 Git 仓库', accelerator: 'Ctrl+Shift+S' },
+        { id: 'git-pull', label: '从 Git 拉取', accelerator: 'Ctrl+Shift+D' },
         { type: 'separator' },
-        { id: 'oss-settings', label: 'OSS 设置...' }
+        { id: 'git-settings', label: 'Git 同步设置...' }
       ]
     },
     {
@@ -232,9 +232,9 @@ export async function handleMenuClick(id: string, arg: any) {
     case 'zoom-out': sendToRenderer('menu:zoom', 'out'); return
     case 'fullscreen': sendToRenderer('menu:fullscreen'); return
     // 笔记本
-    case 'sync-push': sendToRenderer(IPC_CHANNELS.OSS_SYNC_PUSH); return
-    case 'sync-pull': sendToRenderer(IPC_CHANNELS.OSS_SYNC_PULL); return
-    case 'oss-settings': sendToRenderer('menu:oss-settings'); return
+    case 'git-push': sendToRenderer('menu:git-push'); return
+    case 'git-pull': sendToRenderer('menu:git-pull'); return
+    case 'git-settings': sendToRenderer('menu:git-settings'); return
     // 帮助
     case 'about':
       dialog.showMessageBox({

@@ -1,6 +1,7 @@
 import { File, Download, RefreshCw, FileArchive, FileText, FileCode, FileType2 } from 'lucide-react'
 import { useState } from 'react'
 import { useAppStore } from '../../store/app'
+import { toast } from '../Toast'
 
 /** 文件大小人类可读 */
 function formatSize(bytes: number): string {
@@ -54,7 +55,7 @@ export function FileFallback({ noteId, fileName, fileExt, fileSize }: {
         })
       }
     } catch (e) {
-      alert('替换失败：' + (e as Error).message)
+      toast.error('替换失败：' + (e as Error).message)
     } finally {
       setBusy(false)
     }

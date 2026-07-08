@@ -4,6 +4,7 @@ import { useAppStore } from '../store/app'
 import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3 } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
+import { toast } from './Toast'
 
 /**
  * 杞婚噺绾?Markdown 缂栬緫鍣? * - 琛屽彿
@@ -16,11 +17,11 @@ export function Editor() {
   const updateCurrentNoteDraft = useAppStore(s => s.updateCurrentNoteDraft)
   const settings = useAppStore(s => s.settings)
 
-  const [content, setContent] = useState('')
+  const [content, setContent] = useState(() => currentNote?.content ?? '')
   const previewVisible = useAppStore(s => s.previewVisible)
   const togglePreview = useAppStore(s => s.togglePreview)
   const setSaveStatus = useAppStore(s => s.setSaveStatus)
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(() => currentNote?.title ?? '')
   const titleTimerRef = useRef<NodeJS.Timeout | null>(null)
   const contentTimerRef = useRef<NodeJS.Timeout | null>(null)
   const codeEditorRef = useRef<import('./CodeEditor').CodeEditorHandle>(null)
@@ -143,6 +144,28 @@ export function Editor() {
     }
   }, [content, currentNote?.id])
 
+  // 组件卸载时 flush 草稿到库
+  // 修复：切换 md 笔记时 selectNote 同时改 currentNote + editorVisible=false，
+  // Editor 被卸载，上面的 flush effect（line 37）来不及跑，内容丢失。
+  // 此 effect 的 cleanup 在卸载时触发，保证草稿不丢。
+  useEffect(() => {
+    return () => {
+      const last = lastDraftRef.current
+      if (!last) return
+      if (titleTimerRef.current) {
+        clearTimeout(titleTimerRef.current)
+        titleTimerRef.current = null
+      }
+      if (contentTimerRef.current) {
+        clearTimeout(contentTimerRef.current)
+        contentTimerRef.current = null
+      }
+      updateNote(last.id, { title: last.title }).catch(() => {})
+      updateNote(last.id, { content: last.content }).catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleSave = async () => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
@@ -249,7 +272,7 @@ export function Editor() {
     const result = codeEditorRef.current?.formatCode()
     if (!result) return
     if (!result.ok && result.message) {
-      alert(result.message)
+      toast.error(result.message)
     } else if (result.ok && result.message) {
       // 成功 + 提示，短暂显示在 saveStatus（复用 setSaveStatus 通道）
       setSaveStatus({ saving: false, lastSaved: Date.now() })
@@ -489,6 +512,7 @@ export function Editor() {
         </div>
       ) : (
         <CodeEditor
+          key={currentNote.id}
           ref={codeEditorRef}
           value={content}
           onChange={setContent}
@@ -714,7 +738,7 @@ function RichTextEditor({ value, onChange, fontSize }: {
       const { base64, mime } = await window.inkslateApi.file.readAsBase64(filePath)
       setImageDlg(d => ({ ...d, url: `data:${mime};base64,${base64}`, busy: false }))
     } catch (e) {
-      alert('读取图片失败：' + (e as Error).message)
+      toast.error('读取图片失败：' + (e as Error).message)
       setImageDlg(d => ({ ...d, busy: false }))
     }
   }
@@ -1038,44 +1062,105 @@ function ModalShell({ open, title, onClose, onConfirm, confirmText = '确定', c
 
   if (!open) return null
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        background: 'rgba(0,0,0,0.4)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}
-      onClick={onClose}
-    >
+    <div className="modal-overlay" onClick={onClose}>
       <div
+        className="modal-content"
         onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-primary)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 6,
-          padding: 20,
-          minWidth: 360,
-          maxWidth: 500,
-          width: '90%',
-          boxShadow: '0 10px 40px rgba(0,0,0,0.3)'
-        }}
       >
-        <h3 style={{ margin: '0 0 16px 0', fontSize: 15, color: 'var(--text-primary)' }}>{title}</h3>
-        <div style={{ marginBottom: 16 }}>{children}</div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} style={btnStyle}>取消</button>
+        <div className="modal-header">
+          <h3 className="modal-title">{title}</h3>
+        </div>
+        <div className="modal-body">{children}</div>
+        <div className="modal-footer">
+          <button className="modal-btn modal-btn-secondary" onClick={onClose}>取消</button>
           <button
+            className="modal-btn modal-btn-primary"
             onClick={onConfirm}
             disabled={confirmDisabled}
-            style={{ ...primaryBtnStyle, opacity: confirmDisabled ? 0.5 : 1, cursor: confirmDisabled ? 'not-allowed' : 'pointer' }}
           >
             {confirmText}
           </button>
         </div>
       </div>
+      <style>{`
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          background: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          animation: fadeIn 0.15s ease;
+        }
+        .modal-content {
+          background: var(--bg-primary);
+          border-radius: 12px;
+          minWidth: 380;
+          maxWidth: 480;
+          width: 90%;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
+          animation: slideUp 0.2s ease;
+          overflow: hidden;
+        }
+        .modal-header {
+          padding: 16px 20px 0;
+        }
+        .modal-title {
+          margin: 0;
+          font-size: 16;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+        .modal-body {
+          padding: 16px 20px;
+          color: var(--text-secondary);
+          font-size: 14;
+          line-height: 1.5;
+        }
+        .modal-footer {
+          padding: 12px 20px 16;
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          border-top: 1px solid var(--border-color);
+        }
+        .modal-btn {
+          padding: 8px 16px;
+          font-size: 13;
+          font-weight: 500;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          border: none;
+        }
+        .modal-btn-secondary {
+          background: var(--bg-secondary);
+          color: var(--text-primary);
+        }
+        .modal-btn-secondary:hover {
+          background: var(--bg-hover);
+        }
+        .modal-btn-primary {
+          background: var(--accent-color);
+          color: #fff;
+        }
+        .modal-btn-primary:hover:not(:disabled) {
+          background: var(--accent-hover);
+        }
+        .modal-btn-primary:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(10px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}</style>
     </div>
   )
 }

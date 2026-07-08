@@ -6,6 +6,8 @@ import {
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
   FileDown, FileCode, Globe, Inbox, Link2, Paperclip
 } from 'lucide-react'
+import { toast } from './Toast'
+import { confirm } from './ConfirmDialog'
 
 /** Markdown 笔记图标：纯字符 "M"，无外壳
  *  stroke 风格，视觉上跟 lucide Globe 一致（24x24 / 2px stroke / 无填充）
@@ -295,14 +297,14 @@ export function Sidebar() {
     try {
       const fileInfo = await window.inkslateApi.fileNote.create(note.id, sourcePath)
       if (!fileInfo) {
-        alert('文件导入失败：无法读取源文件')
+        toast.error('文件导入失败：无法读取源文件')
         return
       }
       // 重新拉取 note 列表 + 选中刚创建的笔记（让 currentNote 带上 file 信息）
       await useAppStore.getState().loadNotes()
       await useAppStore.getState().selectNote(note.id)
     } catch (e) {
-      alert('文件导入失败：' + (e as Error).message)
+      toast.error('文件导入失败：' + (e as Error).message)
     }
   }
 
@@ -404,7 +406,7 @@ export function Sidebar() {
 
   const handleDelete = async (node: NoteTreeNode) => {
     closeContextMenu()
-    if (!confirm(`确认删除 "${node.name}"？此操作不可撤销。`)) return
+    if (!await confirm({ message: `确认删除 "${node.name}"？此操作不可撤销。`, danger: true })) return
     if (node.type === 'notebook') {
       await deleteNotebook(node.id)
     } else {
@@ -418,7 +420,7 @@ export function Sidebar() {
     try {
       const note = await window.inkslateApi.notes.get(nodeId)
       if (!note) {
-        alert('笔记不存在或已被删除')
+        toast.error('笔记不存在或已被删除')
         return
       }
       const path = await window.inkslateApi.file.export('html')
@@ -427,7 +429,7 @@ export function Sidebar() {
       await window.inkslateApi.file.write(path, html)
     } catch (e) {
       console.error('HTML 导出失败:', e)
-      alert('HTML 导出失败：' + (e as Error).message)
+      toast.error('HTML 导出失败：' + (e as Error).message)
     }
   }
 
@@ -451,7 +453,7 @@ export function Sidebar() {
       if (!ok) console.log('PDF 导出已取消')
     } catch (e) {
       console.error('PDF 导出失败:', e)
-      alert('PDF 导出失败：' + (e as Error).message)
+      toast.error('PDF 导出失败：' + (e as Error).message)
     }
   }
 

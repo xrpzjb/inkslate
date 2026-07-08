@@ -70,7 +70,7 @@ async function bootstrap(): Promise<void> {
   // CSP 放宽：把主窗口响应的 frame-src 改成 *
   // —— 网址笔记的 iframe 需要主窗口允许加载任意外部 URL
   // 同时挂在 defaultSession 和主窗口 webContents.session（renderer 进程 iframe 走的是后者）
-  const relaxCsp = (details: Electron.OnHeadersReceivedDetails, callback: (response: Electron.Response) => void) => {
+  const relaxCsp = (details: Electron.OnHeadersReceivedListenerDetails, callback: (response: Electron.HeadersReceivedResponse) => void) => {
     const headers: Record<string, string[]> = {}
     for (const [k, v] of Object.entries(details.responseHeaders ?? {})) {
       headers[k.toLowerCase()] = v as string[]

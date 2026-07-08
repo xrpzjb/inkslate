@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { X, Keyboard } from 'lucide-react'
 
 export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
   const shortcuts = [
@@ -25,75 +25,145 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
   ]
 
   return (
-    <div style={{
-      position: 'fixed',
-      inset: 0,
-      background: 'rgba(0, 0, 0, 0.5)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 99999
-    }} onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-primary)',
-          borderRadius: 8,
-          boxShadow: 'var(--shadow-md)',
-          width: 480,
-          maxHeight: '80vh',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
-      >
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '16px 20px',
-          borderBottom: '1px solid var(--border-color)'
-        }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600 }}>快捷键</h2>
-          <button onClick={onClose} className="panel-action-btn"><X size={16} /></button>
+    <div className="shortcuts-overlay" onClick={onClose}>
+      <div className="shortcuts-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="shortcuts-header">
+          <h2 className="shortcuts-title">
+            <Keyboard size={18} />
+            快捷键
+          </h2>
+          <button onClick={onClose} className="shortcuts-close"><X size={16} /></button>
         </div>
-        <div style={{ padding: '12px 20px', overflowY: 'auto', flex: 1 }}>
+        <div className="shortcuts-body">
           {shortcuts.map(group => (
-            <div key={group.category} style={{ marginBottom: 16 }}>
-              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                {group.category}
-              </h3>
+            <div key={group.category} className="shortcuts-group">
+              <h3 className="shortcuts-group-title">{group.category}</h3>
               {group.items.map(item => (
-                <div key={item.key} style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '6px 0',
-                  fontSize: 13
-                }}>
-                  <span style={{ color: 'var(--text-primary)' }}>{item.desc}</span>
-                  <kbd style={{
-                    padding: '2px 8px',
-                    borderRadius: 3,
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-color)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11
-                  }}>{item.key}</kbd>
+                <div key={item.key} className="shortcuts-item">
+                  <span className="shortcuts-desc">{item.desc}</span>
+                  <kbd className="shortcuts-key">{item.key}</kbd>
                 </div>
               ))}
             </div>
           ))}
         </div>
-        <div style={{
-          padding: '10px 20px',
-          borderTop: '1px solid var(--border-color)',
-          textAlign: 'center',
-          fontSize: 11,
-          color: 'var(--text-tertiary)'
-        }}>
+        <div className="shortcuts-footer">
           作者：heimin · 本项目全程使用 minimax m3 开发
         </div>
       </div>
+      <style>{`
+        .shortcuts-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 99999;
+          animation: fadeIn 0.15s ease;
+        }
+        .shortcuts-dialog {
+          background: var(--bg-primary);
+          border-radius: 12px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
+          width: 480px;
+          max-height: 80vh;
+          display: flex;
+          flex-direction: column;
+          animation: slideUp 0.2s ease;
+        }
+        .shortcuts-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 20px;
+          border-bottom: 1px solid var(--border-color);
+        }
+        .shortcuts-title {
+          font-size: 16;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 8;
+          margin: 0;
+          color: var(--text-primary);
+        }
+        .shortcuts-close {
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: none;
+          background: transparent;
+          color: var(--text-tertiary);
+          cursor: pointer;
+          border-radius: 6px;
+          transition: all 0.15s;
+        }
+        .shortcuts-close:hover {
+          background: var(--bg-hover);
+          color: var(--text-primary);
+        }
+        .shortcuts-body {
+          padding: 16px 20px;
+          overflow-y: auto;
+          flex: 1;
+        }
+        .shortcuts-group {
+          margin-bottom: 20px;
+        }
+        .shortcuts-group:last-child {
+          margin-bottom: 0;
+        }
+        .shortcuts-group-title {
+          font-size: 12;
+          font-weight: 600;
+          color: var(--text-secondary);
+          margin-bottom: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .shortcuts-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 8px 0;
+          font-size: 13;
+          border-bottom: 1px solid var(--border-color);
+        }
+        .shortcuts-item:last-child {
+          border-bottom: none;
+        }
+        .shortcuts-desc {
+          color: var(--text-primary);
+        }
+        .shortcuts-key {
+          padding: 4px 10px;
+          border-radius: 6px;
+          background: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          font-family: var(--font-mono);
+          font-size: 11;
+          color: var(--text-secondary);
+          font-weight: 500;
+        }
+        .shortcuts-footer {
+          padding: 12px 20px;
+          border-top: 1px solid var(--border-color);
+          text-align: center;
+          font-size: 11;
+          color: var(--text-tertiary);
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(10px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}</style>
     </div>
   )
 }

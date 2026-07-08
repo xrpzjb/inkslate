@@ -1,6 +1,7 @@
 import { useAppStore } from '../store/app'
 import { getThemeLabel } from '@shared/themeLabels'
-import { Cloud, CloudOff, CheckCircle2, AlertCircle, Loader2, Save, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, FileText } from 'lucide-react'
+import { Cloud, CloudOff, CheckCircle2, AlertCircle, Loader2, Save, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, FileText, GitBranch } from 'lucide-react'
+import { alert } from './AlertDialog'
 
 function formatTime(ts: number): string {
   const diff = Date.now() - ts
@@ -106,8 +107,26 @@ export function StatusBar() {
         <span>主题: {getThemeLabel(theme)}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {renderSyncIcon()}
-          {syncStatus.message ?? (syncStatus.state === 'idle' ? '就绪' : '')}
+          <span
+            style={{ cursor: syncStatus.state === 'error' ? 'pointer' : 'default' }}
+            onClick={() => {
+              if (syncStatus.state === 'error' && syncStatus.detail) {
+                alert({ title: '推送失败详情', message: syncStatus.detail })
+              }
+            }}
+          >
+            {syncStatus.message ?? (syncStatus.state === 'idle' ? '就绪' : '')}
+          </span>
         </span>
+        {/* Git 同步入口按钮 */}
+        <button
+          className="statusbar-btn"
+          style={btnStyle}
+          title="Git 同步设置"
+          onClick={() => window.dispatchEvent(new CustomEvent('inkslate:open-git-settings'))}
+        >
+          <GitBranch size={12} />
+        </button>
         {showLayoutToggles && (
           <>
             <div style={{ width: 1, height: 14, background: 'var(--border-color)', margin: '0 4px' }} />

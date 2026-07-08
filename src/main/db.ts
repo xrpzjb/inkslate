@@ -26,6 +26,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   recycleBin: {
     retentionDays: 30,
     autoCleanup: true
+  },
+  gitSync: {
+    repoUrl: '',
+    branch: 'main',
+    authorName: 'inkslate',
+    authorEmail: 'inkslate@local',
+    username: '',
+    configured: false,
+    initialized: false
   }
 }
 
@@ -174,6 +183,56 @@ export async function initDatabase(): Promise<void> {
       VALUES (?, ?, ?, ?, ?, ?, 0)
     `).run(defaultNotebook.id, defaultNotebook.name, null, defaultNotebook.createdAt, defaultNotebook.updatedAt, null)
   }
+
+  // ===== 迁移：把旧笔记文件从 {id}.{ext} 重命名为 {slug}.{ext} =====
+  // 让 git 仓库里的文件名可读（用标题而非 ID）
+  const slugMigration = db.prepare('SELECT value FROM settings WHERE key = ?').get('migration_slug_filenames') as { value: string } | undefined
+  if (!slugMigration) {
+    const notesDir = getNotesDir()
+    const filesDir = getFilesDir()
+    const rows = db.prepare('SELECT id, title, path, format, file_path FROM notes').all() as any[]
+    for (const row of rows) {
+      // 1. 重命名主文件
+      if (row.path) {
+        try {
+          const oldPath = row.path
+          if (fs.existsSync(oldPath)) {
+            const ext = row.format === 'html' ? 'html' : row.format === 'richtext' ? 'json' : row.format === 'code' ? 'code' : row.format === 'url' ? 'url' : row.format === 'file' ? 'file' : 'md'
+            const slug = slugify(row.title || 'untitled')
+            const newFileName = getUniqueFileName(slug, ext, notesDir, oldPath)
+            const newPath = path.join(notesDir, newFileName)
+            if (newPath !== oldPath) {
+              fs.renameSync(oldPath, newPath)
+              db.prepare('UPDATE notes SET path = ? WHERE id = ?').run(newPath, row.id)
+            }
+          }
+        } catch (e) {
+          console.error('migration slug: rename main file failed for note', row.id, e)
+        }
+      }
+      // 2. 重命名文件笔记的源文件
+      if (row.file_path) {
+        try {
+          const oldFilePath = row.file_path
+          if (fs.existsSync(oldFilePath)) {
+            const fileExt = path.extname(oldFilePath).slice(1) || 'bin'
+            // 用笔记标题做 slug，而非源文件名
+            const slug = slugify(row.title || 'untitled')
+            const newFileName = getUniqueFileName(slug, fileExt, filesDir, oldFilePath)
+            const newFilePath = path.join(filesDir, newFileName)
+            if (newFilePath !== oldFilePath) {
+              fs.renameSync(oldFilePath, newFilePath)
+              db.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(newFilePath, row.id)
+            }
+          }
+        } catch (e) {
+          console.error('migration slug: rename file note source failed for note', row.id, e)
+        }
+      }
+    }
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('migration_slug_filenames', '1')
+    console.log(`[migration] slug filenames: processed ${rows.length} notes`)
+  }
 }
 
 export function closeDatabase(): void {
@@ -197,6 +256,35 @@ export function getFilesDir(): string {
 
 export function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 9)
+}
+
+/** 把笔记标题转成合法文件名（不含扩展名）。
+ *  - 替换非法字符 / \ : * ? " < > | 为 -
+ *  - 合并连续空格
+ *  - 截断到 100 字符
+ *  - 空标题兜底 untitled */
+export function slugify(title: string): string {
+  let slug = title.trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (slug.length > 100) slug = slug.substring(0, 100).trim()
+  if (!slug) slug = 'untitled'
+  return slug
+}
+
+/** 生成不冲突的文件名（含扩展名）。
+ *  同目录下已存在则追加 -2, -3... */
+export function getUniqueFileName(slug: string, ext: string, dir: string, excludePath?: string): string {
+  let fileName = `${slug}.${ext}`
+  let filePath = path.join(dir, fileName)
+  let counter = 2
+  while (fs.existsSync(filePath) && path.resolve(filePath) !== path.resolve(excludePath ?? '')) {
+    fileName = `${slug}-${counter}.${ext}`
+    filePath = path.join(dir, fileName)
+    counter++
+  }
+  return fileName
 }
 
 // ============ 笔记本操作 ============
@@ -299,7 +387,8 @@ const dbMethods = {
     const id = generateId()
     const now = Date.now()
     const ext = format === 'html' ? 'html' : format === 'richtext' ? 'json' : format === 'code' ? 'code' : format === 'url' ? 'url' : format === 'file' ? 'file' : 'md'
-    const fileName = `${id}.${ext}`
+    const slug = slugify(title)
+    const fileName = getUniqueFileName(slug, ext, getNotesDir())
     const filePath = path.join(getNotesDir(), fileName)
 
     // 写入初始内容
@@ -357,23 +446,41 @@ const dbMethods = {
     const newFileExt = updates.fileExt !== undefined ? updates.fileExt : row.file_ext
     const now = Date.now()
 
+    // 标题变化时重命名磁盘文件（git 里也能看到可读的文件名）
+    let newPath = row.path
+    if (updates.title !== undefined && updates.title !== row.title && row.path) {
+      const ext = newFormat === 'html' ? 'html' : newFormat === 'richtext' ? 'json' : newFormat === 'code' ? 'code' : newFormat === 'url' ? 'url' : newFormat === 'file' ? 'file' : 'md'
+      const slug = slugify(newTitle)
+      const newFileNameDisk = getUniqueFileName(slug, ext, getNotesDir(), row.path)
+      const candidatePath = path.join(getNotesDir(), newFileNameDisk)
+      if (candidatePath !== row.path) {
+        try {
+          fs.renameSync(row.path, candidatePath)
+          newPath = candidatePath
+        } catch (e) {
+          console.error('rename note file failed:', e)
+          // 重命名失败，保持旧路径
+        }
+      }
+    }
+
     if (updates.content !== undefined) {
-      fs.writeFileSync(row.path, updates.content, 'utf-8')
+      fs.writeFileSync(newPath, updates.content, 'utf-8')
     } else if (updates.url !== undefined && newFormat === 'url') {
       // 网址笔记：url 变化时同步更新文件内容（保持 url 即内容的约定）
-      fs.writeFileSync(row.path, newUrl ?? '', 'utf-8')
+      fs.writeFileSync(newPath, newUrl ?? '', 'utf-8')
     }
 
     d.prepare(`
-      UPDATE notes SET title = ?, icon = ?, format = ?, url = ?, file_path = ?, file_name = ?, file_size = ?, file_ext = ?, updated_at = ? WHERE id = ?
-    `).run(newTitle, newIcon, newFormat, newUrl ?? null, newFilePath, newFileName, newFileSize, newFileExt, now, id)
+      UPDATE notes SET title = ?, icon = ?, format = ?, url = ?, file_path = ?, file_name = ?, file_size = ?, file_ext = ?, path = ?, updated_at = ? WHERE id = ?
+    `).run(newTitle, newIcon, newFormat, newUrl ?? null, newFilePath, newFileName, newFileSize, newFileExt, newPath, now, id)
 
     let content = ''
     try {
-      content = fs.readFileSync(row.path, 'utf-8')
+      content = fs.readFileSync(newPath, 'utf-8')
     } catch {}
 
-    return rowToNote({ ...row, title: newTitle, icon: newIcon, format: newFormat, url: newUrl, updated_at: now }, content)
+    return rowToNote({ ...row, title: newTitle, icon: newIcon, format: newFormat, url: newUrl, path: newPath, updated_at: now }, content)
   },
 
   /**
@@ -527,13 +634,14 @@ const dbMethods = {
     if (!row) return DEFAULT_SETTINGS
     try {
       const parsed = JSON.parse(row.value)
-      // 嵌套对象合并：recycleBin / layout / oss 老存档可能缺字段
+      // 嵌套对象合并：recycleBin / layout / oss / gitSync 老存档可能缺字段
       return {
         ...DEFAULT_SETTINGS,
         ...parsed,
         layout: { ...DEFAULT_SETTINGS.layout, ...(parsed.layout ?? {}) },
         oss: { ...DEFAULT_SETTINGS.oss, ...(parsed.oss ?? {}) },
-        recycleBin: { ...DEFAULT_SETTINGS.recycleBin, ...(parsed.recycleBin ?? {}) }
+        recycleBin: { ...DEFAULT_SETTINGS.recycleBin, ...(parsed.recycleBin ?? {}) },
+        gitSync: { ...DEFAULT_SETTINGS.gitSync, ...(parsed.gitSync ?? {}) }
       }
     } catch {
       return DEFAULT_SETTINGS
@@ -547,7 +655,8 @@ const dbMethods = {
       ...updates,
       layout: { ...current.layout, ...(updates.layout ?? {}) },
       oss: { ...current.oss, ...(updates.oss ?? {}) },
-      recycleBin: { ...current.recycleBin, ...(updates.recycleBin ?? {}) }
+      recycleBin: { ...current.recycleBin, ...(updates.recycleBin ?? {}) },
+      gitSync: { ...current.gitSync, ...(updates.gitSync ?? {}) }
     }
     getDatabase().prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('app_settings', JSON.stringify(merged))
     return merged

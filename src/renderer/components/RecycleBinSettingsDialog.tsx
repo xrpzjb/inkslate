@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { Trash2 } from 'lucide-react'
+import { toast } from './Toast'
+import { confirm } from './ConfirmDialog'
 
 /** 回收站设置对话框：保留天数 + 自动清理开关 + 立即清理按钮 */
 export function RecycleBinSettingsDialog({ onClose }: { onClose: () => void }) {
@@ -32,11 +34,11 @@ export function RecycleBinSettingsDialog({ onClose }: { onClose: () => void }) {
   }
 
   const handleEmptyNow = async () => {
-    if (!confirm('确定要清空回收站吗？所有已删除的笔记和笔记本将被永久删除，无法恢复。')) return
+    if (!await confirm({ message: '确定要清空回收站吗？所有已删除的笔记和笔记本将被永久删除，无法恢复。', danger: true })) return
     setBusy(true)
     try {
       const result = await emptyRecycleBin()
-      alert(`已清理 ${result.notes} 条笔记 + ${result.notebooks} 个笔记本`)
+      toast.success(`已清理 ${result.notes} 条笔记 + ${result.notebooks} 个笔记本`)
       await loadRecycleBin()
     } finally {
       setBusy(false)

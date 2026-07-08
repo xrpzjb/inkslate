@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAppStore } from '../store/app'
-import { X, Save, TestTube2, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { X, Save, TestTube2, Loader2, CheckCircle2, AlertCircle, HardDrive } from 'lucide-react'
 
 export function OssSettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useAppStore(s => s.settings)
@@ -67,200 +67,288 @@ export function OssSettingsDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <div
-        onClick={onClose}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.5)',
-          zIndex: 99998
-        }}
-      />
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: 'var(--bg-primary)',
-          borderRadius: 8,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-          width: 480,
-          maxHeight: '85vh',
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 99999
-        }}
-      >
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '16px 20px',
-          borderBottom: '1px solid var(--border-color)'
-        }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600 }}>OSS 存储设置</h2>
-          <button onClick={onClose} className="panel-action-btn"><X size={16} /></button>
+      <div className="dialog-overlay" onClick={onClose} />
+      <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-header">
+          <h2 className="dialog-title">
+            <HardDrive size={18} />
+            OSS 存储设置
+          </h2>
+          <button onClick={onClose} className="dialog-close"><X size={16} /></button>
         </div>
 
-        <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
-          <Field label="存储厂商">
+        <div className="dialog-body">
+          <div className="dialog-field">
+            <label className="dialog-field-label">存储厂商</label>
             <select
               value={provider}
               onChange={(e) => setProvider(e.target.value as any)}
-              style={{ width: '100%', padding: '6px 10px' }}
+              className="dialog-input"
             >
               <option value="aliyun">阿里云 OSS</option>
               <option value="tencent">腾讯云 COS</option>
               <option value="aws">AWS S3</option>
               <option value="minio">MinIO</option>
             </select>
-          </Field>
+          </div>
 
-          <Field label="Endpoint">
+          <div className="dialog-field">
+            <label className="dialog-field-label">Endpoint</label>
             <input
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
               placeholder={provider === 'aliyun' ? 'oss-cn-hangzhou.aliyuncs.com' : ''}
-              style={{ width: '100%' }}
+              className="dialog-input"
             />
-          </Field>
+          </div>
 
-          <Field label="Bucket 名称">
+          <div className="dialog-field">
+            <label className="dialog-field-label">Bucket 名称</label>
             <input
               value={bucket}
               onChange={(e) => setBucket(e.target.value)}
               placeholder="my-notes-bucket"
-              style={{ width: '100%' }}
+              className="dialog-input"
             />
-          </Field>
+          </div>
 
-          <Field label="区域 (Region)">
+          <div className="dialog-field">
+            <label className="dialog-field-label">区域 (Region)</label>
             <input
               value={region}
               onChange={(e) => setRegion(e.target.value)}
               placeholder="oss-cn-hangzhou"
-              style={{ width: '100%' }}
+              className="dialog-input"
             />
-          </Field>
+          </div>
 
-          <Field label="AccessKey ID">
+          <div className="dialog-field">
+            <label className="dialog-field-label">AccessKey ID</label>
             <input
               value={accessKeyId}
               onChange={(e) => setAccessKeyId(e.target.value)}
               placeholder="LTAI..."
-              style={{ width: '100%' }}
+              className="dialog-input"
             />
-          </Field>
+          </div>
 
-          <Field label="AccessKey Secret">
+          <div className="dialog-field">
+            <label className="dialog-field-label">AccessKey Secret</label>
             <input
               type="password"
               value={accessKeySecret}
               onChange={(e) => setAccessKeySecret(e.target.value)}
               placeholder="••••••••"
-              style={{ width: '100%' }}
+              className="dialog-input"
             />
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+            <div className="dialog-hint">
               密钥会用 Electron safeStorage 加密后存储在本地
             </div>
-          </Field>
+          </div>
 
-          <Field label="路径前缀">
+          <div className="dialog-field">
+            <label className="dialog-field-label">路径前缀</label>
             <input
               value={prefix}
               onChange={(e) => setPrefix(e.target.value)}
               placeholder="mdtext"
-              style={{ width: '100%' }}
+              className="dialog-input"
             />
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+            <div className="dialog-hint">
               所有文件会上传到 {prefix || 'mdtext'}/ 目录下
             </div>
-          </Field>
+          </div>
 
           {testResult && (
-            <div style={{
-              marginTop: 12,
-              padding: 10,
-              borderRadius: 4,
-              background: testResult.ok ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)',
-              color: testResult.ok ? '#4caf50' : '#f44336',
-              fontSize: 13,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8
-            }}>
+            <div className={`dialog-status ${testResult.ok ? 'dialog-status-success' : 'dialog-status-error'}`}>
               {testResult.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
               {testResult.message}
             </div>
           )}
         </div>
 
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: 8,
-          padding: '12px 20px',
-          borderTop: '1px solid var(--border-color)'
-        }}>
+        <div className="dialog-footer">
           <button
             onClick={handleTest}
             disabled={testing || !accessKeyId || !accessKeySecret}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 4,
-              border: '1px solid var(--border-color)',
-              background: 'transparent',
-              color: 'var(--text-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6
-            }}
+            className="dialog-btn dialog-btn-secondary"
           >
             {testing ? <Loader2 size={14} className="spin" /> : <TestTube2 size={14} />}
             测试连接
           </button>
+          <div style={{ flex: 1 }} />
+          <button onClick={onClose} className="dialog-btn dialog-btn-secondary">取消</button>
           <button
             onClick={handleSave}
             disabled={saving}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 4,
-              background: 'var(--accent-color)',
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6
-            }}
+            className="dialog-btn dialog-btn-primary"
           >
             {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
             保存
           </button>
         </div>
-
-        <style>{`
-          .spin { animation: spin 1s linear infinite; }
-          @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        `}</style>
       </div>
+      <style>{`
+        .dialog-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.5);
+          z-index: 99998;
+          animation: fadeIn 0.15s ease;
+        }
+        .dialog-content {
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: var(--bg-primary);
+          border-radius: 12px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
+          width: 480px;
+          max-height: 85vh;
+          display: flex;
+          flex-direction: column;
+          z-index: 99999;
+          animation: slideUp 0.2s ease;
+        }
+        .dialog-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 20px;
+          border-bottom: 1px solid var(--border-color);
+        }
+        .dialog-title {
+          font-size: 16;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 8;
+          margin: 0;
+          color: var(--text-primary);
+        }
+        .dialog-close {
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: none;
+          background: transparent;
+          color: var(--text-tertiary);
+          cursor: pointer;
+          border-radius: 6px;
+          transition: all 0.15s;
+        }
+        .dialog-close:hover {
+          background: var(--bg-hover);
+          color: var(--text-primary);
+        }
+        .dialog-body {
+          padding: 16px 20px;
+          overflow-y: auto;
+          flex: 1;
+        }
+        .dialog-footer {
+          padding: 12px 20px 16px;
+          border-top: 1px solid var(--border-color);
+          display: flex;
+          gap: 10px;
+        }
+        .dialog-field {
+          margin-bottom: 14px;
+        }
+        .dialog-field-label {
+          font-size: 12;
+          font-weight: 500;
+          margin-bottom: 6px;
+          color: var(--text-secondary);
+          display: block;
+        }
+        .dialog-input {
+          width: 100%;
+          padding: 8px 12px;
+          font-size: 13;
+          border: 1px solid var(--border-color);
+          border-radius: 6px;
+          background: var(--bg-primary);
+          color: var(--text-primary);
+          outline: none;
+          transition: border-color 0.15s, box-shadow 0.15s;
+          box-sizing: border-box;
+        }
+        .dialog-input:focus {
+          border-color: var(--accent-color);
+          box-shadow: 0 0 0 3px var(--accent-bg);
+        }
+        .dialog-input::placeholder {
+          color: var(--text-tertiary);
+        }
+        .dialog-hint {
+          font-size: 11;
+          color: var(--text-tertiary);
+          margin-top: 4;
+          line-height: 1.5;
+        }
+        .dialog-status {
+          padding: 10px 14px;
+          margin-top: 12px;
+          border-radius: 6px;
+          font-size: 13;
+          display: flex;
+          align-items: center;
+          gap: 8;
+        }
+        .dialog-status-success {
+          background: rgba(34, 197, 94, 0.1);
+          color: #22c55e;
+        }
+        .dialog-status-error {
+          background: rgba(239, 68, 68, 0.1);
+          color: #ef4444;
+        }
+        .dialog-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6;
+          padding: 8px 14px;
+          font-size: 13;
+          font-weight: 500;
+          border-radius: 6px;
+          cursor: pointer;
+          border: 1px solid var(--border-color);
+          transition: all 0.15s ease;
+        }
+        .dialog-btn-secondary {
+          background: var(--bg-secondary);
+          color: var(--text-primary);
+        }
+        .dialog-btn-secondary:hover:not(:disabled) {
+          background: var(--bg-hover);
+        }
+        .dialog-btn-primary {
+          background: var(--accent-color);
+          border-color: var(--accent-color);
+          color: #fff;
+        }
+        .dialog-btn-primary:hover:not(:disabled) {
+          background: var(--accent-hover);
+        }
+        .dialog-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translate(-50%, -48%); }
+          to { opacity: 1; transform: translate(-50%, -50%); }
+        }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{
-        display: 'block',
-        fontSize: 12,
-        fontWeight: 500,
-        marginBottom: 4,
-        color: 'var(--text-secondary)'
-      }}>
-        {label}
-      </label>
-      {children}
-    </div>
   )
 }

@@ -3,11 +3,13 @@ import { createPortal } from 'react-dom'
 import { useAppStore } from './store/app'
 import { appThemes } from './themes'
 import { Layout } from './components/Layout'
-import { TitleBar } from './components/TitleBar'
 import { StatusBar } from './components/StatusBar'
-import { OssSettingsDialog } from './components/OssSettingsDialog'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { RecycleBinSettingsDialog } from './components/RecycleBinSettingsDialog'
+import { GitSettingsDialog } from './components/GitSettingsDialog'
+import { ToastContainer, toast } from './components/Toast'
+import { ConfirmDialogManager } from './components/ConfirmDialog'
+import { AlertDialogManager, alert } from './components/AlertDialog'
 import { useState } from 'react'
 
 export default function App() {
@@ -22,7 +24,7 @@ export default function App() {
   const setSyncStatus = useAppStore(s => s.setSyncStatus)
   const updateSettings = useAppStore(s => s.updateSettings)
 
-  const [ossDialogOpen, setOssDialogOpen] = useState(false)
+  const [gitDialogOpen, setGitDialogOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [recycleBinSettingsOpen, setRecycleBinSettingsOpen] = useState(false)
 
@@ -89,6 +91,10 @@ export default function App() {
 
   // 菜单事件订阅
   useEffect(() => {
+    // 监听自定义事件打开 Git 设置（StatusBar 按钮触发）
+    const openGit = () => setGitDialogOpen(true)
+    window.addEventListener('inkslate:open-git-settings', openGit)
+
     const cleanup = window.inkslateApi.onMenu((event, ...args) => {
       const state = useAppStore.getState()
       switch (event) {
@@ -137,7 +143,53 @@ export default function App() {
           togglePreview()
           break
         case 'oss-settings':
-          setOssDialogOpen(true)
+          // OSS 同步已废弃，重定向到 Git 同步设置
+          setGitDialogOpen(true)
+          break
+        case 'git-settings':
+          setGitDialogOpen(true)
+          break
+        case 'git-push':
+          setSyncStatus({ state: 'syncing', message: '推送中...' })
+          window.inkslateApi.git.push(true).then(r => {
+            if (!r.ok) {
+              const errMsg = r.message || '未知错误'
+              setSyncStatus({ state: 'error', message: '推送失败', detail: errMsg })
+              toast.error('推送失败：' + errMsg)
+            } else {
+              setSyncStatus({ state: 'success', message: '推送成功' })
+              toast.success('推送成功')
+            }
+          }).catch(e => {
+            const errMsg = e?.message ?? '未知错误'
+            setSyncStatus({ state: 'error', message: '推送失败', detail: errMsg })
+            toast.error('推送失败：' + errMsg)
+          })
+          break
+        case 'git-pull':
+          setSyncStatus({ state: 'syncing', message: '拉取中...' })
+          window.inkslateApi.git.pull().then(async r => {
+            if (!r.ok) {
+              const errMsg = r.message || '未知错误'
+              setSyncStatus({ state: 'error', message: '拉取失败', detail: errMsg })
+              toast.error('拉取失败：' + errMsg)
+            } else {
+              if (r.updated) {
+                setSyncStatus({ state: 'success', message: '已更新' })
+                toast.success('已从远端更新')
+                // 有更新：重新加载笔记（阶段3 会接 reconcile，这里先 reload）
+                await useAppStore.getState().loadNotebooks()
+                await useAppStore.getState().loadNotes()
+              } else {
+                setSyncStatus({ state: 'success', message: '已是最新' })
+                toast.info('已是最新，无需更新')
+              }
+            }
+          }).catch(e => {
+            const errMsg = e?.message ?? '未知错误'
+            setSyncStatus({ state: 'error', message: '拉取失败', detail: errMsg })
+            toast.error('拉取失败：' + errMsg)
+          })
           break
         case 'show-shortcuts':
           setShortcutsOpen(true)
@@ -152,9 +204,9 @@ export default function App() {
         case 'empty-recycle-bin': {
           const empty = useAppStore.getState().emptyRecycleBin
           empty().then((r) => {
-            alert(`已清理 ${r.notes} 条笔记 + ${r.notebooks} 个笔记本`)
+            toast.success(`已清理 ${r.notes} 条笔记 + ${r.notebooks} 个笔记本`)
           }).catch((e) => {
-            alert('清空失败：' + (e as Error).message)
+            toast.error('清空失败：' + (e as Error).message)
           })
           break
         }
@@ -222,7 +274,10 @@ export default function App() {
         // 其他事件由组件内部监听
       }
     })
-    return cleanup
+    return () => {
+      window.removeEventListener('inkslate:open-git-settings', openGit)
+      cleanup()
+    }
   }, [])
 
   // 键盘快捷键（Ctrl+P / Ctrl+Shift+E 等本地快捷键）
@@ -257,13 +312,15 @@ export default function App() {
 
   return (
     <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <TitleBar />
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <Layout />
       </div>
       <StatusBar />
-            {ossDialogOpen && createPortal(
-        <OssSettingsDialog onClose={() => setOssDialogOpen(false)} />,
+      <ToastContainer />
+      <ConfirmDialogManager />
+      <AlertDialogManager />
+      {gitDialogOpen && createPortal(
+        <GitSettingsDialog onClose={() => setGitDialogOpen(false)} />,
         document.body
       )}
       {shortcutsOpen && createPortal(

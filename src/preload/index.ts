@@ -62,6 +62,34 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.FILE_NOTE_READ, noteId)
   },
 
+  /** Git 同步 */
+  git: {
+    /** 保存配置（密码/token 加密存） */
+    configure: (payload: { repoUrl: string; branch: string; authorName: string; authorEmail: string; username: string; token: string }): Promise<any> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_CONFIGURE, payload),
+    /** 工作区变更状态 */
+    status: (): Promise<{ filepath: string; status: string }[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_STATUS),
+    /** git init + 初始 commit */
+    init: (): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_INIT),
+    /** clone 远端仓库 */
+    clone: (url: string): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_CLONE, url),
+    /** push（可选 autoCommit 先提交未保存变更） */
+    push: (autoCommit?: boolean): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, autoCommit ?? true),
+    /** pull = fetch + merge */
+    pull: (): Promise<{ ok: boolean; message: string; updated: boolean }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL),
+    /** 提交历史（可指定 filepath） */
+    log: (filepath?: string, maxCount?: number): Promise<any[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_LOG, filepath, maxCount),
+    /** 读指定 commit 的文件内容（文本） */
+    showFile: (oid: string, filepath: string): Promise<string | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_SHOW_FILE, oid, filepath)
+  },
+
   recycleBin: {
     purgeExpired: (): Promise<{ notes: number; notebooks: number }> =>
       ipcRenderer.invoke(IPC_CHANNELS.RECYCLE_BIN_PURGE_EXPIRED),
@@ -127,7 +155,9 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.MENU_TOGGLE_PREVIEW, () => callback('toggle-preview'))
     ipcRenderer.on(IPC_CHANNELS.THEME_CHANGE, (_e, theme) => callback('theme-change', theme))
     ipcRenderer.on('menu:find', () => callback('find'))
-    ipcRenderer.on('menu:oss-settings', () => callback('oss-settings'))
+    ipcRenderer.on('menu:git-settings', () => callback('git-settings'))
+    ipcRenderer.on('menu:git-push', () => callback('git-push'))
+    ipcRenderer.on('menu:git-pull', () => callback('git-pull'))
     ipcRenderer.on('menu:show-shortcuts', () => callback('show-shortcuts'))
     ipcRenderer.on(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN, () => callback('open-recycle-bin'))
     ipcRenderer.on(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS, () => callback('recycle-bin-settings'))
@@ -147,7 +177,9 @@ const api = {
       ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_TOGGLE_PREVIEW)
       ipcRenderer.removeAllListeners(IPC_CHANNELS.THEME_CHANGE)
       ipcRenderer.removeAllListeners('menu:find')
-      ipcRenderer.removeAllListeners('menu:oss-settings')
+      ipcRenderer.removeAllListeners('menu:git-settings')
+      ipcRenderer.removeAllListeners('menu:git-push')
+      ipcRenderer.removeAllListeners('menu:git-pull')
       ipcRenderer.removeAllListeners('menu:show-shortcuts')
       ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN)
       ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS)

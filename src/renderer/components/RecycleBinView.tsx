@@ -5,6 +5,7 @@ import {
   Trash2, RotateCcw, FileText, Folder, FolderOpen, Inbox,
   Calendar, AlertTriangle, FileCode2, FileType2, Globe, X
 } from 'lucide-react'
+import { confirm } from './ConfirmDialog'
 
 type Tab = 'notes' | 'notebooks'
 
@@ -94,7 +95,7 @@ export function RecycleBinView() {
             notes={deletedNotes}
             onRestore={async (id) => { await restoreNote(id) }}
             onPurge={async (id) => {
-              if (confirm('永久删除这条笔记？文件将被彻底删除，无法恢复。')) {
+              if (await confirm({ message: '永久删除这条笔记？文件将被彻底删除，无法恢复。', danger: true })) {
                 await purgeNote(id)
               }
             }}
@@ -104,7 +105,7 @@ export function RecycleBinView() {
             notebooks={deletedNotebooks}
             onRestore={async (id) => { await restoreNotebook(id) }}
             onPurge={async (id) => {
-              if (confirm('永久删除这个笔记本？文件夹不会被删除，但里面的笔记若各自仍在回收站仍可单独还原。')) {
+              if (await confirm({ message: '永久删除这个笔记本？文件夹不会被删除，但里面的笔记若各自仍在回收站仍可单独还原。', danger: true })) {
                 await purgeNotebook(id)
               }
             }}

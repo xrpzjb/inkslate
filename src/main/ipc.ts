@@ -2,8 +2,9 @@ import { ipcMain, dialog, BrowserWindow } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult } from '../shared/types'
-import { dbApi, getFilesDir } from './db'
+import { dbApi, getFilesDir, slugify, getUniqueFileName } from './db'
 import { OssManager } from './oss/manager'
+import { GitManager } from './git/manager'
 
 export function setupIpcHandlers(): void {
 
@@ -256,7 +257,11 @@ ${payload?.html ?? ''}
     if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true })
     const stat = fs.statSync(sourcePath)
     const ext = path.extname(sourcePath).slice(1).toLowerCase()
-    const destPath = path.join(filesDir, `${noteId}.${ext || 'bin'}`)
+    // 用文件名（去扩展名）做 slug，而非 noteId，让 git 里的文件名可读
+    const baseName = path.basename(sourcePath, path.extname(sourcePath))
+    const slug = slugify(baseName)
+    const uniqueName = getUniqueFileName(slug, ext || 'bin', filesDir)
+    const destPath = path.join(filesDir, uniqueName)
     await fs.promises.copyFile(sourcePath, destPath)
     const fileName = path.basename(sourcePath)
     const fileSize = stat.size
@@ -281,7 +286,11 @@ ${payload?.html ?? ''}
     if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true })
     const stat = fs.statSync(sourcePath)
     const ext = path.extname(sourcePath).slice(1).toLowerCase()
-    const destPath = path.join(filesDir, `${noteId}.${ext || 'bin'}`)
+    // 用文件名（去扩展名）做 slug
+    const baseName = path.basename(sourcePath, path.extname(sourcePath))
+    const slug = slugify(baseName)
+    const uniqueName = getUniqueFileName(slug, ext || 'bin', filesDir, note.filePath)
+    const destPath = path.join(filesDir, uniqueName)
     await fs.promises.copyFile(sourcePath, destPath)
     const fileName = path.basename(sourcePath)
     const fileSize = stat.size
@@ -313,5 +322,72 @@ ${payload?.html ?? ''}
     const buffer = await fs.promises.readFile(note.filePath)
     // 把 Node Buffer 转成可 IPC 传输的 ArrayBuffer
     return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+  })
+
+  // ============ Git 同步 ============
+  const gitMgr = GitManager.getInstance()
+
+  /** 保存 Git 配置（URL/branch/author/username/password），密码用 safeStorage 加密 */
+  ipcMain.handle(IPC_CHANNELS.GIT_CONFIGURE, async (_, payload: {
+    repoUrl: string
+    branch: string
+    authorName: string
+    authorEmail: string
+    username: string
+    token: string
+  }): Promise<AppSettings['gitSync']> => {
+    return gitMgr.saveConfig(payload.repoUrl, payload.branch, payload.authorName, payload.authorEmail, payload.username, payload.token)
+  })
+
+  /** 工作区变更状态 */
+  ipcMain.handle(IPC_CHANNELS.GIT_STATUS, async (): Promise<{ filepath: string; status: string }[]> => {
+    return gitMgr.status()
+  })
+
+  /** 在工作区 git init + 初始 commit */
+  ipcMain.handle(IPC_CHANNELS.GIT_INIT, async (): Promise<{ ok: boolean; message: string }> => {
+    try {
+      await gitMgr.initRepo()
+      return { ok: true, message: '初始化成功' }
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? '初始化失败' }
+    }
+  })
+
+  /** 从远端 clone（工作区须为空） */
+  ipcMain.handle(IPC_CHANNELS.GIT_CLONE, async (_, url: string): Promise<{ ok: boolean; message: string }> => {
+    try {
+      await gitMgr.cloneRepo(url)
+      return { ok: true, message: '克隆成功' }
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? '克隆失败' }
+    }
+  })
+
+  /** push 到远端 */
+  ipcMain.handle(IPC_CHANNELS.GIT_PUSH, async (_, autoCommit: boolean = true): Promise<{ ok: boolean; message: string }> => {
+    try {
+      if (autoCommit) {
+        await gitMgr.commitAll(`update: ${new Date().toLocaleString('zh-CN')}`)
+      }
+      return await gitMgr.push()
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? 'push 失败' }
+    }
+  })
+
+  /** pull = fetch + merge */
+  ipcMain.handle(IPC_CHANNELS.GIT_PULL, async (): Promise<{ ok: boolean; message: string; updated: boolean }> => {
+    return gitMgr.pull()
+  })
+
+  /** 提交历史（可指定 filepath） */
+  ipcMain.handle(IPC_CHANNELS.GIT_LOG, async (_, filepath?: string, maxCount?: number): Promise<any[]> => {
+    return gitMgr.log(filepath, maxCount ?? 50)
+  })
+
+  /** 读指定 commit 的文件内容（文本） */
+  ipcMain.handle(IPC_CHANNELS.GIT_SHOW_FILE, async (_, oid: string, filepath: string): Promise<string | null> => {
+    return gitMgr.showFile(oid, filepath)
   })
 }

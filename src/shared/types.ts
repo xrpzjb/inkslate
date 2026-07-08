@@ -96,11 +96,31 @@ export interface AppSettings {
     /** 启动时自动清理过期项 */
     autoCleanup: boolean
   }
+  /** Git 同步设置（2026-07-08 起用 Git 仓库替代 OSS 同步） */
+  gitSync: {
+    /** 仓库 HTTPS URL，如 https://github.com/user/repo.git */
+    repoUrl: string
+    /** 分支名，默认 main */
+    branch: string
+    /** Git author 名字（commit 作者署名，跟登录账号无关） */
+    authorName: string
+    /** Git author 邮箱 */
+    authorEmail: string
+    /** 认证用户名（登录账号，跟 authorName 分开） */
+    username: string
+    /** 密码或 Personal Access Token，用 safeStorage 加密后存 encryptedToken */
+    encryptedToken?: string
+    /** 是否已配置完成（URL + username + 密码 都填了） */
+    configured: boolean
+    /** 工作区是否已 git init / clone */
+    initialized: boolean
+  }
 }
 
 export interface SyncStatus {
   state: 'idle' | 'syncing' | 'success' | 'error' | 'offline' | 'unconfigured'
   message?: string
+  detail?: string  // 错误详情，点击错误状态时显示
   lastSyncAt?: number
   pendingFiles?: number
 }
@@ -182,5 +202,15 @@ export const IPC_CHANNELS = {
   FILE_NOTE_CREATE: 'file-note:create',
   FILE_NOTE_REPLACE: 'file-note:replace',
   FILE_NOTE_SAVE_AS: 'file-note:save-as',
-  FILE_NOTE_READ: 'file-note:read'
+  FILE_NOTE_READ: 'file-note:read',
+
+  // Git 同步
+  GIT_CONFIGURE: 'git:configure',
+  GIT_STATUS: 'git:status',
+  GIT_PUSH: 'git:push',
+  GIT_PULL: 'git:pull',
+  GIT_INIT: 'git:init',
+  GIT_CLONE: 'git:clone',
+  GIT_LOG: 'git:log',
+  GIT_SHOW_FILE: 'git:show-file'
 } as const
