@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
-import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3 } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3 } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
 
@@ -21,42 +21,140 @@ export function Editor() {
   const togglePreview = useAppStore(s => s.togglePreview)
   const setSaveStatus = useAppStore(s => s.setSaveStatus)
   const [title, setTitle] = useState('')
-  const saveTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const titleTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const contentTimerRef = useRef<NodeJS.Timeout | null>(null)
   const codeEditorRef = useRef<import('./CodeEditor').CodeEditorHandle>(null)
 
-  // 同步当前笔记（切换时）
+  // 关键防御：跟踪"本组件正在为哪个 note 持有本地 title/content 草稿"。
+  // 切笔记时：旧 note 的草稿用完即弃，新 note 的同步效果跑完后才允许写入。
+  // 防止"切到 B 时，A 的本地 content/title 错存到 B"。
+  const editingNoteIdRef = useRef<string | null>(null)
+  // 缓存上一个 note 的草稿（用于切换时 flush 保存）
+  const lastDraftRef = useRef<{ id: string; title: string; content: string } | null>(null)
+
+  // 同步当前笔记（切换时 + 外部重命名时）
   useEffect(() => {
     if (currentNote) {
+      // 切到新 note 前：把上一个 note 的草稿 flush 一次（清掉 timer 立即写库）
+      const last = lastDraftRef.current
+      if (last && last.id !== currentNote.id) {
+        // 切走了。先清掉两个 timer（避免 timer 触发时错误写入）
+        if (titleTimerRef.current) {
+          clearTimeout(titleTimerRef.current)
+          titleTimerRef.current = null
+        }
+        if (contentTimerRef.current) {
+          clearTimeout(contentTimerRef.current)
+          contentTimerRef.current = null
+        }
+        // 异步 flush（不 await，避免阻塞 UI）
+        // —— 把上一个 note 的最终草稿一次性写入库
+        if (last.title !== undefined) {
+          updateNote(last.id, { title: last.title }).catch(() => {})
+        }
+        if (last.content !== undefined) {
+          updateNote(last.id, { content: last.content }).catch(() => {})
+        }
+      }
+
       setContent(currentNote.content)
       setTitle(currentNote.title)
+      editingNoteIdRef.current = currentNote.id
+      lastDraftRef.current = { id: currentNote.id, title: currentNote.title, content: currentNote.content }
     } else {
+      // 切到无选中状态：也 flush 一次
+      const last = lastDraftRef.current
+      if (last) {
+        if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
+        if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
+        updateNote(last.id, { title: last.title }).catch(() => {})
+        updateNote(last.id, { content: last.content }).catch(() => {})
+      }
+
       setContent('')
       setTitle('')
+      editingNoteIdRef.current = null
+      lastDraftRef.current = null
     }
+    // 注意：故意不把 updateNote 加进依赖——updateNote 来自 store，引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentNote?.id])
+
+  // 每次本地 title/content 变化时，更新 lastDraftRef
+  // 这样切换时能拿到最新草稿
+  useEffect(() => {
+    if (editingNoteIdRef.current) {
+      lastDraftRef.current = { id: editingNoteIdRef.current, title, content }
+    }
+  }, [title, content])
+
+  // 外部更新 title（如 Sidebar 重命名）时，刷新本地 title
+  // 仅在 store 里的 title 跟本地不一致时同步，避免覆盖用户正在输入
+  useEffect(() => {
+    if (!currentNote) return
+    if (currentNote.id !== editingNoteIdRef.current) return
+    if (currentNote.title !== title && currentNote.title !== undefined) {
+      // 区分"外部修改"和"自己刚保存完"两种情况：
+      // 自己保存后 store 里的 title 跟本地 title 一样，guard 在这里不触发
+      setTitle(currentNote.title)
+    }
+  }, [currentNote?.title])
 
   // 即时同步草稿到 store（不进库），让 Preview 实时看到最新内容
   useEffect(() => {
     if (!currentNote) return
+    // 关键 guard：只为本组件正在编辑的 note 同步草稿
+    if (currentNote.id !== editingNoteIdRef.current) return
     if (content === currentNote.content && title === currentNote.title) return
     updateCurrentNoteDraft({ content, title })
   }, [content, title, currentNote])
 
-  // 防抖写库（2s 无输入后保存到磁盘）
+  // 标题：立即写库（单行输入，成本低，用户期望即时反馈）
   useEffect(() => {
     if (!currentNote) return
-    if (content === currentNote.content && title === currentNote.title) return
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      handleSave()
+    if (currentNote.id !== editingNoteIdRef.current) return
+    if (title === currentNote.title) return
+    if (titleTimerRef.current) clearTimeout(titleTimerRef.current)
+    titleTimerRef.current = setTimeout(() => {
+      // 二次 guard：timer 触发时再次确认还在编辑同一个 note
+      if (currentNote.id !== editingNoteIdRef.current) return
+      // 只传 title，避免覆盖 content
+      updateNote(currentNote.id, { title }).catch(() => { /* 错误已在 updateNote 内部处理 */ })
+    }, 300) // 300ms 防抖，避免连续按键触发多次写入
+    return () => {
+      if (titleTimerRef.current) clearTimeout(titleTimerRef.current)
+    }
+  }, [title, currentNote?.id])
+
+  // 正文：2s 防抖写库（大文本，频繁写库不划算）
+  useEffect(() => {
+    if (!currentNote) return
+    if (currentNote.id !== editingNoteIdRef.current) return
+    if (content === currentNote.content) return
+    if (contentTimerRef.current) clearTimeout(contentTimerRef.current)
+    contentTimerRef.current = setTimeout(() => {
+      // 二次 guard：timer 触发时再次确认还在编辑同一个 note
+      if (currentNote.id !== editingNoteIdRef.current) return
+      // 只传 content，避免覆盖 title
+      updateNote(currentNote.id, { content }).catch(() => { /* 错误已在 updateNote 内部处理 */ })
     }, 2000)
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      if (contentTimerRef.current) clearTimeout(contentTimerRef.current)
     }
-  }, [content, title])
+  }, [content, currentNote?.id])
 
   const handleSave = async () => {
     if (!currentNote) return
+    if (currentNote.id !== editingNoteIdRef.current) return
+    // 清掉两个防抖 timer，避免重复保存
+    if (titleTimerRef.current) {
+      clearTimeout(titleTimerRef.current)
+      titleTimerRef.current = null
+    }
+    if (contentTimerRef.current) {
+      clearTimeout(contentTimerRef.current)
+      contentTimerRef.current = null
+    }
     setSaveStatus({ saving: true })
     try {
       await updateNote(currentNote.id, { content, title })
@@ -337,6 +435,41 @@ export function Editor() {
             onClick={handleFormatCode}
           />
           <ToolbarBtn icon={<Save size={14} />} title="保存 (Ctrl+S)" onClick={handleSave} />
+        </div>
+      )}
+
+      {currentNote.format === 'url' && (
+        <div style={{
+          display: 'flex',
+          gap: 8,
+          padding: '8px 12px',
+          borderBottom: '1px solid var(--border-color)',
+          background: 'var(--bg-tertiary)',
+          flexShrink: 0,
+          alignItems: 'center',
+          marginLeft: -1,
+          marginRight: -1
+        }}>
+          <Link2 size={14} color="var(--text-tertiary)" />
+          <input
+            value={currentNote.url ?? ''}
+            placeholder="https://..."
+            onChange={(e) => {
+              // 直接改 url（不进本地 draft state，url 即内容）
+              const newUrl = e.target.value
+              updateNote(currentNote.id, { url: newUrl })
+            }}
+            style={{
+              flex: 1,
+              border: 'none',
+              background: 'transparent',
+              fontSize: 13,
+              color: 'var(--text-primary)',
+              padding: 0,
+              outline: 'none',
+              fontFamily: 'var(--font-mono)'
+            }}
+          />
         </div>
       )}
 

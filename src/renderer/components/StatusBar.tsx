@@ -46,6 +46,11 @@ export function StatusBar() {
     }
   }
 
+  // 右下角的侧栏/编辑器/预览切换按钮：只有 markdown/html 笔记才需要
+  // —— code/url/file/richtext 笔记的布局是固定的（editor/preview 二选一强制），
+  //    切换按钮点了会乱布局；保留侧栏切换对这几种笔记意义也不大
+  const showLayoutToggles = currentNote?.format === 'markdown' || currentNote?.format === 'html'
+
   const btnStyle = {
     display: 'inline-flex',
     alignItems: 'center',
@@ -103,31 +108,35 @@ export function StatusBar() {
           {renderSyncIcon()}
           {syncStatus.message ?? (syncStatus.state === 'idle' ? '就绪' : '')}
         </span>
-        <div style={{ width: 1, height: 14, background: 'var(--border-color)', margin: '0 4px' }} />
-        <button
-          className="statusbar-btn"
-          style={btnStyle}
-          onClick={toggleSidebar}
-          title={sidebarVisible ? '隐藏侧栏' : '显示侧栏'}
-        >
-          {sidebarVisible ? <PanelLeftClose size={13} /> : <PanelLeftOpen size={13} />}
-        </button>
-        <button
-          className="statusbar-btn"
-          style={btnStyle}
-          onClick={toggleEditor}
-          title={editorVisible ? '隐藏编辑器' : '显示编辑器'}
-        >
-          {editorVisible ? <PanelRightClose size={13} /> : <PanelLeftOpen size={13} />}
-        </button>
-        <button
-          className="statusbar-btn"
-          style={btnStyle}
-          onClick={togglePreview}
-          title={previewVisible ? '隐藏预览' : '显示预览'}
-        >
-          {previewVisible ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
-        </button>
+        {showLayoutToggles && (
+          <>
+            <div style={{ width: 1, height: 14, background: 'var(--border-color)', margin: '0 4px' }} />
+            <button
+              className="statusbar-btn"
+              style={btnStyle}
+              onClick={toggleSidebar}
+              title={sidebarVisible ? '隐藏侧栏' : '显示侧栏'}
+            >
+              {sidebarVisible ? <PanelLeftClose size={13} /> : <PanelLeftOpen size={13} />}
+            </button>
+            <button
+              className="statusbar-btn"
+              style={btnStyle}
+              onClick={toggleEditor}
+              title={editorVisible ? '隐藏编辑器' : '显示编辑器'}
+            >
+              {editorVisible ? <PanelRightClose size={13} /> : <PanelLeftOpen size={13} />}
+            </button>
+            <button
+              className="statusbar-btn"
+              style={btnStyle}
+              onClick={togglePreview}
+              title={previewVisible ? '隐藏预览' : '显示预览'}
+            >
+              {previewVisible ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+            </button>
+          </>
+        )}
       </div>
       <style>{`
         .statusbar-btn:hover {

@@ -17,6 +17,7 @@ function useHorizontalResize(
 ) {
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
+  const refWidthDuringDrag = useRef(0)
   const onCommitRef = useRef(onCommit)
 
   useEffect(() => { onCommitRef.current = onCommit }, [onCommit])
@@ -40,25 +41,47 @@ function useHorizontalResize(
       const delta = e.clientX - startXRef.current
       const effectiveDelta = direction === 'right' ? delta : -delta
       const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidthRef.current + effectiveDelta))
-      target.style.width = `${newWidth}px`
+      // 直接走 React state（通过 onCommitRef 的旁路 setState），
+      // 不操作 DOM inline style，避免后续 toggleVisible 时 stale style 冲突
+      // 拖动期间用一个临时 ref 持有最新值，pointerup 时再 commit
+      if (refWidthDuringDrag.current !== newWidth) {
+        refWidthDuringDrag.current = newWidth
+        // 实时反馈：直接写 inline style 仍然 OK，但必须在 pointerup 时清掉
+        target.style.width = `${newWidth}px`
+      }
     }
 
     const onMouseUp = (e: PointerEvent) => {
       if (startXRef.current === 0) return
       startXRef.current = 0
-      onCommitRef.current(target.offsetWidth)
+      const finalWidth = refWidthDuringDrag.current
+      // 清掉 inline style，让 React state 接管（避免与 style={{ width }} 冲突）
+      target.style.width = ''
+      onCommitRef.current(finalWidth)
       divider.releasePointerCapture(e.pointerId)
       document.body.style.userSelect = ''
+    }
+
+    // 双击分隔条 → 重置回默认值（minWidth 之上、maxWidth 之下、中位数）。
+    // —— 拖死之后的"逃生通道"，免得点右下角按钮不响应以为坏了
+    const onDoubleClick = (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const defaultWidth = Math.round((minWidth + maxWidth) / 4) // 偏小的默认值
+      target.style.width = ''  // 清掉 inline style，让 React state 接管
+      onCommitRef.current(defaultWidth)
     }
 
     divider.addEventListener('pointerdown', onMouseDown)
     divider.addEventListener('pointermove', onMouseMove)
     divider.addEventListener('pointerup', onMouseUp)
+    divider.addEventListener('dblclick', onDoubleClick)
 
     return () => {
       divider.removeEventListener('pointerdown', onMouseDown)
       divider.removeEventListener('pointermove', onMouseMove)
       divider.removeEventListener('pointerup', onMouseUp)
+      divider.removeEventListener('dblclick', onDoubleClick)
     }
   }, [dividerRef, targetRef, direction, minWidth, maxWidth])
 }
@@ -77,14 +100,27 @@ export function Layout() {
 
   const [sidebarWidth, setSidebarWidth] = useState(settings?.layout.sidebarWidth ?? 260)
   const [previewWidth, setPreviewWidth] = useState(420)
+  // 窗口宽度：用于动态计算 max 拖动上界，保证任何一栏都不会把其他挤到看不见
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
   const sidebarDividerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const previewDividerRef = useRef<HTMLDivElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
 
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   const isRichText = currentNote?.format === 'richtext'
   const isCode = currentNote?.format === 'code'
   const effectivePreviewVisible = previewVisible && !isRichText && !isCode
+
+  // 拖动 max：保证编辑器至少有 240px 可见，预览至少有 200px 可见（隐藏时给 0）
+  // —— 物理上"挤不掉"另一栏
+  const sidebarMax = Math.max(160, windowWidth - (effectivePreviewVisible ? 200 : 0) - 240 - 22)
+  const previewMax = Math.max(200, windowWidth - sidebarWidth - 240 - 22)
 
   useHorizontalResize(
     sidebarDividerRef,
@@ -92,7 +128,7 @@ export function Layout() {
     'right',
     useCallback((w: number) => setSidebarWidth(w), []),
     160,
-    1200
+    sidebarMax
   )
 
   useHorizontalResize(
@@ -101,7 +137,7 @@ export function Layout() {
     'left',
     useCallback((w: number) => setPreviewWidth(w), []),
     200,
-    2000
+    previewMax
   )
 
   const lastSavedWidth = useRef(sidebarWidth)
@@ -146,17 +182,24 @@ export function Layout() {
               <>
                 <div
                   className={`layout-editor ${!editorVisible ? 'collapsed' : ''}`}
-                  style={{ width: editorVisible ? 'auto' : 0, flex: editorVisible ? 1 : 'none' }}
+                  style={{
+                    // url 和 file 笔记都不渲染 Editor，整列给 preview
+                    width: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 0 : (editorVisible ? 'auto' : 0),
+                    flex: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : (editorVisible ? 1 : 'none'),
+                    display: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : undefined
+                  }}
                 >
-                  {editorVisible && <Editor />}
+                  {editorVisible && currentNote?.format !== 'url' && currentNote?.format !== 'file' && <Editor />}
                 </div>
 
                 <div
                   ref={previewDividerRef}
                   className="layout-divider"
                   style={{
-                    visibility: effectivePreviewVisible ? 'visible' : 'hidden',
-                    pointerEvents: effectivePreviewVisible ? 'auto' : 'none'
+                    // 编辑器隐藏时 divider 不可见也不可拖 —— preview 已接管整块
+                    // 编辑器显示但 preview 隐藏时也不可拖
+                    visibility: (effectivePreviewVisible && editorVisible) ? 'visible' : 'hidden',
+                    pointerEvents: (effectivePreviewVisible && editorVisible) ? 'auto' : 'none'
                   }}
                 />
 
@@ -164,14 +207,99 @@ export function Layout() {
                   ref={previewRef}
                   className={`layout-preview ${!effectivePreviewVisible ? 'collapsed' : ''}`}
                   style={{
+                    // 关键设计：
+                    //  - editor 显示 + preview 显示：preview 用 previewWidth，preview-divider 可拖
+                    //  - editor 隐藏 + preview 显示：preview 用 flex: 1 接管右侧全部空间，
+                    //    左边界保持在 preview-divider 位置不动（preview-divider 仍可见位置），
+                    //    但 divider 不可拖（见上面 visibility 设置）
+                    //  - preview 隐藏：preview width 0
                     width: effectivePreviewVisible
-                      ? (editorVisible ? previewWidth : '100%')
+                      ? (editorVisible ? previewWidth : 'auto')
                       : 0,
-                    flex: effectivePreviewVisible && !editorVisible ? 1 : 'none'
+                    flex: effectivePreviewVisible ? (editorVisible ? 'none' : 1) : 'none',
+                    minWidth: 0
                   }}
                 >
                   <div className="panel-header">
-                    <span className="panel-title">预览</span>
+                    {currentNote?.format === 'url' ? (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        width: '100%',
+                        minWidth: 0,
+                        height: '100%',
+                        padding: 0
+                      }}>
+                        <span style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: 'var(--text-primary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 1,
+                          minWidth: 0,
+                          userSelect: 'all'
+                        }}>
+                          {currentNote.title || '未命名网址'}
+                        </span>
+                        <span style={{
+                          fontSize: 11,
+                          color: 'var(--text-tertiary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 999,
+                          minWidth: 0,
+                          userSelect: 'all',
+                          fontFamily: 'var(--font-mono)'
+                        }}>
+                          {currentNote.url}
+                        </span>
+                      </div>
+                    ) : currentNote?.format === 'file' ? (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        width: '100%',
+                        minWidth: 0,
+                        height: '100%',
+                        padding: 0
+                      }}>
+                        <span style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: 'var(--text-primary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 1,
+                          minWidth: 0,
+                          userSelect: 'all'
+                        }}>
+                          {currentNote.title || currentNote.fileName || '未命名文件'}
+                        </span>
+                        {currentNote.fileName && (
+                          <span style={{
+                            fontSize: 11,
+                            color: 'var(--text-tertiary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 999,
+                            minWidth: 0,
+                            userSelect: 'all',
+                            fontFamily: 'var(--font-mono)'
+                          }}>
+                            {currentNote.fileName}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="panel-title">预览</span>
+                    )}
                   </div>
                   {effectivePreviewVisible && <Preview />}
                 </div>

@@ -1,9 +1,14 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, session } from 'electron'
 import path from 'node:path'
 import { setupIpcHandlers } from './ipc'
 import { buildMenuData, handleMenuClick, installAppMenu, setMenuThemeId } from './menu'
 import { initDatabase, closeDatabase, dbApi } from './db'
 import { OssManager } from './oss/manager'
+
+// Electron 30+ webSecurity 行为变更：单设 webPreferences.webSecurity: false 不再
+// 完全关掉 CSP/frame-ancestors 检查。需要同时加 Chromium 命令行开关。
+app.commandLine.appendSwitch('disable-web-security')
+app.commandLine.appendSwitch('disable-features', 'BlockInsecurePrivateNetworkRequests')
 
 let mainWindow: BrowserWindow | null = null
 
@@ -23,7 +28,11 @@ function createMainWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // 关闭 webSecurity：本地桌面应用需要主窗口可以加载任意外部 URL（网址笔记的 iframe）。
+      // 关闭后 iframe 不受主窗口 CSP 限制，可以嵌入任何网站。
+      // —— 桌面 app 风险可接受；如果未来支持渲染远程内容，需要重新评估
+      webSecurity: false
     }
   })
 
@@ -58,8 +67,41 @@ async function bootstrap(): Promise<void> {
   // 注册所有业务 IPC handler
   setupIpcHandlers()
 
+  // CSP 放宽：把主窗口响应的 frame-src 改成 *
+  // —— 网址笔记的 iframe 需要主窗口允许加载任意外部 URL
+  // 同时挂在 defaultSession 和主窗口 webContents.session（renderer 进程 iframe 走的是后者）
+  const relaxCsp = (details: Electron.OnHeadersReceivedDetails, callback: (response: Electron.Response) => void) => {
+    const headers: Record<string, string[]> = {}
+    for (const [k, v] of Object.entries(details.responseHeaders ?? {})) {
+      headers[k.toLowerCase()] = v as string[]
+    }
+    const csp = headers['content-security-policy']?.[0]
+    if (csp) {
+      let newCsp = csp
+        .replace(/frame-src [^;]*/gi, 'frame-src *')
+        .replace(/child-src [^;]*/gi, 'child-src *')
+      if (!/frame-src\s/i.test(newCsp)) {
+        newCsp = newCsp.trim().endsWith(';')
+          ? `${newCsp} frame-src *;`
+          : `${newCsp}; frame-src *;`
+      }
+      console.log('[csp-debug] original:', csp)
+      console.log('[csp-debug] new     :', newCsp)
+      headers['content-security-policy'] = [newCsp]
+      callback({ responseHeaders: headers })
+      return
+    }
+    callback({ responseHeaders: details.responseHeaders })
+  }
+  session.defaultSession.webRequest.onHeadersReceived(relaxCsp)
+
   // 创建窗口
   createMainWindow()
+
+  // 关键：把 CSP 放宽也挂到主窗口自己的 session 上。
+  // —— iframe 是 renderer 进程里的资源，挂在 defaultSession 不一定拦得到；
+  //   必须挂到主窗口 webContents.session 才行
+  mainWindow?.webContents.session.webRequest.onHeadersReceived(relaxCsp)
 
   installAppMenu()
 

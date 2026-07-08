@@ -15,11 +15,15 @@ interface AppState {
   notes: Note[]
   selectedNoteId: string | null
   currentNote: Note | null
+  /** 用户手动展开的笔记本 id 集合（启动时恢复） */
+  expandedNotebooks: string[]
+  /** 切换笔记本展开状态，并持久化 */
+  setExpandedNotebook: (id: string, expanded: boolean) => void
   loadNotebooks: () => Promise<void>
   loadNotes: () => Promise<void>
   selectNote: (id: string | null) => Promise<void>
   createNotebook: (name: string, parentId: string | null, icon?: string) => Promise<void>
-  createNote: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: Note['format'], language?: Note['language']) => Promise<void>
+  createNote: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: Note['format'], language?: Note['language'], url?: string) => Promise<void>
   /** 仅更新内存里的 currentNote，不写库。供编辑器输入时即时同步给 Preview。 */
   updateCurrentNoteDraft: (updates: Partial<Note>) => void
   /** 写库持久化（防抖调用）。从 main process 拿回最新值刷新 currentNote。 */
@@ -28,6 +32,10 @@ interface AppState {
   renameNote: (id: string, title: string) => Promise<void>
   deleteNotebook: (id: string) => Promise<void>
   deleteNote: (id: string) => Promise<void>
+  /** 拖动排序：notebookId 下，orderedIds 是新顺序 */
+  reorderNotes: (notebookId: string, orderedIds: string[]) => Promise<void>
+  /** 拖动排序：parentId 下，orderedIds 是新顺序；parentId=null 表示顶级 */
+  reorderNotebooks: (parentId: string | null, orderedIds: string[]) => Promise<void>
 
   // ============ 回收站 ============
   deletedNotes: Note[]
@@ -72,7 +80,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       theme: settings.theme,
       sidebarVisible: settings.layout.sidebarVisible,
       previewVisible: settings.layout.previewVisible,
-      editorVisible: settings.layout.editorVisible ?? true
+      editorVisible: settings.layout.editorVisible ?? true,
+      expandedNotebooks: settings.expandedNotebooks ?? []
     })
   },
   updateSettings: async (updates) => {
@@ -103,6 +112,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectNote: async (id) => {
     // 任何时候选中笔记都切回笔记视图（从回收站视图点回笔记时尤其需要）
     set({ selectedNoteId: id, viewMode: 'notes' })
+    // 持久化 lastSelectedNoteId（启动时恢复）
+    if (id) {
+      const settings = get().settings
+      if (settings && settings.lastSelectedNoteId !== id) {
+        window.inkslateApi.settings.update({ lastSelectedNoteId: id }).catch(() => {})
+      }
+    }
     if (!id) {
       set({ currentNote: null })
       return
@@ -117,16 +133,86 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().updateSettings({ layout: { ...layout, previewVisible: false } })
       }
       set({ previewVisible: false })
+      // 代码/富文本笔记没有预览可用，必须确保 editor 显示 —— 否则整个右半空白
+      if (!get().editorVisible) {
+        set({ editorVisible: true })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, editorVisible: true } })
+        }
+      }
+    }
+    // markdown/html 笔记：默认进入"只读预览"模式（编辑器关闭、预览打开）。
+    // 用户想编辑就手动点中键展开 —— 这是"刚打开一篇已存在的 md"的最常见诉求。
+    // 新建笔记的覆盖在 createNote 里做：selectNote 之后立即把 editor 打开，实现"各一半"。
+    if (note && (note.format === 'markdown' || note.format === 'html')) {
+      const layout = get().settings?.layout
+      if (get().editorVisible) {
+        set({ editorVisible: false })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, editorVisible: false } })
+        }
+      }
+      if (!get().previewVisible) {
+        set({ previewVisible: true })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, previewVisible: true } })
+        }
+      }
+    }
+    // url 网页笔记：Editor 对 url 不渲染（见 Layout），必须强制打开预览，
+    // 并把 editorVisible 置为 false 让预览占满整列，否则右侧整片空白。
+    // 这尤其修复"从 code/richtext 笔记（previewVisible=false）切到 url 笔记"时空白的 bug。
+    if (note && note.format === 'url') {
+      const layout = get().settings?.layout
+      if (!get().previewVisible) {
+        set({ previewVisible: true })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, previewVisible: true } })
+        }
+      }
+      if (get().editorVisible) {
+        set({ editorVisible: false })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, editorVisible: false } })
+        }
+      }
+    }
+    // file 文件笔记：跟 url 一样不渲染 Editor，强制预览占满整列
+    if (note && note.format === 'file') {
+      const layout = get().settings?.layout
+      if (!get().previewVisible) {
+        set({ previewVisible: true })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, previewVisible: true } })
+        }
+      }
+      if (get().editorVisible) {
+        set({ editorVisible: false })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, editorVisible: false } })
+        }
+      }
     }
   },
   createNotebook: async (name, parentId, icon) => {
     await window.inkslateApi.notebooks.create(name, parentId, icon)
     await get().loadNotebooks()
   },
-  createNote: async (title, notebookId, parentId, icon, format, language) => {
-    const note = await window.inkslateApi.notes.create(title, notebookId, parentId, icon, format, language)
+  createNote: async (title, notebookId, parentId, icon, format, language, url) => {
+    const note = await window.inkslateApi.notes.create(title, notebookId, parentId, icon, format, language, url)
     await get().loadNotes()
     await get().selectNote(note.id)
+    // 新建笔记：强制打开 editor（覆盖 selectNote 默认的"只读预览"行为），
+    // —— 让新建的笔记默认进入"编辑+预览各一半"，方便用户立即输入
+    // 注意：url 笔记的 Editor 不渲染，不应打开 editor（否则预览只占固定宽度而非占满），
+    // url 的布局已由 selectNote 中的 url 分支处理，这里跳过。
+    if (note && (note.format === 'markdown' || note.format === 'html')) {
+      const layout = get().settings?.layout
+      set({ editorVisible: true })
+      if (layout) {
+        get().updateSettings({ layout: { ...layout, editorVisible: true } })
+      }
+    }
   },
   updateNote: async (id, updates) => {
     get().setSaveStatus({ saving: true })
@@ -144,6 +230,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         })
       }
+      // 局部更新 notes 列表里那一条，让侧边栏树状图同步最新的 title
+      // （避免 loadNotes 全量重拉导致列表闪烁）
+      set((state) => ({
+        notes: state.notes.map((n) => (n.id === id ? { ...n, title: updated.title, updatedAt: updated.updatedAt } : n))
+      }))
       get().setSaveStatus({ saving: false, lastSaved: Date.now() })
     } catch {
       get().setSaveStatus({ saving: false })
@@ -177,6 +268,41 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     await get().loadNotes()
     await get().loadRecycleBin()
+  },
+
+  reorderNotes: async (notebookId, orderedIds) => {
+    await window.inkslateApi.notes.reorder(notebookId, orderedIds)
+    // 关键：除了重排 notes 数组顺序，还要更新每个 note 的 sortOrder 字段，
+    // 否则 buildNoteTree 里的 sortNodes 仍按 sortOrder 排，UI 不变。
+    set((state) => {
+      const noteMap = new Map(state.notes.map(n => [n.id, n]))
+      const reordered = orderedIds
+        .map((id, idx) => {
+          const n = noteMap.get(id)
+          if (!n) return undefined
+          // 给一个本地虚拟 sortOrder（不写库），让 buildNoteTree 排序结果与拖动一致
+          // 数字越大越靠前，所以新位置 idx 越小，sortOrder 越大
+          return { ...n, sortOrder: Date.now() + (orderedIds.length - idx) * 1000 }
+        })
+        .filter((n): n is Note => !!n)
+      const rest = state.notes.filter(n => n.notebookId !== notebookId)
+      return { notes: [...rest, ...reordered] }
+    })
+  },
+  reorderNotebooks: async (parentId, orderedIds) => {
+    await window.inkslateApi.notebooks.reorder(parentId, orderedIds)
+    set((state) => {
+      const nbMap = new Map(state.notebooks.map(n => [n.id, n]))
+      const reordered = orderedIds
+        .map((id, idx) => {
+          const n = nbMap.get(id)
+          if (!n) return undefined
+          return { ...n, sortOrder: Date.now() + (orderedIds.length - idx) * 1000 }
+        })
+        .filter((n): n is Notebook => !!n)
+      const rest = state.notebooks.filter(n => n.parentId !== parentId)
+      return { notebooks: [...rest, ...reordered] }
+    })
   },
 
   // ============ 回收站 actions ============
@@ -221,6 +347,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   sidebarVisible: true,
   previewVisible: true,
   editorVisible: true,
+  expandedNotebooks: [],
+  setExpandedNotebook: (id, expanded) => {
+    const current = get().expandedNotebooks
+    const next = expanded
+      ? (current.includes(id) ? current : [...current, id])
+      : current.filter(x => x !== id)
+    set({ expandedNotebooks: next })
+    // 持久化（fire-and-forget；空数组也存，覆盖老值）
+    const settings = get().settings
+    if (settings) {
+      window.inkslateApi.settings.update({ expandedNotebooks: next }).catch(() => {})
+    }
+  },
   toggleSidebar: () => {
     const visible = !get().sidebarVisible
     set({ sidebarVisible: visible })
@@ -264,6 +403,8 @@ export function buildNoteTree(notebooks: Notebook[], notes: Note[]): NoteTreeNod
       children: [],
       icon: nb.icon,
       updatedAt: nb.updatedAt,
+      createdAt: nb.createdAt,
+      sortOrder: nb.sortOrder,
       isExpanded: true
     })
   }
@@ -276,6 +417,8 @@ export function buildNoteTree(notebooks: Notebook[], notes: Note[]): NoteTreeNod
       children: [],
       icon: note.icon,
       updatedAt: note.updatedAt,
+      createdAt: note.createdAt,
+      sortOrder: note.sortOrder,
       // 鎶?format 鏀惧湪 node 涓婏紝鏂逛究 UI 璇诲彇
       ...({ format: note.format } as any)
     })
@@ -298,10 +441,12 @@ export function buildNoteTree(notebooks: Notebook[], notes: Note[]): NoteTreeNod
     }
   }
 
+  // 顺序：按 sortOrder 倒序（sortOrder 大的在前），未填的兜底为 createdAt
+  // —— 用户拖动改 sortOrder；从未拖动时表现为按 createdAt DESC
   const sortNodes = (nodes: NoteTreeNode[]) => {
     nodes.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'notebook' ? -1 : 1
-      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+      return (b.sortOrder ?? b.createdAt ?? 0) - (a.sortOrder ?? a.createdAt ?? 0)
     })
     nodes.forEach(n => sortNodes(n.children))
   }

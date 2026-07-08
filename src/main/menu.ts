@@ -25,6 +25,7 @@ let currentThemeId = 'light'
 
 /** 单选子菜单点击事件 */
 function pickTheme(id: string) {
+  console.log('[menu] pickTheme:', id)
   currentThemeId = id
   sendToRenderer(IPC_CHANNELS.THEME_CHANGE, id)
   sendToRenderer('menu:rebuild')
@@ -206,6 +207,7 @@ export async function handleMenuClick(id: string, arg: any) {
     case 'toggle-sidebar': sendToRenderer(IPC_CHANNELS.MENU_TOGGLE_SIDEBAR); return
     case 'toggle-preview': sendToRenderer(IPC_CHANNELS.MENU_TOGGLE_PREVIEW); return
     case 'toggle-editor': sendToRenderer('menu:toggle-editor'); return
+    case 'theme-light': pickTheme('light'); return
     case 'theme-cyberpunk': pickTheme('cyberpunk'); return
     case 'theme-monet': pickTheme('monet'); return
     case 'theme-newspaper': pickTheme('newspaper'); return

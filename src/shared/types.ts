@@ -1,7 +1,7 @@
 /**
  */
 
-export type NoteFormat = 'markdown' | 'html' | 'richtext' | 'code'
+export type NoteFormat = 'markdown' | 'html' | 'richtext' | 'code' | 'url' | 'file'
 
 export type CodeLanguage =
   | 'plaintext' | 'javascript' | 'typescript' | 'python' | 'java'
@@ -15,6 +15,16 @@ export interface Note {
   content: string
   format: NoteFormat
   language?: CodeLanguage // 代码笔记用的语言
+  /** 网址笔记的 URL（format === 'url' 时必填） */
+  url?: string
+  /** 文件笔记：原始文件名（含扩展名，如 "报告.docx"） */
+  fileName?: string
+  /** 文件笔记：app data 里的绝对路径 */
+  filePath?: string
+  /** 文件笔记：扩展名（小写无点，如 "pdf"） */
+  fileExt?: string
+  /** 文件笔记：文件字节数 */
+  fileSize?: number
   notebookId: string
   parentId: string | null
   path: string
@@ -24,6 +34,8 @@ export interface Note {
   /** 删除时间戳（毫秒），仅在 isDeleted=true 时有意义 */
   deletedAt?: number
   icon?: string
+  /** 用户手动拖动排序的稳定顺序（毫秒时间戳或自定义数字） */
+  sortOrder?: number
 }
 
 export interface Notebook {
@@ -36,6 +48,8 @@ export interface Notebook {
   isDeleted: boolean
   /** 删除时间戳（毫秒），仅在 isDeleted=true 时有意义 */
   deletedAt?: number
+  /** 用户手动拖动排序的稳定顺序 */
+  sortOrder?: number
 }
 
 export interface NoteTreeNode {
@@ -46,6 +60,8 @@ export interface NoteTreeNode {
   children: NoteTreeNode[]
   icon?: string
   updatedAt?: number
+  createdAt?: number
+  sortOrder?: number
   isExpanded?: boolean
 }
 
@@ -58,6 +74,10 @@ export interface AppSettings {
     previewVisible: boolean
     editorVisible: boolean
   }
+  /** 上次打开的笔记 id，启动时自动选中（不存在则忽略） */
+  lastSelectedNoteId?: string
+  /** 用户手动展开的笔记本 id 集合；启动时恢复 */
+  expandedNotebooks?: string[]
   oss: {
     provider: 'aliyun' | 'tencent' | 'aws' | 'minio'
     endpoint?: string
@@ -99,6 +119,7 @@ export const IPC_CHANNELS = {
   NOTEBOOK_RENAME: 'notebook:rename',
   NOTEBOOK_DELETE: 'notebook:delete',
   NOTEBOOK_MOVE: 'notebook:move',
+  NOTEBOOK_REORDER: 'notebook:reorder',
 
   // 回收站 - 笔记本
   NOTEBOOK_LIST_DELETED: 'notebook:list-deleted',
@@ -113,6 +134,7 @@ export const IPC_CHANNELS = {
   NOTE_DELETE: 'note:delete',
   NOTE_MOVE: 'note:move',
   NOTE_SEARCH: 'note:search',
+  NOTE_REORDER: 'note:reorder',
 
   // 回收站 - 笔记
   NOTE_LIST_DELETED: 'note:list-deleted',
@@ -154,5 +176,11 @@ export const IPC_CHANNELS = {
 
   // 回收站菜单事件
   MENU_OPEN_RECYCLE_BIN: 'menu:open-recycle-bin',
-  MENU_RECYCLE_BIN_SETTINGS: 'menu:recycle-bin-settings'
+  MENU_RECYCLE_BIN_SETTINGS: 'menu:recycle-bin-settings',
+
+  // 文件笔记
+  FILE_NOTE_CREATE: 'file-note:create',
+  FILE_NOTE_REPLACE: 'file-note:replace',
+  FILE_NOTE_SAVE_AS: 'file-note:save-as',
+  FILE_NOTE_READ: 'file-note:read'
 } as const

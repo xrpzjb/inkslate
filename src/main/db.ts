@@ -53,6 +53,7 @@ export async function initDatabase(): Promise<void> {
       icon TEXT,
       is_deleted INTEGER DEFAULT 0,
       deleted_at INTEGER,
+      sort_order INTEGER,
       FOREIGN KEY (parent_id) REFERENCES notebooks(id) ON DELETE CASCADE
     )
   `)
@@ -67,11 +68,13 @@ export async function initDatabase(): Promise<void> {
       path TEXT NOT NULL,
       format TEXT NOT NULL DEFAULT 'markdown',
       language TEXT,
+      url TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       icon TEXT,
       is_deleted INTEGER DEFAULT 0,
       deleted_at INTEGER,
+      sort_order INTEGER,
       FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
     )
   `)
@@ -90,12 +93,46 @@ export async function initDatabase(): Promise<void> {
   if (!hasDeletedAtNotes) {
     db.exec(`ALTER TABLE notes ADD COLUMN deleted_at INTEGER`)
   }
+  // sort_order：用户手动拖动排序的持久化字段。老数据迁移时用 created_at，
+  // 这样老笔记顺序保持稳定（按创建时间排）。
+  const hasSortOrderNotes = columns.some(c => c.name === 'sort_order')
+  if (!hasSortOrderNotes) {
+    db.exec(`ALTER TABLE notes ADD COLUMN sort_order INTEGER`)
+    db.exec(`UPDATE notes SET sort_order = created_at WHERE sort_order IS NULL`)
+  }
+  // url：网址笔记专用（format === 'url'），其他格式为 NULL
+  const hasUrlNotes = columns.some(c => c.name === 'url')
+  if (!hasUrlNotes) {
+    db.exec(`ALTER TABLE notes ADD COLUMN url TEXT`)
+  }
+  // 文件笔记：file_path / file_name / file_size / file_ext
+  const hasFilePath = columns.some(c => c.name === 'file_path')
+  if (!hasFilePath) {
+    db.exec(`ALTER TABLE notes ADD COLUMN file_path TEXT`)
+  }
+  const hasFileName = columns.some(c => c.name === 'file_name')
+  if (!hasFileName) {
+    db.exec(`ALTER TABLE notes ADD COLUMN file_name TEXT`)
+  }
+  const hasFileSize = columns.some(c => c.name === 'file_size')
+  if (!hasFileSize) {
+    db.exec(`ALTER TABLE notes ADD COLUMN file_size INTEGER`)
+  }
+  const hasFileExt = columns.some(c => c.name === 'file_ext')
+  if (!hasFileExt) {
+    db.exec(`ALTER TABLE notes ADD COLUMN file_ext TEXT`)
+  }
 
   // 兼容老库：notebooks 表如果没有 deleted_at 列则补上
   const nbColumns = db.prepare("PRAGMA table_info(notebooks)").all() as { name: string }[]
   const hasDeletedAtNotebooks = nbColumns.some(c => c.name === 'deleted_at')
   if (!hasDeletedAtNotebooks) {
     db.exec(`ALTER TABLE notebooks ADD COLUMN deleted_at INTEGER`)
+  }
+  const hasSortOrderNotebooks = nbColumns.some(c => c.name === 'sort_order')
+  if (!hasSortOrderNotebooks) {
+    db.exec(`ALTER TABLE notebooks ADD COLUMN sort_order INTEGER`)
+    db.exec(`UPDATE notebooks SET sort_order = created_at WHERE sort_order IS NULL`)
   }
 
   // 设置表
@@ -153,6 +190,11 @@ export function getNotesDir(): string {
   return path.join(app.getPath('userData'), 'notes')
 }
 
+/** 文件笔记的源文件存放目录：userData/notes/files/ */
+export function getFilesDir(): string {
+  return path.join(getNotesDir(), 'files')
+}
+
 export function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 9)
 }
@@ -167,7 +209,8 @@ function rowToNotebook(row: any): Notebook {
     updatedAt: row.updated_at,
     icon: row.icon,
     isDeleted: !!row.is_deleted,
-    deletedAt: row.deleted_at ?? undefined
+    deletedAt: row.deleted_at ?? undefined,
+    sortOrder: row.sort_order ?? row.created_at
   }
 }
 
@@ -178,6 +221,11 @@ function rowToNote(row: any, content: string = ''): Note {
     content,
     format: (row.format as Note['format']) ?? 'markdown',
     language: (row.language as Note['language']) ?? undefined,
+    url: row.url ?? undefined,
+    fileName: row.file_name ?? undefined,
+    filePath: row.file_path ?? undefined,
+    fileExt: row.file_ext ?? undefined,
+    fileSize: row.file_size ?? undefined,
     notebookId: row.notebook_id,
     parentId: row.parent_id,
     path: row.path,
@@ -185,13 +233,14 @@ function rowToNote(row: any, content: string = ''): Note {
     updatedAt: row.updated_at,
     icon: row.icon,
     isDeleted: !!row.is_deleted,
-    deletedAt: row.deleted_at ?? undefined
+    deletedAt: row.deleted_at ?? undefined,
+    sortOrder: row.sort_order ?? row.created_at
   }
 }
 
 const dbMethods = {
   listNotebooks(): Notebook[] {
-    const rows = getDatabase().prepare('SELECT * FROM notebooks WHERE is_deleted = 0 ORDER BY created_at ASC').all()
+    const rows = getDatabase().prepare('SELECT * FROM notebooks WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) ASC').all()
     return rows.map(rowToNotebook)
   },
 
@@ -224,9 +273,11 @@ const dbMethods = {
   // ============ 笔记操作 ============
   listNotes(notebookId?: string): Note[] {
     const d = getDatabase()
+    // 顺序：按 sort_order 倒序（sort_order 大的在前），未填的兜底为 created_at
+    // —— 用户拖动改 sort_order；从未拖动时表现为按 created_at DESC
     const rows = notebookId
-      ? d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0 ORDER BY updated_at DESC').all(notebookId)
-      : d.prepare('SELECT * FROM notes WHERE is_deleted = 0 ORDER BY updated_at DESC').all()
+      ? d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC').all(notebookId)
+      : d.prepare('SELECT * FROM notes WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC').all()
     return rows.map((row: any) => rowToNote(row))
   },
 
@@ -244,10 +295,10 @@ const dbMethods = {
     return rowToNote(row, content)
   },
 
-  createNote(title: string, notebookId: string, parentId: string | null, icon?: string, format: Note['format'] = 'markdown', language?: string): Note {
+  createNote(title: string, notebookId: string, parentId: string | null, icon?: string, format: Note['format'] = 'markdown', language?: string, url?: string): Note {
     const id = generateId()
     const now = Date.now()
-    const ext = format === 'html' ? 'html' : format === 'richtext' ? 'json' : format === 'code' ? 'code' : 'md'
+    const ext = format === 'html' ? 'html' : format === 'richtext' ? 'json' : format === 'code' ? 'code' : format === 'url' ? 'url' : format === 'file' ? 'file' : 'md'
     const fileName = `${id}.${ext}`
     const filePath = path.join(getNotesDir(), fileName)
 
@@ -263,15 +314,31 @@ const dbMethods = {
         : language === 'css'
           ? `/* ${title} */\n`
           : `// ${title}\n`
+    else if (format === 'url') {
+      // 网址笔记：内容用 url，文件存个简单标记
+      initialContent = url ?? ''
+    }
+    // file 格式：源文件由调用方（IPC 层）复制到 filePath 后再调本方法；
+    // 这里只写一个占位空文件，保证 row.path 指向的文件存在
 
     fs.writeFileSync(filePath, initialContent, 'utf-8')
 
     getDatabase().prepare(`
-      INSERT INTO notes (id, title, notebook_id, parent_id, path, format, language, created_at, updated_at, icon, is_deleted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `).run(id, title, notebookId, parentId, filePath, format, language ?? null, now, now, icon ?? null)
+      INSERT INTO notes (id, title, notebook_id, parent_id, path, format, language, url, file_path, file_name, file_size, file_ext, created_at, updated_at, icon, is_deleted, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+    `).run(id, title, notebookId, parentId, filePath, format, language ?? null, url ?? null, null, null, null, null, now, now, icon ?? null, now)
 
-    return { id, title, content: initialContent, format, language: language as any, notebookId, parentId, path: filePath, createdAt: now, updatedAt: now, icon, isDeleted: false }
+    return { id, title, content: initialContent, format, language: language as any, url, notebookId, parentId, path: filePath, createdAt: now, updatedAt: now, icon, isDeleted: false }
+  },
+
+  /** 文件笔记：在 createNote 之后再设置源文件信息。
+   *  主进程把用户选的文件复制到 app data/notes/files/{id}.{ext}，
+   *  再调本方法把文件路径写库。 */
+  setNoteFile(id: string, opts: { filePath: string; fileName: string; fileSize: number; fileExt: string }): void {
+    const now = Date.now()
+    getDatabase().prepare(`
+      UPDATE notes SET file_path = ?, file_name = ?, file_size = ?, file_ext = ?, updated_at = ? WHERE id = ?
+    `).run(opts.filePath, opts.fileName, opts.fileSize, opts.fileExt, now, id)
   },
 
   updateNote(id: string, updates: Partial<Note>): Note {
@@ -282,22 +349,31 @@ const dbMethods = {
     const newTitle = updates.title ?? row.title
     const newIcon = updates.icon ?? row.icon
     const newFormat = updates.format ?? row.format ?? 'markdown'
+    const newUrl = updates.url !== undefined ? updates.url : row.url
+    // 文件笔记字段：仅在传了的时候更新（replace 流程会传，普通改 title 不动）
+    const newFilePath = updates.filePath !== undefined ? updates.filePath : row.file_path
+    const newFileName = updates.fileName !== undefined ? updates.fileName : row.file_name
+    const newFileSize = updates.fileSize !== undefined ? updates.fileSize : row.file_size
+    const newFileExt = updates.fileExt !== undefined ? updates.fileExt : row.file_ext
     const now = Date.now()
 
     if (updates.content !== undefined) {
       fs.writeFileSync(row.path, updates.content, 'utf-8')
+    } else if (updates.url !== undefined && newFormat === 'url') {
+      // 网址笔记：url 变化时同步更新文件内容（保持 url 即内容的约定）
+      fs.writeFileSync(row.path, newUrl ?? '', 'utf-8')
     }
 
     d.prepare(`
-      UPDATE notes SET title = ?, icon = ?, format = ?, updated_at = ? WHERE id = ?
-    `).run(newTitle, newIcon, newFormat, now, id)
+      UPDATE notes SET title = ?, icon = ?, format = ?, url = ?, file_path = ?, file_name = ?, file_size = ?, file_ext = ?, updated_at = ? WHERE id = ?
+    `).run(newTitle, newIcon, newFormat, newUrl ?? null, newFilePath, newFileName, newFileSize, newFileExt, now, id)
 
     let content = ''
     try {
       content = fs.readFileSync(row.path, 'utf-8')
     } catch {}
 
-    return rowToNote({ ...row, title: newTitle, icon: newIcon, format: newFormat, updated_at: now }, content)
+    return rowToNote({ ...row, title: newTitle, icon: newIcon, format: newFormat, url: newUrl, updated_at: now }, content)
   },
 
   /**
@@ -475,8 +551,82 @@ const dbMethods = {
     }
     getDatabase().prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('app_settings', JSON.stringify(merged))
     return merged
+  },
+
+  /** 重新排序笔记。orderedIds 是新的目标顺序（仅同级兄弟节点）。
+   *  算法：相邻节点 sortOrder 取平均，逐步细化；不够细时整体重排为 step 倍数。 */
+  reorderNotes(notebookId: string, orderedIds: string[]): void {
+    reorderRows('notes', 'notebook_id', notebookId, orderedIds)
+  },
+
+  /** 重新排序笔记本。orderedIds 是新的目标顺序（仅顶级或某 parent 下）。 */
+  reorderNotebooks(parentId: string | null, orderedIds: string[]): void {
+    reorderRows('notebooks', 'parent_id', parentId, orderedIds)
   }
 }
 
 // 把方法挂到 db 对象上方便调用
 export const dbApi = dbMethods
+
+/**
+ * 通用重排工具：把 [tableName] 中 [scopeColumn] = [scopeValue] 的记录按 [orderedIds] 重排。
+ * 使用"前后取中值"算法：相邻两个 sortOrder 之间插入中点。步长细化到极限时（< 1ms），
+ * 整组重写为基于 created_at 的等差数列，避免无限小数。
+ */
+function reorderRows(
+  tableName: 'notes' | 'notebooks',
+  scopeColumn: 'notebook_id' | 'parent_id',
+  scopeValue: string | null,
+  orderedIds: string[]
+): void {
+  if (orderedIds.length === 0) return
+  const d = getDatabase()
+  const idList = orderedIds.map(id => `'${id.replace(/'/g, "''")}'`).join(',')
+  const rows = d.prepare(
+    `SELECT id, sort_order, created_at FROM ${tableName} WHERE id IN (${idList}) ${
+      scopeValue === null ? '' : `AND ${scopeColumn} = ?`
+    }`
+  ).all(...(scopeValue === null ? [] : [scopeValue])) as { id: string; sort_order: number | null; created_at: number }[]
+
+  // 验证：orderedIds 必须完整覆盖 scope 下的所有记录（防漂移）
+  if (rows.length !== orderedIds.length) {
+    console.warn(`[reorderRows] ${tableName} id mismatch: got ${rows.length}, expected ${orderedIds.length}`)
+    return
+  }
+
+  const byId = new Map(rows.map(r => [r.id, r]))
+  // 按新顺序生成新 sortOrder
+  const newOrders: number[] = []
+  for (let i = 0; i < orderedIds.length; i++) {
+    const cur = byId.get(orderedIds[i])!
+    const prev = newOrders[newOrders.length - 1]
+    if (i === 0) {
+      // 第一项：如果已有 sortOrder，沿用；否则用 created_at
+      newOrders.push(cur.sort_order ?? cur.created_at)
+    } else {
+      const next = cur.sort_order ?? cur.created_at
+      // 取中值；如果中值跟 prev 一样（整数空间用尽），后面统一重写
+      const mid = (prev + next) / 2
+      newOrders.push(mid === prev ? NaN : mid)
+    }
+  }
+
+  // 检测是否有 NaN（需要整组重排）
+  if (newOrders.some(o => Number.isNaN(o))) {
+    // 整组重写：用 created_at 加上步长，给一个稳定但可继续插值的序列
+    const base = Math.max(...rows.map(r => r.created_at))
+    const step = 1 // 1ms 步长
+    for (let i = 0; i < orderedIds.length; i++) {
+      newOrders[i] = base - i * step
+    }
+  }
+
+  const update = d.prepare(`UPDATE ${tableName} SET sort_order = ? WHERE id = ?`)
+  const tx = d.transaction(() => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      update.run(Math.floor(newOrders[i]), orderedIds[i])
+    }
+  })
+  tx()
+}
+

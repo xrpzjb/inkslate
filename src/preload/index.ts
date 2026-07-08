@@ -14,6 +14,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_DELETE, id),
     move: (id: string, newParentId: string | null): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_MOVE, id, newParentId),
+    reorder: (parentId: string | null, orderedIds: string[]): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_REORDER, parentId, orderedIds),
     // 回收站相关
     listDeleted: (): Promise<Notebook[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_LIST_DELETED),
     restore: (id: string): Promise<{ restoredNotebooks: string[] }> =>
@@ -25,14 +27,16 @@ const api = {
   notes: {
     list: (notebookId?: string): Promise<Note[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTE_LIST, notebookId),
     get: (id: string): Promise<Note | null> => ipcRenderer.invoke(IPC_CHANNELS.NOTE_GET, id),
-    create: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: 'markdown' | 'html' | 'richtext' | 'code', language?: string): Promise<Note> =>
-      ipcRenderer.invoke(IPC_CHANNELS.NOTE_CREATE, title, notebookId, parentId, icon, format ?? 'markdown', language),
+    create: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: 'markdown' | 'html' | 'richtext' | 'code' | 'url' | 'file', language?: string, url?: string): Promise<Note> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTE_CREATE, title, notebookId, parentId, icon, format ?? 'markdown', language, url),
     update: (id: string, updates: Partial<Note>): Promise<Note> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_UPDATE, id, updates),
     delete: (id: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_DELETE, id),
     move: (id: string, newParentId: string | null): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_MOVE, id, newParentId),
+    reorder: (notebookId: string, orderedIds: string[]): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTE_REORDER, notebookId, orderedIds),
     search: (keyword: string): Promise<Note[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTE_SEARCH, keyword),
     // 回收站相关
     listDeleted: (): Promise<Note[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTE_LIST_DELETED),
@@ -40,6 +44,22 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_RESTORE, id),
     purge: (id: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_PURGE, id)
+  },
+
+  /** 文件笔记：源文件复制/替换/另存/读取 */
+  fileNote: {
+    /** 创建文件笔记后，把源文件复制到 app data 并写库 */
+    create: (noteId: string, sourcePath: string): Promise<{ filePath: string; fileName: string; fileSize: number; fileExt: string } | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_NOTE_CREATE, noteId, sourcePath),
+    /** 替换文件笔记的源文件 */
+    replace: (noteId: string, sourcePath: string): Promise<{ filePath: string; fileName: string; fileSize: number; fileExt: string } | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_NOTE_REPLACE, noteId, sourcePath),
+    /** 另存为：弹保存框，复制源文件到用户选的位置 */
+    saveAs: (noteId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_NOTE_SAVE_AS, noteId),
+    /** 读取源文件内容为 ArrayBuffer，给预览组件用 */
+    read: (noteId: string): Promise<ArrayBuffer | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_NOTE_READ, noteId)
   },
 
   recycleBin: {
@@ -77,8 +97,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.FILE_OPEN_DIALOG, options),
     export: (format: 'html' | 'md'): Promise<string | null> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT, format),
-    exportPdf: (): Promise<boolean> =>
-      ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_PDF),
+    exportPdf: (payload: { title: string; html: string }): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_PDF, payload),
     write: (filePath: string, content: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, filePath, content),
     readAsBase64: (filePath: string): Promise<{ base64: string; mime: string }> =>

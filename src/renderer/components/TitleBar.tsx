@@ -97,6 +97,7 @@ export function TitleBar() {
   }, [])
 
   const onItemClick = useCallback((item: MenuItem) => {
+    console.log('[titlebar] click:', item.id, 'arg:', item.arg, 'disabled:', item.disabled)
     if (item.type === 'separator' || item.disabled) return
     if (item.submenu && item.submenu.length > 0) {
       // 有子菜单，由 onMouseEnter 处理展开

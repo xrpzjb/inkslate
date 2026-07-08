@@ -4,49 +4,80 @@ import { NoteTreeNode, Note } from '@shared/types'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
-  FileDown, FileCode, Globe, Inbox
+  FileDown, FileCode, Globe, Inbox, Link2, Paperclip
 } from 'lucide-react'
 
-/** Markdown 专属图标：圆角文件壳 + M↓ 标识
- *  lucide-react 没有现成 md 图标，用官方 Mark 的简化版（更贴近 GitHub/VSCode 的视觉惯例）
+/** Markdown 笔记图标：纯字符 "M"，无外壳
+ *  stroke 风格，视觉上跟 lucide Globe 一致（24x24 / 2px stroke / 无填充）
  */
 function MarkdownIcon({ size = 14 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 16 16"
-      fill="currentColor"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       xmlns="http://www.w3.org/2000/svg"
       aria-label="Markdown"
     >
-      <path d="M3.5 1.5h5.379a1.5 1.5 0 0 1 1.06.44l3.122 3.12a1.5 1.5 0 0 1 .439 1.061v6.379a2 2 0 0 1-2 2H3.5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zm0 1a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H11.5a1 1 0 0 0 1-1V6.621a.5.5 0 0 0-.146-.354L9.232 3.146A.5.5 0 0 0 8.879 3H3.5z" />
-      <path d="M3.85 11V6.2h1.2l1.45 1.78L7.95 6.2h1.2V11H7.95V8.32L6.5 9.94 5.05 8.32V11H3.85zm7.55 0l-1.7-2.1h1.2V6.2h1.6v2.7h1.2L11.4 11z" />
+      {/* M：左竖、中间 V、右竖 */}
+      <path d="M5 6 L5 18" />
+      <path d="M5 6 L12 14" />
+      <path d="M12 14 L19 6" />
+      <path d="M19 6 L19 18" />
     </svg>
   )
 }
 
-/** 代码笔记专属图标：圆角文件壳 + </> 标识
- *  跟 MarkdownIcon 同款文件壳，里面换成 </>，跟 MD 一眼区分（同时跟 lucide 所有 </> 风格也都不一样）
+/** 代码笔记图标：纯字符 "</>"，无外壳
+ *  stroke 风格，视觉上跟 lucide Globe 一致
  */
 function CodeIcon({ size = 14 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 16 16"
-      fill="currentColor"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       xmlns="http://www.w3.org/2000/svg"
       aria-label="Code"
     >
-      {/* 文件壳 */}
-      <path d="M3.5 1.5h5.379a1.5 1.5 0 0 1 1.06.44l3.122 3.12a1.5 1.5 0 0 1 .439 1.061v6.379a2 2 0 0 1-2 2H3.5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zm0 1a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H11.5a1 1 0 0 0 1-1V6.621a.5.5 0 0 0-.146-.354L9.232 3.146A.5.5 0 0 0 8.879 3H3.5z" />
-      {/* <  */}
-      <path d="M6.1 6.4L4.5 8l1.6 1.6a.6.6 0 0 1-.85.85l-2.1-2.1a.6.6 0 0 1 0-.85l2.1-2.1a.6.6 0 0 1 .85.85z" />
-      {/* >  */}
-      <path d="M9.9 6.4L11.5 8l-1.6 1.6a.6.6 0 0 0 .85.85l2.1-2.1a.6.6 0 0 0 0-.85l-2.1-2.1a.6.6 0 0 0-.85.85z" />
+      {/* < */}
+      <path d="M8 6 L2 12 L8 18" />
+      {/* > */}
+      <path d="M16 6 L22 12 L16 18" />
       {/* / */}
-      <path d="M8.95 4.5a.5.5 0 0 0-.6.3l-1.6 6.4a.5.5 0 0 0 .95.3l1.6-6.4a.5.5 0 0 0-.3-.6z" />
+      <path d="M15 4 L9 20" />
+    </svg>
+  )
+}
+
+/** 富文本笔记图标：纯字符 "T"，无外壳（stroke 风格） */
+function RichTextIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label="Rich text"
+    >
+      {/* T：顶横 + 中竖 */}
+      <path d="M4 6 L20 6" />
+      <path d="M12 6 L12 19" />
     </svg>
   )
 }
@@ -62,34 +93,115 @@ export function Sidebar() {
   const renameNote = useAppStore(s => s.renameNote)
   const deleteNotebook = useAppStore(s => s.deleteNotebook)
   const deleteNote = useAppStore(s => s.deleteNote)
+  const reorderNotes = useAppStore(s => s.reorderNotes)
+  const reorderNotebooks = useAppStore(s => s.reorderNotebooks)
   const viewMode = useAppStore(s => s.viewMode)
   const setViewMode = useAppStore(s => s.setViewMode)
   const recycleBinCount = useAppStore(s => s.recycleBinCount)
   const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
 
+  // ============ 拖动排序 ============
+  // 简化设计：笔记本和笔记拖动都视为"同级排序"。笔记本顶级拖到另一个笔记本下 → 不支持
+  // （要做跨 parent 拖动需要把 NoteTreeNode 的 parentId 改了，那是另一个特性）。
+  // 当前支持：
+  //   1. 拖动笔记本 → 同 parentId 下重排
+  //   2. 拖动笔记 → 拖到目标笔记本下的某个位置
+  //   3. 拖动时目标位置的上半部分 = 之前；下半部分 = 之后
+
+  const [dragOverInfo, setDragOverInfo] = useState<{
+    targetId: string
+    position: 'before' | 'after'
+  } | null>(null)
+  const draggingRef = useRef<{ id: string; type: 'notebook' | 'note' } | null>(null)
   const tree = useMemo(() => buildNoteTree(notebooks, notes), [notebooks, notes])
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(notebooks.map(n => n.id)))
+  // expanded 状态：初始用 store 里的 expandedNotebooks（持久化的用户偏好），
+  // 还没加载好时（store 是空数组）就用 notebooks 全部展开作为兜底
+  const storedExpanded = useAppStore(s => s.expandedNotebooks)
+  const setExpandedNotebook = useAppStore(s => s.setExpandedNotebook)
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => new Set(storedExpanded.length > 0 ? storedExpanded : notebooks.map(n => n.id))
+  )
+  // 当 store.expandedNotebooks 加载完成后（首次 loadSettings 完毕），同步到本地
+  // —— 此时不要"重置"成空集，只有 storedExpanded 非空时用
+  const syncedFromStoreRef = useRef(false)
+  useEffect(() => {
+    if (!syncedFromStoreRef.current && storedExpanded.length > 0) {
+      setExpanded(new Set(storedExpanded))
+      syncedFromStoreRef.current = true
+    }
+  }, [storedExpanded])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: NoteTreeNode } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const [renaming, setRenaming] = useState<{ id: string; type: 'notebook' | 'note'; value: string } | null>(null)
+  // 新建网址笔记：自定义 modal（Electron renderer 不支持 window.prompt）
+  const [urlDialog, setUrlDialog] = useState<{
+    notebookId: string
+    parentId: string | null
+    name: string
+    value: string
+  } | null>(null)
 
   useEffect(() => {
     if (!selectedNoteId) return
     const note = notes.find(n => n.id === selectedNoteId)
-    if (note?.parentId) {
+    if (!note) return
+    // 沿 parentId 链向上找所有笔记本，全部展开。
+    // 注意：note 的 parentId 可能是父 note（嵌套笔记），需要跳到 notebookId；笔记本的 parentId 可能是父笔记本。
+    const toExpand = new Set<string>()
+    let cursor: string | null = note.parentId ?? note.notebookId
+    // 防止意外循环
+    const seen = new Set<string>()
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor)
+      // cursor 可能是 notebook id 也可能是 note id
+      const parentNotebook = notebooks.find(n => n.id === cursor)
+      if (parentNotebook) {
+        toExpand.add(parentNotebook.id)
+        cursor = parentNotebook.parentId
+        continue
+      }
+      const parentNote = notes.find(n => n.id === cursor)
+      if (parentNote) {
+        // 父 note 没有 chevron（不需展开），但要继续向上找
+        cursor = parentNote.parentId ?? parentNote.notebookId
+        continue
+      }
+      // 找不到就停
+      break
+    }
+    if (toExpand.size > 0) {
       setExpanded(prev => {
-        if (prev.has(note.parentId!)) return prev
-        return new Set([...prev, note.parentId!])
+        const next = new Set(prev)
+        let changed = false
+        for (const id of toExpand) {
+          if (!next.has(id)) {
+            next.add(id)
+            // 持久化（每个新展开的 id 触发一次 store update，可接受）
+            setExpandedNotebook(id, true)
+            changed = true
+          }
+        }
+        return changed ? next : prev
       })
     }
     // 选中变化时关闭重命名（防止输入框卡在另一行）
     setRenaming(prev => (prev && prev.id !== selectedNoteId ? null : prev))
-  }, [selectedNoteId])
+  }, [selectedNoteId, notes, notebooks])
+
+  // 同步 renaming 到 ref，供 commitRename 异步读取最新值
+  const renamingRef = useRef<typeof renaming>(null)
+  useEffect(() => {
+    renamingRef.current = renaming
+  }, [renaming])
 
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      const willBeExpanded = !next.has(id)
+      if (willBeExpanded) next.add(id)
+      else next.delete(id)
+      // 同步到 store + 持久化
+      setExpandedNotebook(id, willBeExpanded)
       return next
     })
   }
@@ -103,7 +215,7 @@ export function Sidebar() {
 
   const handleNewNotebook = async (parentId: string | null) => {
     closeContextMenu()
-    await createNotebook('鏂扮瑪璁版湰', parentId)
+    await createNotebook('新建笔记本', parentId)
   }
 
   const handleRename = (node: NoteTreeNode) => {
@@ -112,15 +224,182 @@ export function Sidebar() {
   }
 
   const commitRename = async () => {
-    if (!renaming) return
-    const { id, type, value } = renaming
+    // 用 ref 读最新值，避免闭包里 renaming 已经过期
+    const current = renamingRef.current
+    if (!current) return
+    renamingRef.current = null
     setRenaming(null)
-    if (!value.trim()) return
-    if (type === 'notebook') {
-      await renameNotebook(id, value.trim())
+    if (!current.value.trim()) return
+    if (current.type === 'notebook') {
+      await renameNotebook(current.id, current.value.trim())
     } else {
-      await renameNote(id, value.trim())
+      await renameNote(current.id, current.value.trim())
     }
+  }
+
+  const cancelRename = () => {
+    renamingRef.current = null
+    setRenaming(null)
+  }
+
+  // 确认创建网址笔记
+  const confirmCreateUrl = async () => {
+    if (!urlDialog) return
+    const rawUrl = urlDialog.value.trim()
+    if (!rawUrl) return
+    const normalized = /^https?:\/\//i.test(rawUrl) ? rawUrl : 'https://' + rawUrl
+    // 简单合法性校验
+    try { new URL(normalized) } catch { return }
+    // 优先用用户输入的名称；未填则回退 hostname+path
+    const nameInput = urlDialog.name.trim()
+    let title = '未命名网址'
+    try {
+      const u = new URL(normalized)
+      title = nameInput || (u.hostname + (u.pathname !== '/' ? u.pathname : ''))
+    } catch {}
+    const ctx = urlDialog
+    setUrlDialog(null)
+    await createNote(title, ctx.notebookId, ctx.parentId, undefined, 'url', undefined, normalized)
+  }
+
+  // ============ 拖动排序 handlers ============
+  const handleDragStart = (e: React.DragEvent, node: NoteTreeNode) => {
+    draggingRef.current = { id: node.id, type: node.type }
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', node.id) // 必填，否则 Firefox 不触发 drop
+  }
+
+  // 创建文件笔记：弹文件选择框，文件名作为 title，复制源文件到 app data
+  const handleCreateFileNote = async () => {
+    closeContextMenu()
+    const node = contextMenu?.node
+    if (!node) return
+    const targetNotebookId = node.type === 'notebook'
+      ? node.id
+      : (notes.find(n => n.id === node.id)?.notebookId ?? notebooks[0]?.id ?? '')
+    const targetParentId = node.type === 'notebook' ? null : node.id
+    if (!targetNotebookId) return
+
+    const sourcePath = await window.inkslateApi.file.openDialog({
+      title: '选择要导入的文件',
+      properties: ['openFile']
+    })
+    if (!sourcePath) return
+
+    // 文件名（不含目录）作为 title；去掉扩展名让标题更干净（保留扩展名在 fileExt 字段）
+    const basename = sourcePath.split(/[\\/]/).pop() || '未命名文件'
+    const title = basename.replace(/\.[^.]+$/, '') || basename
+
+    // 先创建 note 拿到 noteId，再调 fileNote.create 复制文件
+    const note = await window.inkslateApi.notes.create(title, targetNotebookId, targetParentId, undefined, 'file')
+    try {
+      const fileInfo = await window.inkslateApi.fileNote.create(note.id, sourcePath)
+      if (!fileInfo) {
+        alert('文件导入失败：无法读取源文件')
+        return
+      }
+      // 重新拉取 note 列表 + 选中刚创建的笔记（让 currentNote 带上 file 信息）
+      await useAppStore.getState().loadNotes()
+      await useAppStore.getState().selectNote(note.id)
+    } catch (e) {
+      alert('文件导入失败：' + (e as Error).message)
+    }
+  }
+
+  const handleDragOver = (e: React.DragEvent, node: NoteTreeNode) => {
+    const dragging = draggingRef.current
+    if (!dragging) return
+    if (dragging.id === node.id) return // 自己拖自己不算
+    e.preventDefault() // 必须 preventDefault 才能 drop（即使后面 reject，也允许 drop 触发让 handler 清状态）
+
+    // 笔记本只能和笔记本一起排，笔记只能和笔记一起排（不同级不能混排）
+    if (dragging.type !== node.type) {
+      e.dataTransfer.dropEffect = 'none'
+      return
+    }
+
+    e.dataTransfer.dropEffect = 'move'
+    const rect = e.currentTarget.getBoundingClientRect()
+    const midpoint = rect.top + rect.height / 2
+    const position = e.clientY < midpoint ? 'before' : 'after'
+    if (dragOverInfo?.targetId !== node.id || dragOverInfo.position !== position) {
+      setDragOverInfo({ targetId: node.id, position })
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // dragleave 在子元素上也会触发，加一个简单的延迟清空逻辑
+    // 不在这里清，靠下一次 dragover 更新或 drop 触发清空
+  }
+
+  const handleDrop = async (e: React.DragEvent, target: NoteTreeNode) => {
+    e.preventDefault()
+    const dragging = draggingRef.current
+    setDragOverInfo(null)
+    if (!dragging) return
+    if (dragging.id === target.id) return
+    if (dragging.type !== target.type) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const midpoint = rect.top + rect.height / 2
+    const position = e.clientY < midpoint ? 'before' : 'after'
+
+    if (dragging.type === 'notebook') {
+      // 同 parentId 下重排
+      const sameParent = notebooks.filter(nb => nb.parentId === target.parentId)
+      const ordered = sameParent.map(nb => nb.id)
+      const fromIdx = ordered.indexOf(dragging.id)
+      let toIdx = ordered.indexOf(target.id)
+      if (position === 'after') toIdx += 1
+      if (fromIdx < 0 || toIdx < 0) {
+        console.warn('[sidebar] drop: bad index', { fromIdx, toIdx, ordered, dragging: dragging.id, target: target.id })
+        return
+      }
+      // 把 fromIdx 移到 toIdx
+      ordered.splice(fromIdx, 1)
+      ordered.splice(toIdx > fromIdx ? toIdx - 1 : toIdx, 0, dragging.id)
+      console.log('[sidebar] reorderNotebooks:', target.parentId, ordered)
+      try {
+        await reorderNotebooks(target.parentId, ordered)
+        console.log('[sidebar] reorderNotebooks OK')
+      } catch (err) {
+        console.error('[sidebar] reorderNotebooks failed:', err)
+      }
+    } else {
+      // 笔记：拖到目标笔记的笔记本下
+      // 注意：不能简单地按目标笔记本下的所有笔记重排——拖动的笔记可能不在那个 notebook 下
+      // 简化：先把拖动的笔记移到目标 notebook（如果不同），再重排
+      // 这里先只做同 notebook 内的重排
+      const targetNote = notes.find(n => n.id === target.id)
+      if (!targetNote) {
+        console.warn('[sidebar] drop: target note not found', target.id)
+        return
+      }
+      const sameNotebook = notes.filter(n => n.notebookId === targetNote.notebookId)
+      const ordered = sameNotebook.map(n => n.id)
+      const fromIdx = ordered.indexOf(dragging.id)
+      let toIdx = ordered.indexOf(target.id)
+      if (fromIdx < 0) {
+        // 拖动的笔记不在目标 notebook 下 —— 暂不支持跨笔记本移动
+        console.warn('[sidebar] drop: note not in target notebook', { dragging: dragging.id, targetNb: targetNote.notebookId })
+        return
+      }
+      if (position === 'after') toIdx += 1
+      ordered.splice(fromIdx, 1)
+      ordered.splice(toIdx > fromIdx ? toIdx - 1 : toIdx, 0, dragging.id)
+      console.log('[sidebar] reorderNotes:', targetNote.notebookId, ordered)
+      try {
+        await reorderNotes(targetNote.notebookId, ordered)
+        console.log('[sidebar] reorderNotes OK')
+      } catch (err) {
+        console.error('[sidebar] reorderNotes failed:', err)
+      }
+    }
+  }
+
+  const handleDragEnd = () => {
+    draggingRef.current = null
+    setDragOverInfo(null)
   }
 
   const handleDelete = async (node: NoteTreeNode) => {
@@ -153,16 +432,22 @@ export function Sidebar() {
   }
 
   /** 导出当前右键的笔记为 PDF 文件。
-   *  printToPDF 抓的是当前 web contents，所以非当前笔记要先切过去再导出。 */
+   *  抓取当前预览区的 innerHTML，连同标题一起传给主进程，
+   *  主进程用隐藏 BrowserWindow 加载纯净 HTML 后 printToPDF。 */
   const handleExportPdf = async (nodeId: string) => {
     closeContextMenu()
     try {
       if (selectedNoteId !== nodeId) {
         await selectNote(nodeId)
         // 等 React 把新笔记的预览渲染出来
-        await new Promise(r => setTimeout(r, 200))
+        await new Promise(r => setTimeout(r, 300))
       }
-      const ok = await window.inkslateApi.file.exportPdf()
+      const note = notes.find(n => n.id === nodeId)
+      const title = note?.title || '未命名笔记'
+      // 抓预览区已经渲染好的 HTML（带 mermaid / katex 渲染结果）
+      const inner = document.querySelector('.preview .preview-inner') as HTMLElement | null
+      const html = inner ? inner.innerHTML : ''
+      const ok = await window.inkslateApi.file.exportPdf({ title, html })
       if (!ok) console.log('PDF 导出已取消')
     } catch (e) {
       console.error('PDF 导出失败:', e)
@@ -176,18 +461,37 @@ export function Sidebar() {
     const isRenaming = renaming?.id === node.id
 
     if (node.type === 'notebook') {
+      const isDragOver = dragOverInfo?.targetId === node.id
+      const dropLineStyle: React.CSSProperties = isDragOver
+        ? {
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            height: 2,
+            background: 'var(--accent-color)',
+            pointerEvents: 'none',
+            ...(dragOverInfo!.position === 'before' ? { top: -1 } : { bottom: -1 })
+          }
+        : {}
       return (
-        <div key={node.id}>
+        <div key={node.id} style={{ position: 'relative' }}>
           <div
             className={`tree-row ${isSelected ? 'selected' : ''}`}
-            style={{ paddingLeft: 8 + depth * 12 }}
-            onClick={() => { setRenaming(null); toggleExpand(node.id) }}
+            style={{ paddingLeft: 4 + depth * 10 }}
+            onClick={() => setRenaming(null)}
             onContextMenu={(e) => handleContextMenu(e, node)}
             onDoubleClick={() => handleRename(node)}
+            draggable
+            onDragStart={(e) => handleDragStart(e, node)}
+            onDragOver={(e) => handleDragOver(e, node)}
+            onDragLeave={handleDragLeave}
+            onDrop={(e) => handleDrop(e, node)}
+            onDragEnd={handleDragEnd}
           >
             <span
               onClick={(e) => { e.stopPropagation(); toggleExpand(node.id) }}
-              style={{ display: 'inline-flex', width: 16, cursor: 'pointer' }}
+              style={{ display: 'inline-flex', width: 14, cursor: 'pointer' }}
+              title={isExpanded ? '折叠' : '展开'}
             >
               {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </span>
@@ -195,22 +499,17 @@ export function Sidebar() {
               {node.icon ?? (isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />)}
             </span>
             {isRenaming ? (
-              <input
-                autoFocus
+              <RenameInput
                 value={renaming.value}
-                onChange={(e) => setRenaming({ ...renaming, value: e.target.value })}
-                onBlur={commitRename}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitRename()
-                  if (e.key === 'Escape') setRenaming(null)
-                }}
-                style={{ flex: 1, padding: '2px 4px', fontSize: 13 }}
-                onClick={(e) => e.stopPropagation()}
+                onChange={(v) => setRenaming({ ...renaming, value: v })}
+                onCommit={commitRename}
+                onCancel={cancelRename}
               />
             ) : (
               <span className="tree-label">{node.name}</span>
             )}
           </div>
+          {isDragOver && <div style={dropLineStyle} />}
           {isExpanded && node.children.map(child => renderNode(child, depth + 1))}
         </div>
       )
@@ -221,27 +520,47 @@ export function Sidebar() {
     const formatInfo = {
       markdown: { Icon: MarkdownIcon, color: '#7d8590', title: 'Markdown' },
       html: { Icon: Globe, color: '#e67e22', title: 'HTML' },
-      richtext: { Icon: FileType2, color: '#9b59b6', title: '富文本' },
-      code: { Icon: CodeIcon, color: '#4a90e2', title: '代码' }
+      richtext: { Icon: RichTextIcon, color: '#9b59b6', title: '富文本' },
+      code: { Icon: CodeIcon, color: '#4a90e2', title: '代码' },
+      url: { Icon: Link2, color: '#0ea5e9', title: '网址' },
+      file: { Icon: Paperclip, color: '#16a34a', title: '文件' }
     }[noteFormat ?? 'markdown'] ?? { Icon: MarkdownIcon, color: 'var(--text-secondary)', title: '笔记' }
     const { Icon: FormatIcon, color: formatColor, title: formatTitle } = formatInfo
     const hasChildren = node.children.length > 0
 
+    const isDragOver = dragOverInfo?.targetId === node.id
+    const dropLineStyle: React.CSSProperties = isDragOver
+      ? {
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          height: 2,
+          background: 'var(--accent-color)',
+          pointerEvents: 'none',
+          ...(dragOverInfo!.position === 'before' ? { top: -1 } : { bottom: -1 })
+        }
+      : {}
     return (
-      <div key={node.id}>
+      <div key={node.id} style={{ position: 'relative' }}>
         <div
           className={`tree-row ${isSelected ? 'selected' : ''}`}
-          style={{ paddingLeft: 8 + depth * 12 }}
+          style={{ paddingLeft: 4 + depth * 10 }}
           onClick={() => { setRenaming(null); selectNote(node.id) }}
           onContextMenu={(e) => handleContextMenu(e, node)}
           onDoubleClick={() => handleRename(node)}
+          draggable
+          onDragStart={(e) => handleDragStart(e, node)}
+          onDragOver={(e) => handleDragOver(e, node)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, node)}
+          onDragEnd={handleDragEnd}
         >
                     <span
             onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(node.id) }}
-            style={{ display: 'inline-flex', width: 16, color: 'var(--text-tertiary)', cursor: 'pointer' }}
+            style={{ display: 'inline-flex', width: 14, color: 'var(--text-tertiary)', cursor: 'pointer' }}
           >
             {hasChildren
-              ? (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)
+              ? (isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />)
               : null}
           </span>
           <span
@@ -251,22 +570,17 @@ export function Sidebar() {
             <FormatIcon size={14} />
           </span>
           {isRenaming ? (
-            <input
-              autoFocus
+            <RenameInput
               value={renaming.value}
-              onChange={(e) => setRenaming({ ...renaming, value: e.target.value })}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitRename()
-                if (e.key === 'Escape') setRenaming(null)
-              }}
-              style={{ flex: 1, padding: '2px 4px', fontSize: 13 }}
-              onClick={(e) => e.stopPropagation()}
+              onChange={(v) => setRenaming({ ...renaming, value: v })}
+              onCommit={commitRename}
+              onCancel={cancelRename}
             />
           ) : (
             <span className="tree-label">{node.name}</span>
           )}
         </div>
+        {isDragOver && <div style={dropLineStyle} />}
                 {hasChildren && isExpanded && node.children.map(child => renderNode(child, depth + 1))}
       </div>
     )
@@ -289,6 +603,7 @@ export function Sidebar() {
 
             {contextMenu && (
         <div
+          ref={contextMenuRef}
           style={{
             position: 'fixed',
             top: contextMenu.y,
@@ -306,7 +621,19 @@ export function Sidebar() {
                     <SubMenuItem
             icon={<FilePlus size={14} />}
             label="新建笔记"
+            parentRef={contextMenuRef}
           >
+            <MenuItem icon={<Globe size={14} />} label="网址笔记" onClick={() => {
+              closeContextMenu()
+              const node = contextMenu.node
+              const targetNotebookId = node.type === 'notebook'
+                ? node.id
+                : (notes.find(n => n.id === node.id)?.notebookId ?? notebooks[0]?.id ?? '')
+              const targetParentId = node.type === 'notebook' ? null : node.id
+              // Electron renderer 不支持 window.prompt，用自定义 modal
+              setUrlDialog({ notebookId: targetNotebookId, parentId: targetParentId, name: '', value: 'https://' })
+            }} />
+            <MenuItem icon={<Paperclip size={14} />} label="文件笔记" onClick={handleCreateFileNote} />
             <MenuItem icon={<FileText size={14} />} label="Markdown 笔记" onClick={() => {
               closeContextMenu()
               const node = contextMenu.node
@@ -338,7 +665,7 @@ export function Sidebar() {
                 createNote('未命名富文本', noteData?.notebookId ?? notebooks[0]?.id ?? '', node.id, undefined, 'richtext')
               }
             }} />
-            <SubMenuItem icon={<CodeIcon size={14} />} label="代码笔记">
+            <SubMenuItem icon={<CodeIcon size={14} />} label="代码笔记" parentRef={contextMenuRef}>
               {(['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'cpp', 'csharp', 'html', 'css', 'json', 'sql', 'shell', 'plaintext'] as const).map(lang => (
                 <MenuItem key={lang} icon={<FileCode2 size={14} />} label={lang} onClick={() => {
                   closeContextMenu()
@@ -462,6 +789,124 @@ export function Sidebar() {
           )}
         </div>
       </div>
+
+      {/* 新建网址笔记的 URL 输入弹窗（Electron renderer 不支持 window.prompt） */}
+      {urlDialog && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000
+          }}
+          onClick={() => setUrlDialog(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 8,
+              padding: 20,
+              minWidth: 360,
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+            }}
+          >
+            <h3 style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--text-primary)' }}>新建网址笔记</h3>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>名称</div>
+            <input
+              autoFocus
+              value={urlDialog.name}
+              onChange={(e) => setUrlDialog({ ...urlDialog, name: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  // 名称框回车：聚焦到 URL 框，让用户继续输入网址
+                  const urlInput = (e.currentTarget as HTMLInputElement)
+                    .parentElement?.parentElement?.querySelector<HTMLInputElement>('input[data-url-input="1"]')
+                  if (urlInput) urlInput.focus()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setUrlDialog(null)
+                }
+              }}
+              placeholder="笔记名称（留空则用网址域名）"
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                fontSize: 13,
+                border: '1px solid var(--border-color)',
+                borderRadius: 4,
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                outline: 'none',
+                boxSizing: 'border-box'
+              }}
+            />
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, marginBottom: 4 }}>网址</div>
+            <input
+              data-url-input="1"
+              value={urlDialog.value}
+              onChange={(e) => setUrlDialog({ ...urlDialog, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  confirmCreateUrl()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setUrlDialog(null)
+                }
+              }}
+              placeholder="https://..."
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                fontSize: 13,
+                border: '1px solid var(--border-color)',
+                borderRadius: 4,
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                outline: 'none',
+                fontFamily: 'var(--font-mono)',
+                boxSizing: 'border-box'
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+              <button
+                onClick={() => setUrlDialog(null)}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 4,
+                  background: 'transparent',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer'
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmCreateUrl}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  border: 'none',
+                  borderRadius: 4,
+                  background: 'var(--accent-color)',
+                  color: '#fff',
+                  cursor: 'pointer'
+                }}
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -490,24 +935,40 @@ function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; lab
 
 /**
  * 甯﹀瓙鑿滃崟鐨勮彍鍗曢」 - hover 寮瑰嚭鍙充晶瀛愯彍鍗?*/
-function SubMenuItem({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
+function SubMenuItem({ icon, label, children, parentRef }: { icon: React.ReactNode; label: string; children: React.ReactNode; parentRef?: React.RefObject<HTMLDivElement | null> }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
   const ref = useRef<HTMLDivElement>(null)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleEnter = () => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current)
+      closeTimer.current = null
+    }
     if (ref.current) {
       const rect = ref.current.getBoundingClientRect()
-      setPos({ left: rect.right, top: rect.top })
+      // 优先贴到父菜单（contextMenu）的右边缘；没传就贴自己右边缘
+      const parentRect = parentRef?.current?.getBoundingClientRect()
+      const left = parentRect ? parentRect.right - 4 : rect.right
+      setPos({ left, top: rect.top })
       setOpen(true)
     }
+  }
+
+  const handleLeave = () => {
+    // 延迟关闭，给鼠标留时间从父菜单移到子菜单（子菜单是 fixed 定位，中间有间隙）
+    if (closeTimer.current) clearTimeout(closeTimer.current)
+    closeTimer.current = setTimeout(() => {
+      setOpen(false)
+    }, 150)
   }
 
   return (
     <div
       ref={ref}
       onMouseEnter={handleEnter}
-      onMouseLeave={() => setOpen(false)}
+      onMouseLeave={handleLeave}
       style={{
         position: 'relative',
         display: 'flex',
@@ -525,6 +986,13 @@ function SubMenuItem({ icon, label, children }: { icon: React.ReactNode; label: 
       <ChevronRight size={12} color="var(--text-tertiary)" />
       {open && (
         <div
+          onMouseEnter={() => {
+            if (closeTimer.current) {
+              clearTimeout(closeTimer.current)
+              closeTimer.current = null
+            }
+          }}
+          onMouseLeave={handleLeave}
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
@@ -630,4 +1098,49 @@ ${note.content}
 ${note.content}
 </body>
 </html>`
+}
+
+/** 树节点重命名输入框：强制 focus + 全选 + 阻止事件冒泡 */
+function RenameInput(props: {
+  value: string
+  onChange: (v: string) => void
+  onCommit: () => void
+  onCancel: () => void
+}) {
+  const { value, onChange, onCommit, onCancel } = props
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    // 下一帧再 focus，绕过 React 自动渲染期间的 focus 竞争
+    const id = requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      el.select()
+    })
+    return () => cancelAnimationFrame(id)
+  }, [])
+
+  return (
+    <input
+      ref={inputRef}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          onCommit()
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          onCancel()
+        }
+      }}
+      // 阻止事件冒泡到外层 row 的 onClick（避免触发收起/选中/关闭重命名）
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      style={{ flex: 1, padding: '2px 4px', fontSize: 13, minWidth: 0 }}
+    />
+  )
 }

@@ -58,10 +58,21 @@ export default function App() {
 
   // 初始化加载
   useEffect(() => {
-    loadSettings()
-    loadNotebooks()
-    loadNotes()
-    loadRecycleBin()
+    (async () => {
+      // 必须串行：loadSettings 拿到 lastSelectedNoteId 后，
+      // 再加载 notebooks/notes/recycleBin，最后恢复选中的笔记
+      await loadSettings()
+      await Promise.all([loadNotebooks(), loadNotes(), loadRecycleBin()])
+      // 恢复上次选中的笔记
+      const lastId = useAppStore.getState().settings?.lastSelectedNoteId
+      if (lastId) {
+        const state = useAppStore.getState()
+        const exists = state.notes.find(n => n.id === lastId)
+        if (exists) {
+          await state.selectNote(lastId)
+        }
+      }
+    })()
   }, [])
 
   // 监听系统主题（仅在 theme === 'auto' 时生效）
@@ -110,10 +121,15 @@ export default function App() {
             window.dispatchEvent(new CustomEvent('inkslate:save-current'))
           }
           break
-        case 'theme-change':
-          setTheme(args[0] as 'light' | 'dark' | 'auto' | 'solarized' | 'cyberpunk' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral')
-          updateSettings({ theme: args[0] as any })
+        case 'theme-change': {
+          const next = args[0] as string
+          console.log('[theme-change] received:', next, 'current:', state.theme)
+          setTheme(next as any)
+          updateSettings({ theme: next as any })
+          // 通知主进程更新菜单单选状态
+          window.inkslateApi.notifyThemeChanged(next)
           break
+        }
         case 'toggle-sidebar':
           toggleSidebar()
           break

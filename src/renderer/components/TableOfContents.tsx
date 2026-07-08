@@ -100,7 +100,7 @@ export function TableOfContents({ source, containerRef, open, onToggle }: Props)
                   key={`${h.id}-${i}`}
                   className={'toc-item toc-lv' + h.level}
                   data-toc-id={h.id}
-                  style={{ paddingLeft: 10 + indent * 12 }}
+                  style={{ ['--toc-indent' as any]: indent }}
                   onClick={() => handleClick(h.id)}
                   title={h.text}
                 >

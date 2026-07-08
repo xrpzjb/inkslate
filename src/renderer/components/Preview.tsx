@@ -8,9 +8,10 @@ import mermaid from 'mermaid'
 // @ts-ignore - 无官方 ESM 类型
 import markdownItKatex from '@traptitech/markdown-it-katex'
 import { useAppStore } from '../store/app'
-import { FileText, Maximize2 } from 'lucide-react'
+import { FileText, Maximize2, Loader2, ExternalLink } from 'lucide-react'
 import { attachHeadingIds } from '../utils/headings'
 import { TableOfContents } from './TableOfContents'
+import { FilePreview } from './filePreview/FilePreview'
 import 'highlight.js/styles/github.css'
 import '../styles/preview.css'
 
@@ -250,6 +251,43 @@ export function Preview() {
     )
   }
 
+  // 网址笔记：iframe 加载 url（带 sandbox 安全限制）
+  if (currentNote.format === 'url') {
+    const url = currentNote.url?.trim() || ''
+    if (!url) {
+      return (
+        <div className="preview">
+          <div className="preview-empty">
+            <FileText size={48} className="preview-empty-icon" />
+            <p>网址笔记需要 URL</p>
+            <p style={{ fontSize: 12, opacity: 0.6 }}>在编辑器顶部的输入框填入网址</p>
+          </div>
+        </div>
+      )
+    }
+    return <UrlPreview noteId={currentNote.id} url={url} title={currentNote.title} />
+  }
+
+  // 文件笔记：根据扩展名分发到 PdfPreview / DocxPreview / XlsxPreview / ImagePreview / FileFallback
+  if (currentNote.format === 'file') {
+    if (!currentNote.filePath) {
+      return (
+        <div className="preview">
+          <div className="preview-empty">
+            <FileText size={48} className="preview-empty-icon" />
+            <p>文件笔记尚未关联文件</p>
+            <p style={{ fontSize: 12, opacity: 0.6 }}>右键笔记选择"替换文件"以关联文件</p>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div className="preview-url" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <FilePreview />
+      </div>
+    )
+  }
+
   // HTML 用 iframe 单独渲染
   if (currentNote.format === 'html') {
     const theme = settings?.theme ?? 'light'
@@ -295,6 +333,100 @@ export function Preview() {
           onToggle={() => setTocOpen(o => !o)}
         />
       </div>
+    </div>
+  )
+}
+
+/** 网址笔记预览：带加载状态指示的 iframe
+ *  切换笔记 / url 变化时重新挂载 iframe 并显示 loading，onLoad 后隐藏。
+ *  key 用 noteId+url 保证切换不同 url 笔记时一定重新加载。 */
+function UrlPreview({ noteId, url, title }: { noteId: string; url: string; title: string }) {
+  const [loading, setLoading] = useState(true)
+  const [slow, setSlow] = useState(false) // 加载超过 5s 标记为"慢"
+  const iframeKey = `${noteId}:${url}`
+
+  // url / noteId 变化 → 重新进入 loading 态
+  useEffect(() => {
+    setLoading(true)
+    setSlow(false)
+    // 超时兜底：5s 后标记慢加载；30s 后强制结束 loading（防某些站点不触发 onLoad）
+    const slowTimer = setTimeout(() => setSlow(true), 5000)
+    const hardTimeout = setTimeout(() => setLoading(false), 30000)
+    return () => {
+      clearTimeout(slowTimer)
+      clearTimeout(hardTimeout)
+    }
+  }, [iframeKey])
+
+  const openExternal = () => {
+    window.inkslateApi?.clickMenu?.('open-external-url', url)
+    // 上面 clickMenu 不一定支持，用 shell.openExternal 的兜底：通过 file.openDialog 通道不可行，
+    // 直接用 window.open 让 Electron 的 setWindowOpenHandler 接管（已在 main/index.ts 配置为 shell.openExternal）
+    try { window.open(url, '_blank') } catch {}
+  }
+
+  return (
+    <div className="preview-url" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+      <iframe
+        key={iframeKey}
+        src={url}
+        title={title}
+        onLoad={() => { setLoading(false); setSlow(false) }}
+        style={{
+          flex: 1,
+          border: 'none',
+          width: '100%',
+          minHeight: 0,
+          colorScheme: 'light',
+          background: '#ffffff'
+        }}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+      />
+      {loading && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          background: 'var(--bg-primary)',
+          color: 'var(--text-tertiary)',
+          zIndex: 10,
+          pointerEvents: 'auto'
+        }}>
+          <Loader2 size={32} className="url-loading-spin" style={{ color: 'var(--accent-color)' }} />
+          <div style={{ fontSize: 13 }}>
+            {slow ? '加载较慢，请稍候…' : '正在加载网页…'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', maxWidth: 360, textAlign: 'center', wordBreak: 'break-all', fontFamily: 'var(--font-mono)' }}>
+            {url}
+          </div>
+          {slow && (
+            <button
+              onClick={openExternal}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '5px 12px',
+                fontSize: 12,
+                border: '1px solid var(--border-color)',
+                borderRadius: 4,
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                marginTop: 4
+              }}
+            >
+              <ExternalLink size={13} />
+              用浏览器打开
+            </button>
+          )}
+        </div>
+      )}
+      <style>{`.url-loading-spin { animation: url-spin 0.8s linear infinite; } @keyframes url-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
