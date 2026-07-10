@@ -1,38 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
-import hljs from 'highlight.js'
-import katex from 'katex'
-import 'katex/dist/katex.min.css'
 import mermaid from 'mermaid'
-// @ts-ignore - 无官方 ESM 类型
-import markdownItKatex from '@traptitech/markdown-it-katex'
 import { useAppStore } from '../store/app'
 import { FileText, Maximize2, Loader2, ExternalLink } from 'lucide-react'
 import { attachHeadingIds } from '../utils/headings'
+import { md } from '../utils/markdown'
 import { TableOfContents } from './TableOfContents'
 import { FilePreview } from './filePreview/FilePreview'
 import 'highlight.js/styles/github.css'
 import '../styles/preview.css'
-
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true,
-  breaks: false,
-  // GFM 表格 markdown-it 默认开启
-  highlight: (str, lang) => {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return `<pre class="hljs"><code>${hljs.highlight(str, { language: lang, ignoreIllegals: true }).value}</code></pre>`
-      } catch {}
-    }
-    return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`
-  }
-})
-
-// 数学公式插件：$...$ 行内 + $$...$$ 块级
-md.use(markdownItKatex, { throwOnError: false, katex })
 
 // mermaid 初始化（主题跟随全局主题，按需重新初始化以切换主题）
 function ensureMermaidTheme(theme: string) {
@@ -48,17 +24,6 @@ function ensureMermaidTheme(theme: string) {
   } catch {}
 }
 
-// 自定义 fence 渲染：mermaid 代码块输出 <pre class="mermaid"> 以便 mermaid.run() 自动渲染
-const defaultFence = md.renderer.rules.fence!.bind(md.renderer.rules)
-md.renderer.rules.fence = (tokens: any, idx: number, options: any, env: any, self: any) => {
-  const token = tokens[idx]
-  const lang = (token.info || '').trim().split(/\s+/)[0]
-  if (lang === 'mermaid') {
-    const src = token.content
-    return `<pre class="mermaid">${md.utils.escapeHtml(src)}</pre>\n`
-  }
-  return defaultFence(tokens, idx, options, env, self)
-}
 
 md.use((md) => {
   md.core.ruler.after('inline', 'github-task-lists', (state) => {

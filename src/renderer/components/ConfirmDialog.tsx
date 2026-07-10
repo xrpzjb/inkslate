@@ -6,6 +6,8 @@ type ConfirmOptions = {
   confirmText?: string
   cancelText?: string
   danger?: boolean  // 是否为危险操作（红色按钮）
+  verifyText?: string  // 验证码：用户必须输入这段文字才能确认
+  verifyLabel?: string // 输入框上方的提示文字
 }
 
 type ConfirmDialogProps = {
@@ -19,29 +21,55 @@ function ConfirmDialog({ options, onResolve }: ConfirmDialogProps) {
     message,
     confirmText = '确定',
     cancelText = '取消',
-    danger = false
+    danger = false,
+    verifyText,
+    verifyLabel
   } = options
 
+  const [inputValue, setInputValue] = useState('')
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const canConfirm = !verifyText || inputValue === verifyText
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onResolve(false)
+      if (e.key === 'Enter' && canConfirm) onResolve(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onResolve])
+  }, [onResolve, canConfirm])
 
-  // 自动聚焦取消按钮，避免回车触发确认
+  // 自动聚焦：有验证码聚焦输入框，否则聚焦取消按钮
   useEffect(() => {
-    cancelRef.current?.focus()
-  }, [])
+    if (verifyText) {
+      inputRef.current?.focus()
+    } else {
+      cancelRef.current?.focus()
+    }
+  }, [verifyText])
 
   return (
     <div className="confirm-overlay" onClick={() => onResolve(false)}>
       <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
         {title && <div className="confirm-title">{title}</div>}
         <div className="confirm-message">{message}</div>
+        {verifyText && (
+          <div className="confirm-verify">
+            <label className="confirm-verify-label">
+              {verifyLabel || `请输入 "${verifyText}" 以确认：`}
+            </label>
+            <input
+              ref={inputRef}
+              className="confirm-verify-input"
+              type="text"
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              placeholder={verifyText}
+              autoComplete="off"
+            />
+          </div>
+        )}
         <div className="confirm-actions">
           <button
             ref={cancelRef}
@@ -52,6 +80,7 @@ function ConfirmDialog({ options, onResolve }: ConfirmDialogProps) {
           </button>
           <button
             className={`confirm-btn ${danger ? 'confirm-btn-danger' : 'confirm-btn-confirm'}`}
+            disabled={!canConfirm}
             onClick={() => onResolve(true)}
           >
             {confirmText}
@@ -126,6 +155,34 @@ function ConfirmDialog({ options, onResolve }: ConfirmDialogProps) {
         }
         .confirm-btn-danger:hover {
           background: #dc2626;
+        }
+        .confirm-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+          filter: none;
+        }
+        .confirm-verify {
+          margin-bottom: 16px;
+        }
+        .confirm-verify-label {
+          display: block;
+          font-size: 12px;
+          color: var(--text-secondary);
+          margin-bottom: 6px;
+        }
+        .confirm-verify-input {
+          width: 100%;
+          padding: 8px 12px;
+          border-radius: 6px;
+          border: 1px solid var(--border-color);
+          background: var(--bg-secondary);
+          color: var(--text-primary);
+          font-size: 14px;
+          outline: none;
+          box-sizing: border-box;
+        }
+        .confirm-verify-input:focus {
+          border-color: var(--accent-color, #3b82f6);
         }
         @keyframes fadeIn {
           from { opacity: 0; }

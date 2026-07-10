@@ -1,0 +1,283 @@
+/* ============ 左侧竖向图标菜单（替代顶部 TitleBar） ============ */
+.icon-sidebar {
+  width: 44px;
+  flex-shrink: 0;
+  background: var(--bg-tertiary);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  user-select: none;
+  z-index: 50;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.icon-sidebar-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin: 1px 0;
+  padding: 0;
+  transition: background 100ms, color 100ms;
+  position: relative;
+}
+
+.icon-sidebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.icon-sidebar-btn.active {
+  background: var(--accent-bg);
+  color: var(--accent-color);
+}
+
+/* tooltip */
+.icon-sidebar-btn::after {
+  content: attr(title);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 100ms;
+  z-index: 1000;
+}
+
+.icon-sidebar-btn:hover::after {
+  opacity: 1;
+  transition-delay: 300ms;
+}
+
+.icon-sidebar-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+.icon-sidebar-spacer {
+  flex: 1;
+  min-height: 12px;
+}
+
+/* ============ Popover（子菜单） ============ */
+.icon-sidebar-popover {
+  min-width: 200px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+  z-index: 9999;
+}
+
+.icon-sidebar-popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: default;
+  min-height: 24px;
+  line-height: 1.4;
+}
+
+.icon-sidebar-popover-item:hover {
+  background: var(--accent-bg);
+  color: var(--accent-color);
+}
+
+.icon-sidebar-popover-item.active {
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+.icon-sidebar-popover-item-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.icon-sidebar-popover-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.icon-sidebar-popover-item:hover .icon-sidebar-popover-hint,
+.icon-sidebar-popover-item.active .icon-sidebar-popover-hint {
+  color: var(--accent-color);
+}
+
+.icon-sidebar-popover-check {
+  color: var(--accent-color);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+}
+
+.icon-sidebar-popover-check-spacer {
+  display: inline-block;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.icon-sidebar-popover-sep {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 8px;
+}
+
+/* ============ 同步状态图标 ============ */
+/* 基础：sync 按钮在容器里 relative，icon + badge 叠加 */
+.icon-sidebar-sync {
+  position: relative;
+}
+
+.icon-sidebar-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--accent-color, #3b82f6);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--bg-tertiary);
+}
+
+.icon-sidebar-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--bg-tertiary);
+}
+
+.icon-sidebar-dot-error {
+  background: #ef4444;
+}
+
+/* 5 态颜色映射 */
+.sync-state-connected { color: var(--text-secondary); }
+.sync-state-connected:hover { color: var(--text-primary); }
+
+.sync-state-offline,
+.sync-state-unconfigured {
+  color: #f59e0b;  /* 黄色：异常/未配置 */
+}
+
+.sync-state-pending {
+  color: var(--accent-color, #3b82f6);  /* 主色：待处理 */
+}
+
+.sync-state-syncing {
+  color: var(--accent-color, #3b82f6);
+}
+
+.sync-state-syncing svg {
+  animation: sync-spin 1s linear infinite;
+}
+
+.sync-state-success {
+  color: #22c55e;  /* 绿：成功 */
+}
+
+.sync-state-error {
+  color: #ef4444;  /* 红：失败 */
+}
+
+@keyframes sync-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* popover 内的状态摘要 */
+.icon-sidebar-popover-sync {
+  min-width: 220px;
+}
+
+.icon-sidebar-sync-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.icon-sidebar-sync-summary.sync-state-pending { color: var(--accent-color, #3b82f6); }
+.icon-sidebar-sync-summary.sync-state-syncing { color: var(--accent-color, #3b82f6); }
+.icon-sidebar-sync-summary.sync-state-success { color: #22c55e; }
+.icon-sidebar-sync-summary.sync-state-error,
+.icon-sidebar-sync-summary.sync-state-offline,
+.icon-sidebar-sync-summary.sync-state-unconfigured { color: #ef4444; }
+.icon-sidebar-sync-summary.sync-state-connected { color: var(--text-primary); }
+
+.icon-sidebar-sync-summary-label {
+  flex: 1;
+}
+
+.icon-sidebar-sync-summary-pending {
+  font-weight: 400;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.icon-sidebar-sync-meta {
+  padding: 0 10px 6px 10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.icon-sidebar-sync-error-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px 8px 10px;
+  font-size: 11px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  margin: 0 6px 4px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  word-break: break-all;
+}

@@ -43,6 +43,7 @@ nbdist/
 *.swp
 .opencode
 .mimocode
+.workbuddy
 node_modules/*
 
 !*/build/*.java

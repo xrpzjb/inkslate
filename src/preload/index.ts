@@ -16,6 +16,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_MOVE, id, newParentId),
     reorder: (parentId: string | null, orderedIds: string[]): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_REORDER, parentId, orderedIds),
+    update: (id: string, updates: { name?: string; icon?: string | null; parentId?: string | null }): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_UPDATE, id, updates),
     // 回收站相关
     listDeleted: (): Promise<Notebook[]> => ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_LIST_DELETED),
     restore: (id: string): Promise<{ restoredNotebooks: string[] }> =>
@@ -57,8 +59,8 @@ const api = {
     /** 另存为：弹保存框，复制源文件到用户选的位置 */
     saveAs: (noteId: string): Promise<boolean> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_NOTE_SAVE_AS, noteId),
-    /** 读取源文件内容为 ArrayBuffer，给预览组件用 */
-    read: (noteId: string): Promise<ArrayBuffer | null> =>
+    /** 读取源文件内容为 Uint8Array，给预览组件用 */
+    read: (noteId: string): Promise<Uint8Array | null> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_NOTE_READ, noteId)
   },
 
@@ -82,6 +84,22 @@ const api = {
     /** pull = fetch + merge */
     pull: (): Promise<{ ok: boolean; message: string; updated: boolean }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL),
+    /**
+     * 一键同步：commit → pull → push
+     * 适合「我在 A 端改了，现在在 B 端」：先拉再推避免覆盖他人改动
+     */
+    sync: (): Promise<{
+      ok: boolean
+      message: string
+      phase?: 'commit' | 'pull' | 'push'
+      phases?: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' }
+      pulled?: boolean
+      pushed?: boolean
+    }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_SYNC),
+    /** 是否已配置 + 是否已初始化 */
+    isConfigured: (): Promise<{ configured: boolean; initialized: boolean }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_IS_CONFIGURED),
     /** 提交历史（可指定 filepath） */
     log: (filepath?: string, maxCount?: number): Promise<any[]> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_LOG, filepath, maxCount),
@@ -96,6 +114,10 @@ const api = {
     empty: (): Promise<{ notes: number; notebooks: number }> =>
       ipcRenderer.invoke(IPC_CHANNELS.RECYCLE_BIN_EMPTY)
   },
+
+  /** Git 工作区路径（用于渲染进程将 note.path 转换为 git 相对路径） */
+  getWorkDir: (): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_WORKDIR),
 
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),
@@ -158,6 +180,7 @@ const api = {
     ipcRenderer.on('menu:git-settings', () => callback('git-settings'))
     ipcRenderer.on('menu:git-push', () => callback('git-push'))
     ipcRenderer.on('menu:git-pull', () => callback('git-pull'))
+    ipcRenderer.on('menu:git-sync', () => callback('git-sync'))
     ipcRenderer.on('menu:show-shortcuts', () => callback('show-shortcuts'))
     ipcRenderer.on(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN, () => callback('open-recycle-bin'))
     ipcRenderer.on(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS, () => callback('recycle-bin-settings'))
@@ -180,6 +203,7 @@ const api = {
       ipcRenderer.removeAllListeners('menu:git-settings')
       ipcRenderer.removeAllListeners('menu:git-push')
       ipcRenderer.removeAllListeners('menu:git-pull')
+      ipcRenderer.removeAllListeners('menu:git-sync')
       ipcRenderer.removeAllListeners('menu:show-shortcuts')
       ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN)
       ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS)

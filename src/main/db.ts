@@ -233,6 +233,85 @@ export async function initDatabase(): Promise<void> {
     db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('migration_slug_filenames', '1')
     console.log(`[migration] slug filenames: processed ${rows.length} notes`)
   }
+
+  // ===== 迁移：把现有平铺笔记按笔记本树状目录归位 =====
+  // 老结构：notes/{slug}.{ext} 全平铺在根
+  // 新结构：notes/<笔记本 slug 路径>/{slug}.{ext}
+  const treeMigration = db.prepare('SELECT value FROM settings WHERE key = ?').get('migration_notebook_tree') as { value: string } | undefined
+  if (!treeMigration) {
+    const notesDir = getNotesDir()
+    const filesDir = getFilesDir()
+    const rows = db.prepare('SELECT id, path, notebook_id, format, file_path, file_ext FROM notes WHERE is_deleted = 0 AND format != ?').all('file') as any[]
+    let movedNotes = 0
+    for (const row of rows) {
+      if (!row.path) continue
+      const targetDir = getNotebookPath(row.notebook_id)
+      // 已经在正确目录里就跳过
+      if (path.dirname(row.path) === targetDir) continue
+      try {
+        if (!fs.existsSync(row.path)) continue
+        fs.mkdirSync(targetDir, { recursive: true })
+        const basename = path.basename(row.path)
+        let dest = path.join(targetDir, basename)
+        let counter = 2
+        while (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(row.path)) {
+          const ext = path.extname(basename)
+          const stem = basename.slice(0, basename.length - ext.length)
+          dest = path.join(targetDir, `${stem}-${counter}${ext}`)
+          counter++
+        }
+        if (path.resolve(dest) !== path.resolve(row.path)) {
+          fs.renameSync(row.path, dest)
+          db.prepare('UPDATE notes SET path = ? WHERE id = ?').run(dest, row.id)
+          movedNotes++
+        }
+      } catch (e) {
+        console.error('[migration] notebook tree move note failed:', row.id, e)
+      }
+    }
+    // 文件笔记源文件也按笔记本归位
+    const fileRows = db.prepare('SELECT id, file_path, notebook_id FROM notes WHERE is_deleted = 0 AND format = ? AND file_path IS NOT NULL').all('file') as any[]
+    let movedFiles = 0
+    for (const row of fileRows) {
+      if (!row.file_path) continue
+      const targetDir = getNotebookFilePath(row.notebook_id)
+      if (path.dirname(row.file_path) === targetDir) continue
+      try {
+        if (!fs.existsSync(row.file_path)) continue
+        fs.mkdirSync(targetDir, { recursive: true })
+        const basename = path.basename(row.file_path)
+        let dest = path.join(targetDir, basename)
+        let counter = 2
+        while (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(row.file_path)) {
+          const ext = path.extname(basename)
+          const stem = basename.slice(0, basename.length - ext.length)
+          dest = path.join(targetDir, `${stem}-${counter}${ext}`)
+          counter++
+        }
+        if (path.resolve(dest) !== path.resolve(row.file_path)) {
+          fs.renameSync(row.file_path, dest)
+          db.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(dest, row.id)
+          movedFiles++
+        }
+      } catch (e) {
+        console.error('[migration] notebook tree move file note src failed:', row.id, e)
+      }
+    }
+    // 笔记本目录本身：新建空目录占位（让 Git 看见 .keep）
+    const notebookRows = db.prepare('SELECT id, name FROM notebooks WHERE is_deleted = 0 AND parent_id IS NOT NULL').all() as any[]
+    let createdDirs = 0
+    for (const nb of notebookRows) {
+      try {
+        const dir = getNotebookPath(nb.id)
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true })
+          createdDirs++
+        }
+      } catch {}
+    }
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('migration_notebook_tree', '1')
+    console.log(`[migration] notebook tree: moved ${movedNotes} notes, ${movedFiles} file srcs, created ${createdDirs} dirs`)
+  }
 }
 
 export function closeDatabase(): void {
@@ -285,6 +364,156 @@ export function getUniqueFileName(slug: string, ext: string, dir: string, exclud
     counter++
   }
   return fileName
+}
+
+// ============ 笔记本路径（Git 同步树状结构用） ============
+
+/**
+ * 计算一个 notebook 在磁盘上的相对路径（slug 形式），如 `我的笔记/工作`
+ * - 用 parent_id 链向上递归
+ * - 用 slugify 做目录名
+ * - 同级 slug 冲突自动加 -2, -3 后缀
+ * - 已删除的 notebook 不参与路径（避免隔离文件夹被生成）
+ *
+ * 返回空字符串表示根级（不应该发生，但兜底）
+ */
+function notebookSlugPathFromChain(
+  id: string,
+  visited: Set<string> = new Set()
+): string {
+  if (visited.has(id)) return '' // 防环
+  visited.add(id)
+  const row = getDatabase()
+    .prepare('SELECT id, name, parent_id, is_deleted FROM notebooks WHERE id = ?')
+    .get(id) as any
+  if (!row) return ''
+  const slug = slugify(row.name) || 'untitled'
+  if (!row.parent_id) return slug
+  const parentPath = notebookSlugPathFromChain(row.parent_id, visited)
+  return parentPath ? `${parentPath}/${slug}` : slug
+}
+
+/** 计算 notebook 完整磁盘绝对路径（含 getNotesDir 前缀） */
+export function getNotebookPath(notebookId: string): string {
+  const rel = notebookSlugPathFromChain(notebookId)
+  return rel ? path.join(getNotesDir(), rel) : getNotesDir()
+}
+
+/** 同上，给 file 笔记用（files/ 前缀） */
+export function getNotebookFilePath(notebookId: string): string {
+  const rel = notebookSlugPathFromChain(notebookId)
+  return rel ? path.join(getFilesDir(), rel) : getFilesDir()
+}
+
+/** 重命名笔记本时，确保新 slug 与同级其他笔记本不冲突。
+ *  返回保证唯一的 slug。 */
+function uniqueNotebookSlug(desiredSlug: string, parentId: string | null, excludeId: string): string {
+  const d = getDatabase()
+  const siblings = d.prepare(
+    `SELECT id, name FROM notebooks WHERE parent_id IS ? AND id != ? AND is_deleted = 0`
+  ).all(parentId, excludeId) as any[]
+  const existingSlugs = new Set(siblings.map(s => slugify(s.name)))
+  if (!existingSlugs.has(desiredSlug)) return desiredSlug
+  let i = 2
+  while (existingSlugs.has(`${desiredSlug}-${i}`)) i++
+  return `${desiredSlug}-${i}`
+}
+
+/** 重命名磁盘上的笔记目录 + 文件源目录，并更新数据库中 notes 的 path 和 file_path。
+ *  oldRel / newRel 是 notebookSlugPathFromChain 算出的相对路径（如 "我的笔记/工作"）。
+ *  仅当目录存在时才动磁盘；flat 结构的老文件不动以避免误删。 */
+function renameNotebookDirOnDisk(oldRel: string, newRel: string): void {
+  if (!oldRel || !newRel || oldRel === newRel) return
+
+  const oldDir = path.join(getNotesDir(), oldRel)
+  const newDir = path.join(getNotesDir(), newRel)
+  const oldFilesDir = path.join(getFilesDir(), oldRel)
+  const newFilesDir = path.join(getFilesDir(), newRel)
+
+  // 递归创建目录 + 防冲突重命名
+  const renameWithDedup = (src: string, dest: string) => {
+    if (!fs.existsSync(src)) return
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    let finalDest = dest
+    let counter = 2
+    while (fs.existsSync(finalDest)) {
+      if (finalDest === src) return // 安全网
+      finalDest = `${dest}-${counter}`
+      counter++
+    }
+    fs.renameSync(src, finalDest)
+  }
+
+  renameWithDedup(oldDir, newDir)
+  renameWithDedup(oldFilesDir, newFilesDir)
+
+  // 更新数据库中所有受影响笔记的 path 和 file_path
+  // note: notebookSlugPathFromChain 返回 / 分隔，DB 路径用 path.sep
+  const oldPrefix = oldDir + path.sep
+  const newPrefix = newDir + path.sep
+  const d = getDatabase()
+  const affected = d.prepare(
+    `SELECT id, path, file_path FROM notes WHERE is_deleted = 0 AND (path LIKE ? OR file_path LIKE ?)`
+  ).all(`${oldPrefix}%`, `${oldPrefix}%`) as any[]
+  for (const row of affected) {
+    if (row.path && row.path.startsWith(oldPrefix)) {
+      d.prepare('UPDATE notes SET path = ? WHERE id = ?').run(newPrefix + row.path.slice(oldPrefix.length), row.id)
+    }
+    if (row.file_path && row.file_path.startsWith(oldPrefix)) {
+      d.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(newPrefix + row.file_path.slice(oldPrefix.length), row.id)
+    }
+  }
+}
+
+/** 移动笔记本（改 parent_id）时，把磁盘目录一起搬，并更新数据库路径。
+ *  oldRel 必须在调用前算好（DB 改 parent_id 之前），否则会算成新位置 */
+function moveNotebookDirOnDisk(notebookId: string, oldRel: string): void {
+  if (!oldRel) return
+  const newRel = notebookSlugPathFromChain(notebookId) // 此时 DB 已更新 parent
+  if (!newRel || oldRel === newRel) return
+
+  const oldDir = path.join(getNotesDir(), oldRel)
+  const newDir = path.join(getNotesDir(), newRel)
+  const oldFilesDir = path.join(getFilesDir(), oldRel)
+  const newFilesDir = path.join(getFilesDir(), newRel)
+
+  if (!fs.existsSync(oldDir) && !fs.existsSync(oldFilesDir)) return
+
+  // 搬笔记目录
+  if (fs.existsSync(oldDir)) {
+    try {
+      fs.mkdirSync(path.dirname(newDir), { recursive: true })
+      fs.renameSync(oldDir, newDir)
+    } catch (e) {
+      console.error('[db] moveNotebookDirOnDisk notes dir failed:', oldDir, '→', newDir, e)
+    }
+  }
+
+  // 搬文件源目录
+  if (fs.existsSync(oldFilesDir)) {
+    try {
+      fs.mkdirSync(path.dirname(newFilesDir), { recursive: true })
+      fs.renameSync(oldFilesDir, newFilesDir)
+    } catch (e) {
+      console.error('[db] moveNotebookDirOnDisk files dir failed:', oldFilesDir, '→', newFilesDir, e)
+    }
+  }
+
+  // 更新 DB 中受影响笔记的 path 和 file_path
+  const oldPrefix = oldDir + path.sep
+  const newPrefix = newDir + path.sep
+  const d = getDatabase()
+  const affected = d.prepare(
+    `SELECT id, path, file_path FROM notes WHERE is_deleted = 0 AND (path LIKE ? OR file_path LIKE ?)`
+  ).all(`${oldPrefix}%`, `${oldPrefix}%`) as any[]
+  for (const row of affected) {
+    if (row.path && row.path.startsWith(oldPrefix)) {
+      d.prepare('UPDATE notes SET path = ? WHERE id = ?').run(newPrefix + row.path.slice(oldPrefix.length), row.id)
+    }
+    if (row.file_path && row.file_path.startsWith(oldPrefix)) {
+      d.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(newPrefix + row.file_path.slice(oldPrefix.length), row.id)
+    }
+  }
 }
 
 // ============ 笔记本操作 ============
@@ -343,19 +572,97 @@ const dbMethods = {
   },
 
   renameNotebook(id: string, newName: string): void {
-    getDatabase().prepare('UPDATE notebooks SET name = ?, updated_at = ? WHERE id = ?').run(newName, Date.now(), id)
+    const d = getDatabase()
+    const row = d.prepare('SELECT id, parent_id FROM notebooks WHERE id = ?').get(id) as any
+    if (!row) return
+    const desired = slugify(newName) || 'untitled'
+    const finalSlug = uniqueNotebookSlug(desired, row.parent_id ?? null, id)
+    const displayName = finalSlug === desired ? newName : `${newName}`
+    // 计算旧路径（改名前），新路径（改名后）
+    const oldRel = notebookSlugPathFromChain(id)
+    d.prepare('UPDATE notebooks SET name = ?, updated_at = ? WHERE id = ?').run(displayName, Date.now(), id)
+    const newRel = notebookSlugPathFromChain(id)
+    // 硬盘目录同步重命名 + 更新 notes 的 path/file_path
+    if (oldRel && newRel && oldRel !== newRel) {
+      try { renameNotebookDirOnDisk(oldRel, newRel) } catch (e) { console.error('[db] renameNotebook dir rename failed', e) }
+    }
   },
 
   /**
-   * 软删除笔记本：仅标记 is_deleted=1 + deleted_at=now
-   * 不动子笔记的 is_deleted 状态——它们各自独立管理是否进回收站
+   * 通用更新笔记本（name / icon / parentId 任一）
+   * - name 变化：走 renameNotebook 同款逻辑（slug 去重 + 硬盘目录 mv）
+   * - icon 变化：只动 DB（icon 字段不影响磁盘）
+   * - parentId 变化：走 moveNotebook 同款逻辑
+   * - 三个都不传：no-op
+   */
+  updateNotebook(id: string, updates: { name?: string; icon?: string | null; parentId?: string | null }): void {
+    const d = getDatabase()
+    const row = d.prepare('SELECT * FROM notebooks WHERE id = ?').get(id) as any
+    if (!row) return
+
+    // name 改：复用 renameNotebook 的目录迁移逻辑
+    if (updates.name !== undefined && updates.name !== row.name) {
+      this.renameNotebook(id, updates.name)
+    }
+
+    // parentId 改：复用 moveNotebook 的逻辑
+    if (updates.parentId !== undefined && updates.parentId !== (row.parent_id ?? null)) {
+      this.moveNotebook(id, updates.parentId)
+    }
+
+    // icon 改：只动 DB（不影响磁盘）
+    if (updates.icon !== undefined && updates.icon !== row.icon) {
+      d.prepare('UPDATE notebooks SET icon = ?, updated_at = ? WHERE id = ?').run(updates.icon, Date.now(), id)
+    }
+  },
+
+  /**
+   * 软删除笔记本 + 级联删除其下所有笔记 + 子笔记本（递归）
+   * 磁盘文件保留不动 —— 回收站的还原靠 row.notebook_id 重新走 createNote 路径即可
    */
   deleteNotebook(id: string): void {
-    getDatabase().prepare('UPDATE notebooks SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id)
+    const d = getDatabase()
+    const now = Date.now()
+
+    // 递归收集所有子笔记本 ID（含自身）
+    const ids: string[] = [id]
+    const stack = [id]
+    while (stack.length > 0) {
+      const cur = stack.pop()!
+      const children = d.prepare('SELECT id FROM notebooks WHERE parent_id = ? AND is_deleted = 0').all(cur) as any[]
+      for (const child of children) {
+        ids.push(child.id)
+        stack.push(child.id)
+      }
+    }
+
+    // 软删除这些笔记本下所有活跃笔记
+    for (const nbId of ids) {
+      d.prepare('UPDATE notes SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE notebook_id = ? AND is_deleted = 0')
+        .run(now, now, nbId)
+    }
+
+    // 软删除笔记本自身和子笔记本
+    d.prepare(`UPDATE notebooks SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`)
+      .run(now, now, ...ids)
   },
 
   moveNotebook(id: string, newParentId: string | null): void {
+    // 防环：不能移动到自己的后代
+    if (newParentId) {
+      let cur: string | null = newParentId
+      const visited = new Set<string>()
+      while (cur && !visited.has(cur)) {
+        visited.add(cur)
+        if (cur === id) throw new Error('不能把笔记本移动到自己的子目录下')
+        const row = getDatabase().prepare('SELECT parent_id FROM notebooks WHERE id = ?').get(cur) as any
+        cur = row?.parent_id ?? null
+      }
+    }
+    // 先算"旧"路径（在改 parent 之前），再改 DB，再 mv
+    const oldRel = notebookSlugPathFromChain(id)
     getDatabase().prepare('UPDATE notebooks SET parent_id = ?, updated_at = ? WHERE id = ?').run(newParentId, Date.now(), id)
+    try { moveNotebookDirOnDisk(id, oldRel) } catch (e) { console.error('[db] moveNotebook dir move failed', e) }
   },
 
   // ============ 笔记操作 ============
@@ -388,8 +695,11 @@ const dbMethods = {
     const now = Date.now()
     const ext = format === 'html' ? 'html' : format === 'richtext' ? 'json' : format === 'code' ? 'code' : format === 'url' ? 'url' : format === 'file' ? 'file' : 'md'
     const slug = slugify(title)
-    const fileName = getUniqueFileName(slug, ext, getNotesDir())
-    const filePath = path.join(getNotesDir(), fileName)
+    // 树状目录：notes/<笔记本 slug 路径>/<note-slug>.<ext>
+    const dir = getNotebookPath(notebookId)
+    try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+    const fileName = getUniqueFileName(slug, ext, dir)
+    const filePath = path.join(dir, fileName)
 
     // 写入初始内容
     let initialContent = ''
@@ -421,13 +731,33 @@ const dbMethods = {
   },
 
   /** 文件笔记：在 createNote 之后再设置源文件信息。
-   *  主进程把用户选的文件复制到 app data/notes/files/{id}.{ext}，
+   *  主进程把用户选的文件复制到 app data/notes/files/<笔记本路径>/{slug}.{ext}，
    *  再调本方法把文件路径写库。 */
-  setNoteFile(id: string, opts: { filePath: string; fileName: string; fileSize: number; fileExt: string }): void {
+  setNoteFile(noteId: string, opts: { filePath: string; fileName: string; fileSize: number; fileExt: string }): void {
     const now = Date.now()
     getDatabase().prepare(`
       UPDATE notes SET file_path = ?, file_name = ?, file_size = ?, file_ext = ?, updated_at = ? WHERE id = ?
-    `).run(opts.filePath, opts.fileName, opts.fileSize, opts.fileExt, now, id)
+    `).run(opts.filePath, opts.fileName, opts.fileSize, opts.fileExt, now, noteId)
+  },
+
+  /**
+   * 文件笔记专用：给定 noteId + 源文件名，算出树状目录下的目标路径 + 唯一文件名，
+   * 并返回一个 fileName（带后缀）让前端塞到 note.title 里。
+   *
+   * 之前老的实现是直接拼到 notes/files/{slug}.{ext}，忽略笔记本。
+   * 现在按 notebook 树放到 notes/files/<笔记本 slug 路径>/{slug}.{ext}。
+   */
+  prepareFileNoteCopy(noteId: string, sourceFileName: string): { dir: string; fileName: string; fullPath: string } {
+    const d = getDatabase()
+    const noteRow = d.prepare('SELECT notebook_id FROM notes WHERE id = ?').get(noteId) as any
+    if (!noteRow) throw new Error(`Note ${noteId} not found`)
+    const dir = getNotebookFilePath(noteRow.notebook_id)
+    try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+    const ext = path.extname(sourceFileName).slice(1).toLowerCase() || 'bin'
+    const baseName = path.basename(sourceFileName, path.extname(sourceFileName))
+    const slug = slugify(baseName)
+    const uniqueName = getUniqueFileName(slug, ext, dir)
+    return { dir, fileName: uniqueName, fullPath: path.join(dir, uniqueName) }
   },
 
   updateNote(id: string, updates: Partial<Note>): Note {
@@ -439,6 +769,7 @@ const dbMethods = {
     const newIcon = updates.icon ?? row.icon
     const newFormat = updates.format ?? row.format ?? 'markdown'
     const newUrl = updates.url !== undefined ? updates.url : row.url
+    const newNotebookId = updates.notebookId !== undefined ? updates.notebookId : row.notebook_id
     // 文件笔记字段：仅在传了的时候更新（replace 流程会传，普通改 title 不动）
     const newFilePath = updates.filePath !== undefined ? updates.filePath : row.file_path
     const newFileName = updates.fileName !== undefined ? updates.fileName : row.file_name
@@ -446,20 +777,27 @@ const dbMethods = {
     const newFileExt = updates.fileExt !== undefined ? updates.fileExt : row.file_ext
     const now = Date.now()
 
-    // 标题变化时重命名磁盘文件（git 里也能看到可读的文件名）
+    // 标题变化 或 笔记本变化 或 格式变化 都要重定位磁盘文件
+    const titleChanged = updates.title !== undefined && updates.title !== row.title
+    const notebookChanged = updates.notebookId !== undefined && updates.notebookId !== row.notebook_id
+    const formatChanged = updates.format !== undefined && updates.format !== row.format
     let newPath = row.path
-    if (updates.title !== undefined && updates.title !== row.title && row.path) {
+    if ((titleChanged || notebookChanged || formatChanged) && row.path) {
       const ext = newFormat === 'html' ? 'html' : newFormat === 'richtext' ? 'json' : newFormat === 'code' ? 'code' : newFormat === 'url' ? 'url' : newFormat === 'file' ? 'file' : 'md'
       const slug = slugify(newTitle)
-      const newFileNameDisk = getUniqueFileName(slug, ext, getNotesDir(), row.path)
-      const candidatePath = path.join(getNotesDir(), newFileNameDisk)
+      const targetDir = getNotebookPath(newNotebookId)
+      try { fs.mkdirSync(targetDir, { recursive: true }) } catch {}
+      const newFileNameDisk = getUniqueFileName(slug, ext, targetDir, row.path)
+      const candidatePath = path.join(targetDir, newFileNameDisk)
       if (candidatePath !== row.path) {
         try {
+          // 跨目录 mv 时，目标可能与 row.path 的父目录不同；先 mkdir -p
+          fs.mkdirSync(path.dirname(candidatePath), { recursive: true })
           fs.renameSync(row.path, candidatePath)
           newPath = candidatePath
         } catch (e) {
-          console.error('rename note file failed:', e)
-          // 重命名失败，保持旧路径
+          console.error('rename/move note file failed:', e)
+          // 改名失败保持旧路径
         }
       }
     }
@@ -472,15 +810,15 @@ const dbMethods = {
     }
 
     d.prepare(`
-      UPDATE notes SET title = ?, icon = ?, format = ?, url = ?, file_path = ?, file_name = ?, file_size = ?, file_ext = ?, path = ?, updated_at = ? WHERE id = ?
-    `).run(newTitle, newIcon, newFormat, newUrl ?? null, newFilePath, newFileName, newFileSize, newFileExt, newPath, now, id)
+      UPDATE notes SET title = ?, icon = ?, format = ?, url = ?, notebook_id = ?, file_path = ?, file_name = ?, file_size = ?, file_ext = ?, path = ?, updated_at = ? WHERE id = ?
+    `).run(newTitle, newIcon, newFormat, newUrl ?? null, newNotebookId, newFilePath, newFileName, newFileSize, newFileExt, newPath, now, id)
 
     let content = ''
     try {
       content = fs.readFileSync(newPath, 'utf-8')
     } catch {}
 
-    return rowToNote({ ...row, title: newTitle, icon: newIcon, format: newFormat, url: newUrl, path: newPath, updated_at: now }, content)
+    return rowToNote({ ...row, title: newTitle, icon: newIcon, format: newFormat, url: newUrl, notebook_id: newNotebookId, path: newPath, updated_at: now }, content)
   },
 
   /**
@@ -671,6 +1009,100 @@ const dbMethods = {
   /** 重新排序笔记本。orderedIds 是新的目标顺序（仅顶级或某 parent 下）。 */
   reorderNotebooks(parentId: string | null, orderedIds: string[]): void {
     reorderRows('notebooks', 'parent_id', parentId, orderedIds)
+  },
+
+  // ============ Git 同步元数据导出/导入 ============
+
+  /** 列出全部活跃笔记本（is_deleted=0），用于导出到 .inkslate/notebooks.json */
+  listActiveNotebooks(): Notebook[] {
+    const rows = getDatabase()
+      .prepare('SELECT * FROM notebooks WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) ASC')
+      .all() as any[]
+    return rows.map(rowToNotebook)
+  },
+
+  /** 列出全部活跃笔记（is_deleted=0），用于导出到 .inkslate/notes.json */
+  listActiveNotes(): Note[] {
+    const rows = getDatabase()
+      .prepare('SELECT * FROM notes WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC')
+      .all() as any[]
+    return rows.map((row: any) => rowToNote(row))
+  },
+
+  /**
+   * 批量替换 notebooks 表（Git 拉取后 reconcile 用）
+   * - 删除所有现存的活跃记录
+   * - 按 notebooks 数组 INSERT（id 冲突走 REPLACE）
+   * - 软删除的（is_deleted=1）不动
+   */
+  replaceNotebooks(notebooks: Array<{
+    id: string
+    name: string
+    parentId: string | null
+    icon?: string | null
+    createdAt: number
+    updatedAt: number
+    sortOrder?: number
+  }>): void {
+    const d = getDatabase()
+    const tx = d.transaction(() => {
+      d.prepare('DELETE FROM notebooks WHERE is_deleted = 0').run()
+      const stmt = d.prepare(`
+        INSERT INTO notebooks (id, name, parent_id, created_at, updated_at, icon, is_deleted, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+      `)
+      for (const nb of notebooks) {
+        stmt.run(
+          nb.id, nb.name, nb.parentId, nb.createdAt, nb.updatedAt,
+          nb.icon ?? null, nb.sortOrder ?? nb.createdAt
+        )
+      }
+    })
+    tx()
+  },
+
+  /**
+   * 批量替换 notes 表（Git 拉取后 reconcile 用）
+   * - 删除所有现存的活跃记录
+   * - 按 notes 数组 INSERT（id 冲突走 REPLACE）
+   * - 软删除的（is_deleted=1）不动
+   * - 不读文件内容（content 字段不入 metadata，content 由 IPC 端按需读）
+   */
+  replaceNotes(notes: Array<{
+    id: string
+    title: string
+    notebookId: string
+    parentId: string | null
+    path?: string
+    format: Note['format']
+    language?: string | null
+    url?: string | null
+    fileName?: string | null
+    filePath?: string | null
+    fileExt?: string | null
+    fileSize?: number | null
+    icon?: string | null
+    createdAt: number
+    updatedAt: number
+    sortOrder?: number
+  }>): void {
+    const d = getDatabase()
+    const tx = d.transaction(() => {
+      d.prepare('DELETE FROM notes WHERE is_deleted = 0').run()
+      const stmt = d.prepare(`
+        INSERT INTO notes (id, title, notebook_id, parent_id, path, format, language, url, file_path, file_name, file_size, file_ext, created_at, updated_at, icon, is_deleted, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      `)
+      for (const n of notes) {
+        stmt.run(
+          n.id, n.title, n.notebookId, n.parentId, n.path ?? null,
+          n.format, n.language ?? null, n.url ?? null,
+          n.filePath ?? null, n.fileName ?? null, n.fileSize ?? null, n.fileExt ?? null,
+          n.createdAt, n.updatedAt, n.icon ?? null, n.sortOrder ?? n.createdAt
+        )
+      }
+    })
+    tx()
   }
 }
 

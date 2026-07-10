@@ -1,0 +1,113 @@
+/* ============ 多标签页 TabBar ============ */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.tab-bar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tab-bar::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 2px;
+}
+
+/* 单个 tab */
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 100px;
+  max-width: 200px;
+  flex-shrink: 0;
+  padding: 0 8px 0 12px;
+  height: 100%;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-color);
+  position: relative;
+  font-size: 12px;
+  transition: background 80ms, color 80ms;
+}
+
+/* hover 时给一点视觉反馈 */
+.tab-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 激活 tab：与编辑器/预览面板同色 */
+.tab-item.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* 激活 tab 顶部一根 accent 横线（编辑器/预览面板顶部对齐） */
+.tab-item.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-color, #3b82f6);
+}
+
+/* 拖动中 */
+.tab-item.dragging {
+  opacity: 0.5;
+}
+
+/* drop target：左右各显示一条竖线提示 */
+.tab-item.drop-target {
+  border-left: 2px solid var(--accent-color, #3b82f6);
+}
+
+/* tab 标题文本省略 */
+.tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 关闭按钮 */
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 80ms, background 80ms, color 80ms;
+}
+
+/* hover tab 或激活 tab 时显示关闭按钮 */
+.tab-item:hover .tab-close,
+.tab-item.active .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}

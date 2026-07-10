@@ -65,6 +65,13 @@ export interface NoteTreeNode {
   isExpanded?: boolean
 }
 
+export interface GitCommitEntry {
+  oid: string
+  message: string
+  author: { name: string; email: string; timestamp: number }
+  committer: { name: string; email: string; timestamp: number }
+}
+
 export interface AppSettings {
   theme: 'light' | 'dark' | 'auto' | 'solarized' | 'cyberpunk' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral'
   fontSize: number
@@ -73,6 +80,10 @@ export interface AppSettings {
     sidebarVisible: boolean
     previewVisible: boolean
     editorVisible: boolean
+    /** 当前打开的标签页笔记 id 列表（按打开顺序）；启动时恢复 */
+    openTabs?: string[]
+    /** 当前激活的标签 id；启动时恢复（不在 openTabs 时取 openTabs 第一个） */
+    activeTabId?: string | null
   }
   /** 上次打开的笔记 id，启动时自动选中（不存在则忽略） */
   lastSelectedNoteId?: string
@@ -114,11 +125,13 @@ export interface AppSettings {
     configured: boolean
     /** 工作区是否已 git init / clone */
     initialized: boolean
+    /** 最近一次同步（push/pull 任一成功）的时间戳，毫秒 */
+    lastSyncAt?: number
   }
 }
 
 export interface SyncStatus {
-  state: 'idle' | 'syncing' | 'success' | 'error' | 'offline' | 'unconfigured'
+  state: 'idle' | 'pending' | 'syncing' | 'success' | 'error' | 'offline' | 'unconfigured'
   message?: string
   detail?: string  // 错误详情，点击错误状态时显示
   lastSyncAt?: number
@@ -140,6 +153,7 @@ export const IPC_CHANNELS = {
   NOTEBOOK_DELETE: 'notebook:delete',
   NOTEBOOK_MOVE: 'notebook:move',
   NOTEBOOK_REORDER: 'notebook:reorder',
+  NOTEBOOK_UPDATE: 'notebook:update',
 
   // 回收站 - 笔记本
   NOTEBOOK_LIST_DELETED: 'notebook:list-deleted',
@@ -209,8 +223,11 @@ export const IPC_CHANNELS = {
   GIT_STATUS: 'git:status',
   GIT_PUSH: 'git:push',
   GIT_PULL: 'git:pull',
+  GIT_SYNC: 'git:sync',
+  GIT_IS_CONFIGURED: 'git:is-configured',
   GIT_INIT: 'git:init',
   GIT_CLONE: 'git:clone',
   GIT_LOG: 'git:log',
-  GIT_SHOW_FILE: 'git:show-file'
+  GIT_SHOW_FILE: 'git:show-file',
+  GIT_GET_WORKDIR: 'git:get-workdir'
 } as const

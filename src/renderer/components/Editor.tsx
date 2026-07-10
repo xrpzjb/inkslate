@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
-import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3 } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
 import { toast } from './Toast'
@@ -338,6 +338,16 @@ export function Editor() {
             title="展开预览"
           >
             <PanelRightOpen size={16} />
+          </button>
+        )}
+        {/* Git 历史快照：仅对非文件/非网址笔记显示 */}
+        {currentNote && !['url', 'file'].includes(currentNote.format) && (
+          <button
+            className="panel-action-btn"
+            onClick={() => window.dispatchEvent(new CustomEvent('inkslate:open-history'))}
+            title="Git 历史快照"
+          >
+            <History size={16} />
           </button>
         )}
       </div>

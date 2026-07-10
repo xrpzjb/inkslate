@@ -10,6 +10,8 @@ import { GitSettingsDialog } from './components/GitSettingsDialog'
 import { ToastContainer, toast } from './components/Toast'
 import { ConfirmDialogManager } from './components/ConfirmDialog'
 import { AlertDialogManager, alert } from './components/AlertDialog'
+import { UrlNoteDialog } from './components/UrlNoteDialog'
+import { HistoryPanel } from './components/gitHistory/HistoryPanel'
 import { useState } from 'react'
 
 export default function App() {
@@ -23,10 +25,13 @@ export default function App() {
   const setTheme = useAppStore(s => s.setTheme)
   const setSyncStatus = useAppStore(s => s.setSyncStatus)
   const updateSettings = useAppStore(s => s.updateSettings)
+  const refreshSyncStatus = useAppStore(s => s.refreshSyncStatus)
 
   const [gitDialogOpen, setGitDialogOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [recycleBinSettingsOpen, setRecycleBinSettingsOpen] = useState(false)
+  const [urlNoteDialogOpen, setUrlNoteDialogOpen] = useState(false)
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
 
   const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
   const setViewMode = useAppStore(s => s.setViewMode)
@@ -61,16 +66,27 @@ export default function App() {
   // 初始化加载
   useEffect(() => {
     (async () => {
-      // 必须串行：loadSettings 拿到 lastSelectedNoteId 后，
+      // 必须串行：loadSettings 拿到 openTabs/activeTabId 后，
       // 再加载 notebooks/notes/recycleBin，最后恢复选中的笔记
       await loadSettings()
       await Promise.all([loadNotebooks(), loadNotes(), loadRecycleBin()])
-      // 恢复上次选中的笔记
-      const lastId = useAppStore.getState().settings?.lastSelectedNoteId
-      if (lastId) {
-        const state = useAppStore.getState()
-        const exists = state.notes.find(n => n.id === lastId)
-        if (exists) {
+      // 恢复多标签页：优先用 activeTabId；不在 openTabs 里则取第一个；都没有则用 lastSelectedNoteId
+      const state = useAppStore.getState()
+      const allNoteIds = new Set(state.notes.map(n => n.id))
+      const openTabs = state.openTabs.filter(id => allNoteIds.has(id))
+      const active = state.activeTabId && allNoteIds.has(state.activeTabId)
+        ? state.activeTabId
+        : (openTabs[0] || null)
+      if (active) {
+        // 把过滤后的 openTabs 写回去（剔除已被删除的）
+        if (openTabs.join(',') !== state.openTabs.join(',')) {
+          useAppStore.setState({ openTabs })
+        }
+        await state.selectNote(active)
+      } else {
+        // 没有可恢复的 tab → 用 lastSelectedNoteId 兜底
+        const lastId = state.settings?.lastSelectedNoteId
+        if (lastId && allNoteIds.has(lastId)) {
           await state.selectNote(lastId)
         }
       }
@@ -94,6 +110,44 @@ export default function App() {
     // 监听自定义事件打开 Git 设置（StatusBar 按钮触发）
     const openGit = () => setGitDialogOpen(true)
     window.addEventListener('inkslate:open-git-settings', openGit)
+
+    // 监听 IconSidebar 的新建网址/文件笔记事件
+    const openUrlDialog = () => setUrlNoteDialogOpen(true)
+    window.addEventListener('inkslate:new-url-note', openUrlDialog)
+
+    const openHistory = () => setHistoryPanelOpen(true)
+    window.addEventListener('inkslate:open-history', openHistory)
+
+    const handleFileNote = async () => {
+      const sourcePath = await window.inkslateApi.file.openDialog({
+        title: '选择要导入的文件',
+        properties: ['openFile']
+      })
+      if (!sourcePath) return
+      const state = useAppStore.getState()
+      const notebookId = state.notebooks[0]?.id
+      if (!notebookId) {
+        toast.error('没有可用的笔记本，请先创建一个')
+        return
+      }
+      // 文件名（**保留后缀**）作为 title —— Layout 那里有 fileName 字段会显示完整路径，
+      // 这里 title 设成带后缀的文件名保证唯一且可读
+      const title = sourcePath.split(/[\\/]/).pop() || '未命名文件'
+      try {
+        const note = await window.inkslateApi.notes.create(title, notebookId, null, undefined, 'file')
+        const fileInfo = await window.inkslateApi.fileNote.create(note.id, sourcePath)
+        if (!fileInfo) {
+          toast.error('文件导入失败：无法读取源文件')
+          return
+        }
+        await state.loadNotes()
+        await state.selectNote(note.id)
+        toast.success('文件笔记已导入')
+      } catch (e) {
+        toast.error('文件导入失败：' + (e as Error).message)
+      }
+    }
+    window.addEventListener('inkslate:new-file-note', handleFileNote)
 
     const cleanup = window.inkslateApi.onMenu((event, ...args) => {
       const state = useAppStore.getState()
@@ -151,14 +205,19 @@ export default function App() {
           break
         case 'git-push':
           setSyncStatus({ state: 'syncing', message: '推送中...' })
-          window.inkslateApi.git.push(true).then(r => {
+          window.inkslateApi.git.push(true).then(async r => {
             if (!r.ok) {
               const errMsg = r.message || '未知错误'
               setSyncStatus({ state: 'error', message: '推送失败', detail: errMsg })
               toast.error('推送失败：' + errMsg)
             } else {
-              setSyncStatus({ state: 'success', message: '推送成功' })
+              setSyncStatus({ state: 'success', message: '推送成功', lastSyncAt: Date.now() })
               toast.success('推送成功')
+              // 主进程已写 lastSyncAt 到 settings；这里刷新 pendingFiles
+              await refreshSyncStatus()
+              // 把 lastSyncAt 也同步进本地 settings（UI 上其他组件可能用）
+              const cur = useAppStore.getState().settings
+              if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
             }
           }).catch(e => {
             const errMsg = e?.message ?? '未知错误'
@@ -175,20 +234,66 @@ export default function App() {
               toast.error('拉取失败：' + errMsg)
             } else {
               if (r.updated) {
-                setSyncStatus({ state: 'success', message: '已更新' })
+                setSyncStatus({ state: 'success', message: '已更新', lastSyncAt: Date.now() })
                 toast.success('已从远端更新')
-                // 有更新：重新加载笔记（阶段3 会接 reconcile，这里先 reload）
+                // 有更新：重新加载笔记（reconcile 已在主进程做完）
                 await useAppStore.getState().loadNotebooks()
                 await useAppStore.getState().loadNotes()
+                await refreshSyncStatus()
+                const cur = useAppStore.getState().settings
+                if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
               } else {
-                setSyncStatus({ state: 'success', message: '已是最新' })
+                setSyncStatus({ state: 'success', message: '已是最新', lastSyncAt: Date.now() })
                 toast.info('已是最新，无需更新')
+                await refreshSyncStatus()
+                const cur = useAppStore.getState().settings
+                if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
               }
             }
           }).catch(e => {
             const errMsg = e?.message ?? '未知错误'
             setSyncStatus({ state: 'error', message: '拉取失败', detail: errMsg })
             toast.error('拉取失败：' + errMsg)
+          })
+          break
+        case 'git-sync':
+          // 一键同步：先 pull（拿 A 端的最新）再 push（把自己的变更 + 拉来的合并提交推上去）
+          // 避免在 B 端直接 push 把 A 端的修改覆盖
+          setSyncStatus({ state: 'syncing', message: '同步中...' })
+          window.inkslateApi.git.sync().then(async r => {
+            if (!r.ok) {
+              const errMsg = r.message || '未知错误'
+              const phaseLabel = r.phase === 'commit' ? '提交'
+                : r.phase === 'pull' ? '拉取'
+                : r.phase === 'push' ? '推送'
+                : ''
+              setSyncStatus({
+                state: 'error',
+                message: phaseLabel ? `${phaseLabel}失败` : '同步失败',
+                detail: errMsg
+              })
+              toast.error((phaseLabel ? `${phaseLabel}失败：${errMsg}` : `同步失败：${errMsg}`))
+              // 即使失败也刷一下（让 pendingFiles 反映提交/拉取后的状态）
+              await refreshSyncStatus()
+            } else {
+              setSyncStatus({ state: 'success', message: r.message, lastSyncAt: Date.now() })
+              toast.success(r.message)
+              // 如果 pull 阶段拉到了新数据，重建树
+              if (r.pulled) {
+                await useAppStore.getState().loadNotebooks()
+                await useAppStore.getState().loadNotes()
+              }
+              // commit/push 完成 → pendingFiles 应为 0
+              await refreshSyncStatus()
+              // 同步 lastSyncAt 到本地 settings
+              const cur = useAppStore.getState().settings
+              if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
+            }
+          }).catch(async e => {
+            const errMsg = e?.message ?? '未知错误'
+            setSyncStatus({ state: 'error', message: '同步失败', detail: errMsg })
+            toast.error('同步失败：' + errMsg)
+            await refreshSyncStatus()
           })
           break
         case 'show-shortcuts':
@@ -276,6 +381,9 @@ export default function App() {
     })
     return () => {
       window.removeEventListener('inkslate:open-git-settings', openGit)
+      window.removeEventListener('inkslate:new-url-note', openUrlDialog)
+      window.removeEventListener('inkslate:new-file-note', handleFileNote)
+      window.removeEventListener('inkslate:open-history', openHistory)
       cleanup()
     }
   }, [])
@@ -329,6 +437,27 @@ export default function App() {
       )}
       {recycleBinSettingsOpen && createPortal(
         <RecycleBinSettingsDialog onClose={() => setRecycleBinSettingsOpen(false)} />,
+        document.body
+      )}
+      {urlNoteDialogOpen && createPortal(
+        <UrlNoteDialog onClose={() => setUrlNoteDialogOpen(false)} />,
+        document.body
+      )}
+      {historyPanelOpen && createPortal(
+        (() => {
+          const note = useAppStore.getState().currentNote
+          if (!note || !['url', 'file'].includes(note.format))
+            return (
+              <HistoryPanel
+                notePath={note?.path ?? ''}
+                noteFormat={(note?.format as 'markdown' | 'html' | 'richtext' | 'code') ?? 'markdown'}
+                currentContent={note?.content ?? ''}
+                onClose={() => setHistoryPanelOpen(false)}
+              />
+            )
+          // fallback（应该不会到这里）
+          return null
+        })(),
         document.body
       )}
     </div>

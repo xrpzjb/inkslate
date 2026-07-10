@@ -11,10 +11,23 @@ interface AppState {
   loadSettings: () => Promise<void>
   updateSettings: (updates: Partial<AppSettings>) => Promise<void>
 
-  // 绗旇鏈暟鎹?  notebooks: Notebook[]
+  // 绗旇鏈暟鎹?  notebooks: Notebook[]  // 修原文件预存 bug：notebooks 字段被注释吃掉了
+  notebooks: Notebook[]
   notes: Note[]
   selectedNoteId: string | null
   currentNote: Note | null
+  /** 多标签页：当前打开的笔记 id 列表（按打开顺序，不含已删除/已回收的） */
+  openTabs: string[]
+  /** 多标签页：当前激活标签对应的笔记 id */
+  activeTabId: string | null
+  /** 多标签页：打开笔记（已存在则切过去 + 激活，否则追加到末尾） */
+  openTab: (id: string) => Promise<void>
+  /** 多标签页：激活指定标签（不改 openTabs 列表） */
+  activateTab: (id: string) => Promise<void>
+  /** 多标签页：关闭标签；关闭当前激活的则切到相邻标签 */
+  closeTab: (id: string) => Promise<void>
+  /** 多标签页：拖动重排序 */
+  reorderTabs: (orderedIds: string[]) => void
   /** 用户手动展开的笔记本 id 集合（启动时恢复） */
   expandedNotebooks: string[]
   /** 切换笔记本展开状态，并持久化 */
@@ -29,6 +42,8 @@ interface AppState {
   /** 写库持久化（防抖调用）。从 main process 拿回最新值刷新 currentNote。 */
   updateNote: (id: string, updates: Partial<Note>) => Promise<void>
   renameNotebook: (id: string, name: string) => Promise<void>
+  /** 通用更新笔记本（name / icon / parentId 任一） */
+  updateNotebook: (id: string, updates: { name?: string; icon?: string | null; parentId?: string | null }) => Promise<void>
   renameNote: (id: string, title: string) => Promise<void>
   deleteNotebook: (id: string) => Promise<void>
   deleteNote: (id: string) => Promise<void>
@@ -53,6 +68,8 @@ interface AppState {
   sidebarVisible: boolean
   previewVisible: boolean
   editorVisible: boolean
+  /** 每个标签页独立保存的布局状态，切换时恢复 */
+  tabLayouts: Record<string, { editorVisible: boolean; previewVisible: boolean }>
   toggleSidebar: () => void
   togglePreview: () => void
   toggleEditor: () => void
@@ -62,10 +79,25 @@ interface AppState {
   setViewMode: (mode: 'notes' | 'recycle-bin') => void
 
   // 淇濆瓨鐘舵€?  saveStatus: { saving: boolean; lastSaved: number | null }
+  saveStatus: { saving: boolean; lastSaved: number | null }
   setSaveStatus: (status: { saving?: boolean; lastSaved?: number | null }) => void
 
-  // 鍚屾鐘舵€?  syncStatus: SyncStatus
+  // 同步状态字段（之前在原文件里被注释吃掉了，导致 TS 编译报"Property 'syncStatus' does not exist"。
+  //   这里显式声明，加上后面我新增的 refreshSyncStatus action。）
+  syncStatus: SyncStatus
   setSyncStatus: (status: SyncStatus) => void
+  /**
+   * 刷新同步状态：
+   *  - 调 git.status() 数未同步文件 → pendingFiles
+   *  - 调 git.isConfigured() 看是否已配置 → 决定 unconfigured / idle
+   *  - 把当前 settings.gitSync.lastSyncAt 接到 syncStatus
+   *
+   *  在以下时机调：
+   *  - 应用启动后（loadSettings 之后）
+   *  - 任何写笔记/写笔记本的 store action 完成后
+   *  - push / pull / sync 完成后（先 setSyncStatus 让用户看到状态，再调一次刷新 pendingFiles）
+   */
+  refreshSyncStatus: () => Promise<void>
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -81,8 +113,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       sidebarVisible: settings.layout.sidebarVisible,
       previewVisible: settings.layout.previewVisible,
       editorVisible: settings.layout.editorVisible ?? true,
-      expandedNotebooks: settings.expandedNotebooks ?? []
+      expandedNotebooks: settings.expandedNotebooks ?? [],
+      // 多标签页：启动恢复（去重 + 过滤空）
+      openTabs: Array.isArray(settings.layout?.openTabs)
+        ? Array.from(new Set(settings.layout.openTabs.filter(Boolean)))
+        : [],
+      activeTabId: settings.layout?.activeTabId ?? null
     })
+    // 同步 lastSyncAt 到 syncStatus（启动时让 UI 立刻看到上次同步时间）
+    if (settings.gitSync?.lastSyncAt) {
+      const cur = get().syncStatus
+      if (cur.lastSyncAt !== settings.gitSync.lastSyncAt) {
+        set({
+          syncStatus: { ...cur, lastSyncAt: settings.gitSync.lastSyncAt }
+        })
+      }
+    }
+    // 检查 pending / unconfigured
+    await get().refreshSyncStatus()
   },
   updateSettings: async (updates) => {
     const settings = await window.inkslateApi.settings.update(updates)
@@ -101,6 +149,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   notes: [],
   selectedNoteId: null,
   currentNote: null,
+  openTabs: [],
+  activeTabId: null,
   loadNotebooks: async () => {
     const notebooks = await window.inkslateApi.notebooks.list()
     set({ notebooks })
@@ -125,78 +175,174 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const note = await window.inkslateApi.notes.get(id)
     set({ currentNote: note })
-    // 代码/富文本笔记不需要预览面板：选中的瞬间自动收起
-    if (note && (note.format === 'code' || note.format === 'richtext')) {
-      const layout = get().settings?.layout
-      if (layout && layout.previewVisible) {
-        // 同步到 settings，下次开 markdown 笔记时不会自动冒出来
-        get().updateSettings({ layout: { ...layout, previewVisible: false } })
-      }
-      set({ previewVisible: false })
-      // 代码/富文本笔记没有预览可用，必须确保 editor 显示 —— 否则整个右半空白
-      if (!get().editorVisible) {
-        set({ editorVisible: true })
-        if (layout) {
-          get().updateSettings({ layout: { ...layout, editorVisible: true } })
-        }
-      }
+    // 多标签页：维护 openTabs + activeTabId
+    //  - 笔记已在 openTabs 里：仅切激活（不重复追加），且不改变布局
+    //  - 笔记不在：追加到末尾 + 激活，并初始化布局
+    const tabs = get().openTabs
+    const isNewTab = !tabs.includes(id)
+    const newTabs = isNewTab ? [...tabs, id] : tabs
+    set({ openTabs: newTabs, activeTabId: id })
+    // 持久化 tabs（防抖到 settings.layout.openTabs）
+    const layout = get().settings?.layout
+    if (layout && (layout.openTabs?.join(',') !== newTabs.join(',') || layout.activeTabId !== id)) {
+      window.inkslateApi.settings.update({
+        layout: { ...layout, openTabs: newTabs, activeTabId: id }
+      }).catch(() => {})
     }
-    // markdown/html 笔记：默认进入"只读预览"模式（编辑器关闭、预览打开）。
-    // 用户想编辑就手动点中键展开 —— 这是"刚打开一篇已存在的 md"的最常见诉求。
-    // 新建笔记的覆盖在 createNote 里做：selectNote 之后立即把 editor 打开，实现"各一半"。
-    if (note && (note.format === 'markdown' || note.format === 'html')) {
-      const layout = get().settings?.layout
-      if (get().editorVisible) {
-        set({ editorVisible: false })
-        if (layout) {
-          get().updateSettings({ layout: { ...layout, editorVisible: false } })
-        }
+    // 多标签页布局：切换前保存当前 tab 的布局状态
+    const prevTabId = get().activeTabId
+    if (prevTabId && prevTabId !== id) {
+      const layouts = { ...get().tabLayouts }
+      layouts[prevTabId] = {
+        editorVisible: get().editorVisible,
+        previewVisible: get().previewVisible
       }
-      if (!get().previewVisible) {
-        set({ previewVisible: true })
-        if (layout) {
-          get().updateSettings({ layout: { ...layout, previewVisible: true } })
-        }
-      }
+      set({ tabLayouts: layouts })
     }
-    // url 网页笔记：Editor 对 url 不渲染（见 Layout），必须强制打开预览，
-    // 并把 editorVisible 置为 false 让预览占满整列，否则右侧整片空白。
-    // 这尤其修复"从 code/richtext 笔记（previewVisible=false）切到 url 笔记"时空白的 bug。
-    if (note && note.format === 'url') {
-      const layout = get().settings?.layout
-      if (!get().previewVisible) {
-        set({ previewVisible: true })
-        if (layout) {
-          get().updateSettings({ layout: { ...layout, previewVisible: true } })
+
+    // 仅对新打开的标签页做布局初始化，已打开的标签页切换时恢复其保存的布局
+    if (note && isNewTab) {
+      // 代码/富文本笔记不需要预览面板：选中的瞬间自动收起
+      if (note.format === 'code' || note.format === 'richtext') {
+        if (layout && layout.previewVisible) {
+          get().updateSettings({ layout: { ...layout, previewVisible: false } })
+        }
+        set({ previewVisible: false })
+        // 代码/富文本笔记没有预览可用，必须确保 editor 显示 —— 否则整个右半空白
+        if (!get().editorVisible) {
+          set({ editorVisible: true })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, editorVisible: true } })
+          }
         }
       }
-      if (get().editorVisible) {
-        set({ editorVisible: false })
-        if (layout) {
-          get().updateSettings({ layout: { ...layout, editorVisible: false } })
+      // markdown/html 笔记：默认进入"只读预览"模式（编辑器关闭、预览打开）。
+      // 用户想编辑就手动点中键展开 —— 这是"刚打开一篇已存在的 md"的最常见诉求。
+      // 新建笔记的覆盖在 createNote 里做：selectNote 之后立即把 editor 打开，实现"各一半"。
+      if (note.format === 'markdown' || note.format === 'html') {
+        if (get().editorVisible) {
+          set({ editorVisible: false })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, editorVisible: false } })
+          }
+        }
+        if (!get().previewVisible) {
+          set({ previewVisible: true })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, previewVisible: true } })
+          }
         }
       }
-    }
-    // file 文件笔记：跟 url 一样不渲染 Editor，强制预览占满整列
-    if (note && note.format === 'file') {
-      const layout = get().settings?.layout
-      if (!get().previewVisible) {
-        set({ previewVisible: true })
-        if (layout) {
-          get().updateSettings({ layout: { ...layout, previewVisible: true } })
+      // url 网页笔记：Editor 对 url 不渲染（见 Layout），必须强制打开预览
+      if (note.format === 'url') {
+        if (!get().previewVisible) {
+          set({ previewVisible: true })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, previewVisible: true } })
+          }
+        }
+        if (get().editorVisible) {
+          set({ editorVisible: false })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, editorVisible: false } })
+          }
         }
       }
-      if (get().editorVisible) {
-        set({ editorVisible: false })
-        if (layout) {
-          get().updateSettings({ layout: { ...layout, editorVisible: false } })
+      // file 文件笔记：跟 url 一样不渲染 Editor，强制预览占满整列
+      if (note.format === 'file') {
+        if (!get().previewVisible) {
+          set({ previewVisible: true })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, previewVisible: true } })
+          }
         }
+        if (get().editorVisible) {
+          set({ editorVisible: false })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, editorVisible: false } })
+          }
+        }
+      }
+      // 保存新标签的布局
+      set(state => ({
+        tabLayouts: { ...state.tabLayouts, [id]: { editorVisible: state.editorVisible, previewVisible: state.previewVisible } }
+      }))
+    } else if (note && !isNewTab) {
+      // 恢复已保存的布局（如果有）
+      const saved = get().tabLayouts[id]
+      if (saved) {
+        set({ editorVisible: saved.editorVisible, previewVisible: saved.previewVisible })
       }
     }
   },
+
+  // ============ 多标签页 ============
+  openTab: async (id) => {
+    // 复用 selectNote 的逻辑（它会自动维护 openTabs + activeTabId）
+    await get().selectNote(id)
+  },
+  activateTab: async (id) => {
+    if (!get().openTabs.includes(id)) {
+      // 不在 tab 列表里 → 当作打开新 tab
+      await get().openTab(id)
+      return
+    }
+    // 已存在但未激活：复用 selectNote（会更新 activeTabId / currentNote / 持久化）
+    if (get().activeTabId !== id) {
+      await get().selectNote(id)
+    }
+  },
+  closeTab: async (id) => {
+    const { openTabs, activeTabId, currentNote } = get()
+    const idx = openTabs.indexOf(id)
+    if (idx < 0) return
+    const newTabs = openTabs.filter(t => t !== id)
+    let newActive = activeTabId
+    let newCurrent = currentNote
+    let newSelected = get().selectedNoteId
+    if (activeTabId === id) {
+      // 优先选右侧，没有则选左侧，再没有则 null
+      newActive = newTabs[idx] || newTabs[idx - 1] || null
+      newSelected = newActive
+      if (newActive) {
+        const note = await window.inkslateApi.notes.get(newActive)
+        newCurrent = note
+      } else {
+        newCurrent = null
+      }
+    }
+    set({
+      openTabs: newTabs,
+      activeTabId: newActive,
+      selectedNoteId: newSelected,
+      currentNote: newCurrent
+    })
+    // 清理已关闭标签的布局
+    const layouts = { ...get().tabLayouts }
+    delete layouts[id]
+    set({ tabLayouts: layouts })
+    // 持久化
+    const layout = get().settings?.layout
+    if (layout) {
+      window.inkslateApi.settings.update({
+        layout: { ...layout, openTabs: newTabs, activeTabId: newActive }
+      }).catch(() => {})
+    }
+  },
+  reorderTabs: (orderedIds) => {
+    set({ openTabs: orderedIds })
+    const layout = get().settings?.layout
+    if (layout) {
+      window.inkslateApi.settings.update({
+        layout: { ...layout, openTabs: orderedIds }
+      }).catch(() => {})
+    }
+  },
+
   createNotebook: async (name, parentId, icon) => {
     await window.inkslateApi.notebooks.create(name, parentId, icon)
     await get().loadNotebooks()
+    await get().refreshSyncStatus()
   },
   createNote: async (title, notebookId, parentId, icon, format, language, url) => {
     const note = await window.inkslateApi.notes.create(title, notebookId, parentId, icon, format, language, url)
@@ -212,12 +358,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (layout) {
         get().updateSettings({ layout: { ...layout, editorVisible: true } })
       }
+      // 保存到 tabLayouts
+      set(state => ({
+        tabLayouts: { ...state.tabLayouts, [note.id]: { editorVisible: true, previewVisible: state.previewVisible } }
+      }))
     }
+    await get().refreshSyncStatus()
   },
   updateNote: async (id, updates) => {
     get().setSaveStatus({ saving: true })
     try {
+      console.log('[store] updateNote called', id, 'content length:', updates.content?.length)
       const updated = await window.inkslateApi.notes.update(id, updates)
+      console.log('[store] updateNote IPC done, updated.path:', updated.path)
       const cur = get().currentNote
       // 始终同步 title 和 updatedAt（来自服务端），但保留 content 为用户最新输入
       // 避免保存后 currentNote.content 被服务端旧值覆盖（用户可能还在敲）
@@ -236,6 +389,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         notes: state.notes.map((n) => (n.id === id ? { ...n, title: updated.title, updatedAt: updated.updatedAt } : n))
       }))
       get().setSaveStatus({ saving: false, lastSaved: Date.now() })
+      // 同步状态：内容/title 改了 → 磁盘文件被重写 → 视作"待同步"
+      console.log('[store] about to refreshSyncStatus')
+      await get().refreshSyncStatus()
+      console.log('[store] refreshSyncStatus done, new status:', get().syncStatus)
     } catch {
       get().setSaveStatus({ saving: false })
     }
@@ -248,6 +405,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   renameNotebook: async (id, name) => {
     await window.inkslateApi.notebooks.rename(id, name)
     await get().loadNotebooks()
+    await get().refreshSyncStatus()
+  },
+  updateNotebook: async (id, updates) => {
+    await window.inkslateApi.notebooks.update(id, updates)
+    await get().loadNotebooks()
+    await get().refreshSyncStatus()
   },
   renameNote: async (id, title) => {
     const updated = await window.inkslateApi.notes.update(id, { title })
@@ -255,19 +418,47 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ currentNote: updated })
     }
     await get().loadNotes()
+    await get().refreshSyncStatus()
   },
   deleteNotebook: async (id) => {
     await window.inkslateApi.notebooks.delete(id)
     await get().loadNotebooks()
     await get().loadRecycleBin()
+    await get().refreshSyncStatus()
   },
   deleteNote: async (id) => {
     await window.inkslateApi.notes.delete(id)
-    if (get().selectedNoteId === id) {
-      set({ selectedNoteId: null, currentNote: null })
+    // 多标签页：从 openTabs 移除被删笔记；若它是当前激活的，激活相邻那个
+    const { openTabs, activeTabId, currentNote } = get()
+    const idx = openTabs.indexOf(id)
+    if (idx >= 0) {
+      const newTabs = openTabs.filter(t => t !== id)
+      let newActive = activeTabId
+      if (activeTabId === id) {
+        // 优先选右侧，没有则选左侧，再没有则 null
+        newActive = newTabs[idx] || newTabs[idx - 1] || null
+      }
+      set({
+        openTabs: newTabs,
+        activeTabId: newActive,
+        selectedNoteId: newActive,
+        currentNote: currentNote?.id === id ? null : currentNote
+      })
+      // 持久化
+      const layout = get().settings?.layout
+      if (layout) {
+        window.inkslateApi.settings.update({
+          layout: { ...layout, openTabs: newTabs, activeTabId: newActive }
+        }).catch(() => {})
+      }
+      // 切换到新激活笔记（如果有）
+      if (newActive && newActive !== id) {
+        await get().selectNote(newActive)
+      }
     }
     await get().loadNotes()
     await get().loadRecycleBin()
+    await get().refreshSyncStatus()
   },
 
   reorderNotes: async (notebookId, orderedIds) => {
@@ -276,7 +467,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // 否则 buildNoteTree 里的 sortNodes 仍按 sortOrder 排，UI 不变。
     set((state) => {
       const noteMap = new Map(state.notes.map(n => [n.id, n]))
-      const reordered = orderedIds
+      const reordered: Note[] = orderedIds
         .map((id, idx) => {
           const n = noteMap.get(id)
           if (!n) return undefined
@@ -288,12 +479,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       const rest = state.notes.filter(n => n.notebookId !== notebookId)
       return { notes: [...rest, ...reordered] }
     })
+    await get().refreshSyncStatus()
   },
   reorderNotebooks: async (parentId, orderedIds) => {
     await window.inkslateApi.notebooks.reorder(parentId, orderedIds)
     set((state) => {
       const nbMap = new Map(state.notebooks.map(n => [n.id, n]))
-      const reordered = orderedIds
+      const reordered: Notebook[] = orderedIds
         .map((id, idx) => {
           const n = nbMap.get(id)
           if (!n) return undefined
@@ -303,9 +495,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const rest = state.notebooks.filter(n => n.parentId !== parentId)
       return { notebooks: [...rest, ...reordered] }
     })
+    await get().refreshSyncStatus()
   },
 
-  // ============ 回收站 actions ============
   deletedNotes: [],
   deletedNotebooks: [],
   recycleBinCount: 0,
@@ -347,6 +539,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sidebarVisible: true,
   previewVisible: true,
   editorVisible: true,
+  tabLayouts: {},
   expandedNotebooks: [],
   setExpandedNotebook: (id, expanded) => {
     const current = get().expandedNotebooks
@@ -368,11 +561,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   togglePreview: () => {
     const visible = !get().previewVisible
     set({ previewVisible: visible })
+    // 保存到当前标签页布局
+    const tabId = get().activeTabId
+    if (tabId) {
+      const layouts = { ...get().tabLayouts }
+      layouts[tabId] = { ...(layouts[tabId] || {}), previewVisible: visible }
+      set({ tabLayouts: layouts })
+    }
     get().updateSettings({ layout: { ...get().settings!.layout, previewVisible: visible } })
   },
   toggleEditor: () => {
     const visible = !get().editorVisible
     set({ editorVisible: visible })
+    // 保存到当前标签页布局
+    const tabId = get().activeTabId
+    if (tabId) {
+      const layouts = { ...get().tabLayouts }
+      layouts[tabId] = { ...(layouts[tabId] || {}), editorVisible: visible }
+      set({ tabLayouts: layouts })
+    }
     get().updateSettings({ layout: { ...get().settings!.layout, editorVisible: visible } })
   },
 
@@ -385,7 +592,84 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
 
   syncStatus: { state: 'idle' },
-  setSyncStatus: (status) => set({ syncStatus: status })
+  setSyncStatus: (status) => set({ syncStatus: status }),
+
+  /**
+   * 刷新 pendingFiles / lastSyncAt / unconfigured 标记
+   *
+   * 关键设计：
+   *  - 不强行覆盖 state（如果是 syncing / success / error 留给上层决定）
+   *  - 只在 idle 时，根据 pendingFiles 算 connected / pending
+   *  - unconfigured 优先于一切（用户还没配好 Git）
+   */
+  refreshSyncStatus: async () => {
+    try {
+      // 配置 / 初始化检查
+      const cfg = await window.inkslateApi.git.isConfigured()
+      if (!cfg.configured || !cfg.initialized) {
+        const next: SyncStatus = {
+          state: 'unconfigured',
+          message: '未配置 Git 同步',
+          pendingFiles: 0
+        }
+        const settings = get().settings
+        if (settings?.gitSync?.lastSyncAt) next.lastSyncAt = settings.gitSync.lastSyncAt
+        // 只有不同才 set，避免无谓的 re-render
+        const cur = get().syncStatus
+        if (cur.state !== next.state || cur.pendingFiles !== 0) {
+          set({ syncStatus: next })
+        }
+        return
+      }
+
+      // 已配置 → 拿工作区变更
+      let pendingFiles = 0
+      try {
+        const changes = await window.inkslateApi.git.status()
+        // git.status() 只返回有变更的文件；包含 modified / new / deleted / untracked
+        pendingFiles = Array.isArray(changes) ? changes.length : 0
+      } catch (e) {
+        // git status 失败（未初始化 / 路径不存在等） → 当 0 个待同步
+        console.warn('[sync] status failed:', e)
+      }
+
+      const settings = get().settings
+      const lastSyncAt = settings?.gitSync?.lastSyncAt
+
+      const cur = get().syncStatus
+      // 只有 idle / pending / unconfigured 才需要被 pendingFiles 改变；
+      // syncing / success / error 是用户主动操作的瞬时态，不能被这个 hook 干扰
+      if (cur.state === 'syncing' || cur.state === 'success' || cur.state === 'error') {
+        // 但 pendingFiles / lastSyncAt 还是要更新（用户操作前显示的 badge）
+        const next: SyncStatus = {
+          ...cur,
+          pendingFiles,
+          lastSyncAt: lastSyncAt ?? cur.lastSyncAt
+        }
+        if (next.pendingFiles !== cur.pendingFiles || next.lastSyncAt !== cur.lastSyncAt) {
+          set({ syncStatus: next })
+        }
+        return
+      }
+
+      // idle / pending / connected → 用 pendingFiles 决定标签
+      const next: SyncStatus = {
+        state: pendingFiles > 0 ? 'pending' : 'idle',
+        message: pendingFiles > 0 ? `待同步 ${pendingFiles} 项` : '就绪',
+        pendingFiles,
+        lastSyncAt
+      }
+      if (
+        cur.state !== next.state ||
+        cur.pendingFiles !== next.pendingFiles ||
+        cur.lastSyncAt !== next.lastSyncAt
+      ) {
+        set({ syncStatus: next })
+      }
+    } catch (e) {
+      console.warn('[sync] refreshSyncStatus failed:', e)
+    }
+  }
 }))
 
 /** 把扁平的笔记本/笔记列表组装成树 */

@@ -4,6 +4,8 @@ import { Sidebar } from './Sidebar'
 import { Editor } from './Editor'
 import { Preview } from './Preview'
 import { RecycleBinView } from './RecycleBinView'
+import { IconSidebar } from './IconSidebar'
+import { TabBar } from './TabBar'
 import '../styles/layout.css'
 
 /** 侧栏 / 编辑器 / 预览 之间的水平拖拽 resize */
@@ -161,6 +163,7 @@ export function Layout() {
 
   return (
     <div className="layout-body" style={{ height: '100%', width: '100%' }}>
+      <IconSidebar />
       <div
         ref={sidebarRef}
         className={`layout-sidebar ${!sidebarVisible ? 'collapsed' : ''}`}
@@ -180,128 +183,58 @@ export function Layout() {
               </div>
             ) : (
               <>
-                <div
-                  className={`layout-editor ${!editorVisible ? 'collapsed' : ''}`}
-                  style={{
-                    // url 和 file 笔记都不渲染 Editor，整列给 preview
-                    width: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 0 : (editorVisible ? 'auto' : 0),
-                    flex: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : (editorVisible ? 1 : 'none'),
-                    display: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : undefined
-                  }}
-                >
-                  {editorVisible && currentNote?.format !== 'url' && currentNote?.format !== 'file' && <Editor />}
-                </div>
+                {/* 多标签页：覆盖 editor + preview 两个面板共用的"顶部标题栏" */}
+                <div style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column'
+                }}>
+                  <TabBar />
+                  <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+                    <div
+                      className={`layout-editor ${!editorVisible ? 'collapsed' : ''}`}
+                      style={{
+                        // url 和 file 笔记都不渲染 Editor，整列给 preview
+                        width: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 0 : (editorVisible ? 'auto' : 0),
+                        flex: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : (editorVisible ? 1 : 'none'),
+                        display: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : undefined
+                      }}
+                    >
+                      {editorVisible && currentNote?.format !== 'url' && currentNote?.format !== 'file' && <Editor />}
+                    </div>
 
-                <div
-                  ref={previewDividerRef}
-                  className="layout-divider"
-                  style={{
-                    // 编辑器隐藏时 divider 不可见也不可拖 —— preview 已接管整块
-                    // 编辑器显示但 preview 隐藏时也不可拖
-                    visibility: (effectivePreviewVisible && editorVisible) ? 'visible' : 'hidden',
-                    pointerEvents: (effectivePreviewVisible && editorVisible) ? 'auto' : 'none'
-                  }}
-                />
+                    <div
+                      ref={previewDividerRef}
+                      className="layout-divider"
+                      style={{
+                        // 编辑器隐藏时 divider 不可见也不可拖 —— preview 已接管整块
+                        // 编辑器显示但 preview 隐藏时也不可拖
+                        visibility: (effectivePreviewVisible && editorVisible) ? 'visible' : 'hidden',
+                        pointerEvents: (effectivePreviewVisible && editorVisible) ? 'auto' : 'none'
+                      }}
+                    />
 
-                <div
-                  ref={previewRef}
-                  className={`layout-preview ${!effectivePreviewVisible ? 'collapsed' : ''}`}
-                  style={{
-                    // 关键设计：
-                    //  - editor 显示 + preview 显示：preview 用 previewWidth，preview-divider 可拖
-                    //  - editor 隐藏 + preview 显示：preview 用 flex: 1 接管右侧全部空间，
-                    //    左边界保持在 preview-divider 位置不动（preview-divider 仍可见位置），
-                    //    但 divider 不可拖（见上面 visibility 设置）
-                    //  - preview 隐藏：preview width 0
-                    width: effectivePreviewVisible
-                      ? (editorVisible ? previewWidth : 'auto')
-                      : 0,
-                    flex: effectivePreviewVisible ? (editorVisible ? 'none' : 1) : 'none',
-                    minWidth: 0
-                  }}
-                >
-                  <div className="panel-header">
-                    {currentNote?.format === 'url' ? (
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        width: '100%',
-                        minWidth: 0,
-                        height: '100%',
-                        padding: 0
-                      }}>
-                        <span style={{
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: 'var(--text-primary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 1,
-                          minWidth: 0,
-                          userSelect: 'all'
-                        }}>
-                          {currentNote.title || '未命名网址'}
-                        </span>
-                        <span style={{
-                          fontSize: 11,
-                          color: 'var(--text-tertiary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 999,
-                          minWidth: 0,
-                          userSelect: 'all',
-                          fontFamily: 'var(--font-mono)'
-                        }}>
-                          {currentNote.url}
-                        </span>
-                      </div>
-                    ) : currentNote?.format === 'file' ? (
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        width: '100%',
-                        minWidth: 0,
-                        height: '100%',
-                        padding: 0
-                      }}>
-                        <span style={{
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: 'var(--text-primary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 1,
-                          minWidth: 0,
-                          userSelect: 'all'
-                        }}>
-                          {currentNote.title || currentNote.fileName || '未命名文件'}
-                        </span>
-                        {currentNote.fileName && (
-                          <span style={{
-                            fontSize: 11,
-                            color: 'var(--text-tertiary)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            flexShrink: 999,
-                            minWidth: 0,
-                            userSelect: 'all',
-                            fontFamily: 'var(--font-mono)'
-                          }}>
-                            {currentNote.fileName}
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="panel-title">预览</span>
-                    )}
+                    <div
+                      ref={previewRef}
+                      className={`layout-preview ${!effectivePreviewVisible ? 'collapsed' : ''}`}
+                      style={{
+                        // 关键设计：
+                        //  - editor 显示 + preview 显示：preview 用 previewWidth，preview-divider 可拖
+                        //  - editor 隐藏 + preview 显示：preview 用 flex: 1 接管右侧全部空间，
+                        //    左边界保持在 preview-divider 位置不动（preview-divider 仍可见位置），
+                        //    但 divider 不可拖（见上面 visibility 设置）
+                        //  - preview 隐藏：preview width 0
+                        width: effectivePreviewVisible
+                          ? (editorVisible ? previewWidth : 'auto')
+                          : 0,
+                        flex: effectivePreviewVisible ? (editorVisible ? 'none' : 1) : 'none',
+                        minWidth: 0
+                      }}
+                    >
+                      {effectivePreviewVisible && <Preview />}
+                    </div>
                   </div>
-                  {effectivePreviewVisible && <Preview />}
                 </div>
               </>
             )}

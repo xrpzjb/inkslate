@@ -3,7 +3,8 @@ import { useAppStore } from '../store/app'
 import { Note, Notebook } from '@shared/types'
 import {
   Trash2, RotateCcw, FileText, Folder, FolderOpen, Inbox,
-  Calendar, AlertTriangle, FileCode2, FileType2, Globe, X
+  Calendar, AlertTriangle, FileCode2, FileType2, Globe, X,
+  Link2, Paperclip
 } from 'lucide-react'
 import { confirm } from './ConfirmDialog'
 
@@ -201,8 +202,10 @@ function NoteRow({ note, onRestore, onPurge }: {
     markdown: { Icon: FileText, label: 'Markdown', color: '#7d8590' },
     html: { Icon: Globe, label: 'HTML', color: '#e67e22' },
     richtext: { Icon: FileType2, label: '富文本', color: '#9b59b6' },
-    code: { Icon: FileCode2, label: '代码', color: '#4a90e2' }
-  }[note.format]
+    code: { Icon: FileCode2, label: '代码', color: '#4a90e2' },
+    url: { Icon: Link2, label: '网址', color: '#3b82f6' },
+    file: { Icon: Paperclip, label: '文件', color: '#8b5cf6' }
+  }[note.format] ?? { Icon: FileText, label: note.format || '未知', color: '#7d8590' }
   const { Icon: FormatIcon, label: formatLabel, color: formatColor } = formatInfo
 
   const daysAgo = note.deletedAt ? Math.floor((Date.now() - note.deletedAt) / (24 * 60 * 60 * 1000)) : 0

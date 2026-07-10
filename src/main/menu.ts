@@ -137,6 +137,7 @@ export function buildMenuData(): MenuData[] {
     {
       label: '笔记本',
       submenu: [
+        { id: 'git-sync', label: '同步（先拉后推）', accelerator: 'Ctrl+Shift+Y' },
         { id: 'git-push', label: '推送到 Git 仓库', accelerator: 'Ctrl+Shift+S' },
         { id: 'git-pull', label: '从 Git 拉取', accelerator: 'Ctrl+Shift+D' },
         { type: 'separator' },
@@ -232,6 +233,7 @@ export async function handleMenuClick(id: string, arg: any) {
     case 'zoom-out': sendToRenderer('menu:zoom', 'out'); return
     case 'fullscreen': sendToRenderer('menu:fullscreen'); return
     // 笔记本
+    case 'git-sync': sendToRenderer('menu:git-sync'); return
     case 'git-push': sendToRenderer('menu:git-push'); return
     case 'git-pull': sendToRenderer('menu:git-pull'); return
     case 'git-settings': sendToRenderer('menu:git-settings'); return

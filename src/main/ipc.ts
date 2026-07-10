@@ -33,6 +33,15 @@ export function setupIpcHandlers(): void {
     return dbApi.reorderNotebooks(parentId, orderedIds)
   })
 
+  /** 通用更新笔记本（name / icon / parentId 任一） */
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_UPDATE, async (_, id: string, updates: {
+    name?: string
+    icon?: string | null
+    parentId?: string | null
+  }): Promise<void> => {
+    return dbApi.updateNotebook(id, updates)
+  })
+
   // ============ 回收站 - 笔记本 ============
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_LIST_DELETED, async (): Promise<Notebook[]> => {
     return dbApi.listDeletedNotebooks()
@@ -60,7 +69,12 @@ export function setupIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_UPDATE, async (_, id: string, updates: Partial<Note>): Promise<Note> => {
-    return dbApi.updateNote(id, updates)
+    const result = dbApi.updateNote(id, updates)
+    if (updates.content !== undefined) {
+      const exists = fs.existsSync(result.path)
+      console.log('[note:update] wrote content to', result.path, 'file exists:', exists)
+    }
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_DELETE, async (_, id: string): Promise<void> => {
@@ -253,17 +267,16 @@ ${payload?.html ?? ''}
     filePath: string; fileName: string; fileSize: number; fileExt: string
   } | null> => {
     if (!fs.existsSync(sourcePath)) return null
-    const filesDir = getFilesDir()
-    if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true })
     const stat = fs.statSync(sourcePath)
-    const ext = path.extname(sourcePath).slice(1).toLowerCase()
-    // 用文件名（去扩展名）做 slug，而非 noteId，让 git 里的文件名可读
+    const ext = path.extname(sourcePath).slice(1).toLowerCase() || 'bin'
     const baseName = path.basename(sourcePath, path.extname(sourcePath))
-    const slug = slugify(baseName)
-    const uniqueName = getUniqueFileName(slug, ext || 'bin', filesDir)
-    const destPath = path.join(filesDir, uniqueName)
+    // 用 notebook 树状目录（不是扁平 filesDir），跟笔记主文件同构
+    const dest = dbApi.prepareFileNoteCopy(noteId, baseName + path.extname(sourcePath))
+    const destPath = dest.fullPath
+    fs.mkdirSync(path.dirname(destPath), { recursive: true })
     await fs.promises.copyFile(sourcePath, destPath)
-    const fileName = path.basename(sourcePath)
+    // 存到库里的 fileName = 原始文件全名（带后缀），让 UI 直接展示
+    const fileName = baseName + path.extname(sourcePath)
     const fileSize = stat.size
     dbApi.setNoteFile(noteId, { filePath: destPath, fileName, fileSize, fileExt: ext })
     return { filePath: destPath, fileName, fileSize, fileExt: ext }
@@ -315,13 +328,13 @@ ${payload?.html ?? ''}
     return true
   })
 
-  /** 读取文件笔记源文件内容为 ArrayBuffer，给前端预览组件用 */
-  ipcMain.handle(IPC_CHANNELS.FILE_NOTE_READ, async (_, noteId: string): Promise<ArrayBuffer | null> => {
+  /** 读取文件笔记源文件内容，给前端预览组件用 */
+  ipcMain.handle(IPC_CHANNELS.FILE_NOTE_READ, async (_, noteId: string): Promise<Uint8Array | null> => {
     const note = dbApi.getNote(noteId)
     if (!note?.filePath || !fs.existsSync(note.filePath)) return null
     const buffer = await fs.promises.readFile(note.filePath)
-    // 把 Node Buffer 转成可 IPC 传输的 ArrayBuffer
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    // Uint8Array 比 ArrayBuffer 更可靠地通过 contextBridge 结构化克隆
+    return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
   })
 
   // ============ Git 同步 ============
@@ -341,7 +354,9 @@ ${payload?.html ?? ''}
 
   /** 工作区变更状态 */
   ipcMain.handle(IPC_CHANNELS.GIT_STATUS, async (): Promise<{ filepath: string; status: string }[]> => {
-    return gitMgr.status()
+    const result = await gitMgr.status()
+    console.log('[git:status] result:', JSON.stringify(result))
+    return result
   })
 
   /** 在工作区 git init + 初始 commit */
@@ -370,7 +385,12 @@ ${payload?.html ?? ''}
       if (autoCommit) {
         await gitMgr.commitAll(`update: ${new Date().toLocaleString('zh-CN')}`)
       }
-      return await gitMgr.push()
+      const r = await gitMgr.push()
+      if (r.ok) {
+        const at = Date.now()
+        dbApi.updateSettings({ gitSync: { ...dbApi.getSettings().gitSync, lastSyncAt: at } } as any)
+      }
+      return r
     } catch (e: any) {
       return { ok: false, message: e?.message ?? 'push 失败' }
     }
@@ -378,7 +398,38 @@ ${payload?.html ?? ''}
 
   /** pull = fetch + merge */
   ipcMain.handle(IPC_CHANNELS.GIT_PULL, async (): Promise<{ ok: boolean; message: string; updated: boolean }> => {
-    return gitMgr.pull()
+    const r = await gitMgr.pull()
+    if (r.ok) {
+      const at = Date.now()
+      dbApi.updateSettings({ gitSync: { ...dbApi.getSettings().gitSync, lastSyncAt: at } } as any)
+    }
+    return r
+  })
+
+  /** 一键同步：commit → pull → push */
+  ipcMain.handle(IPC_CHANNELS.GIT_SYNC, async (): Promise<{
+    ok: boolean
+    message: string
+    phase?: 'commit' | 'pull' | 'push'
+    phases?: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' }
+    pulled?: boolean
+    pushed?: boolean
+  }> => {
+    const r = await gitMgr.sync()
+    // 整体成功才记 lastSyncAt（不论动了数据没）
+    if (r.ok) {
+      const at = Date.now()
+      dbApi.updateSettings({ gitSync: { ...dbApi.getSettings().gitSync, lastSyncAt: at } } as any)
+    }
+    return r
+  })
+
+  /** 是否已配置（用于 UI 决定要不要禁用同步按钮） */
+  ipcMain.handle(IPC_CHANNELS.GIT_IS_CONFIGURED, async (): Promise<{ configured: boolean; initialized: boolean }> => {
+    return {
+      configured: gitMgr.isConfigured(),
+      initialized: gitMgr.isInitialized()
+    }
   })
 
   /** 提交历史（可指定 filepath） */
@@ -389,5 +440,10 @@ ${payload?.html ?? ''}
   /** 读指定 commit 的文件内容（文本） */
   ipcMain.handle(IPC_CHANNELS.GIT_SHOW_FILE, async (_, oid: string, filepath: string): Promise<string | null> => {
     return gitMgr.showFile(oid, filepath)
+  })
+
+  /** 暴露 Git 工作区目录路径（给渲染进程计算 git 相对路径用） */
+  ipcMain.handle(IPC_CHANNELS.GIT_GET_WORKDIR, async (): Promise<string> => {
+    return gitMgr.getWorkDir()
   })
 }

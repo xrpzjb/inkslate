@@ -15,7 +15,12 @@ export function DocxPreview({ noteId }: { noteId: string }) {
       setError(null)
       try {
         const data = await window.inkslateApi.fileNote.read(noteId)
-        if (!data || cancelled) return
+        if (cancelled) return
+        if (!data) {
+          setError('文件不存在或无法读取')
+          setLoading(false)
+          return
+        }
         const container = containerRef.current
         if (!container) return
         // 清空旧内容
@@ -32,6 +37,7 @@ export function DocxPreview({ noteId }: { noteId: string }) {
         if (!cancelled) setLoading(false)
       } catch (e) {
         if (!cancelled) {
+          console.error('[DocxPreview] render error:', e)
           setError((e as Error).message || '文档加载失败')
           setLoading(false)
         }
@@ -84,8 +90,9 @@ export function DocxPreview({ noteId }: { noteId: string }) {
         style={{
           flex: 1,
           overflow: 'auto',
-          padding: 16,
-          minHeight: 0,
+          padding: 0,
+          // 给一个最小高度，确保 docx-preview 即使在容器刚 layout 完成时也能拿到空间
+          minHeight: 400,
           background: '#fff',
           color: '#1a1a1a'
         }}

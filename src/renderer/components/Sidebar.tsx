@@ -4,10 +4,25 @@ import { NoteTreeNode, Note } from '@shared/types'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
-  FileDown, FileCode, Globe, Inbox, Link2, Paperclip
+  FileDown, FileCode, Globe, Link2, Paperclip, Palette, History
 } from 'lucide-react'
+import * as LucideIcons from 'lucide-react'
 import { toast } from './Toast'
 import { confirm } from './ConfirmDialog'
+import { IconPicker } from './IconPicker'
+
+/** 笔记本图标：把 DB 里存的图标名（字符串）查表渲染成 lucide 组件。
+ *  - 没设图标 → 展开用 FolderOpen，折叠用 Folder
+ *  - 设了图标但找不到对应组件 → 兜底用 Folder
+ */
+function renderNotebookIcon(iconName: string | null | undefined, isExpanded: boolean) {
+  if (!iconName) {
+    return isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />
+  }
+  const Icon = (LucideIcons as any)[iconName]
+  if (Icon) return <Icon size={14} />
+  return isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />
+}
 
 /** Markdown 笔记图标：纯字符 "M"，无外壳
  *  stroke 风格，视觉上跟 lucide Globe 一致（24x24 / 2px stroke / 无填充）
@@ -134,6 +149,8 @@ export function Sidebar() {
   }, [storedExpanded])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: NoteTreeNode } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+  // 笔记本图标选择器：null 时不显示，否则 { notebookId, position }
+  const [iconPicker, setIconPicker] = useState<{ notebookId: string; currentIcon: string | null; position: { top: number; left: number } } | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; type: 'notebook' | 'note'; value: string } | null>(null)
   // 新建网址笔记：自定义 modal（Electron renderer 不支持 window.prompt）
   const [urlDialog, setUrlDialog] = useState<{
@@ -288,9 +305,8 @@ export function Sidebar() {
     })
     if (!sourcePath) return
 
-    // 文件名（不含目录）作为 title；去掉扩展名让标题更干净（保留扩展名在 fileExt 字段）
-    const basename = sourcePath.split(/[\\/]/).pop() || '未命名文件'
-    const title = basename.replace(/\.[^.]+$/, '') || basename
+    // 文件名（含扩展名）直接作为 title —— 用户在 Layout 看到的就是真实文件名
+    const title = sourcePath.split(/[\\/]/).pop() || '未命名文件'
 
     // 先创建 note 拿到 noteId，再调 fileNote.create 复制文件
     const note = await window.inkslateApi.notes.create(title, targetNotebookId, targetParentId, undefined, 'file')
@@ -406,10 +422,28 @@ export function Sidebar() {
 
   const handleDelete = async (node: NoteTreeNode) => {
     closeContextMenu()
-    if (!await confirm({ message: `确认删除 "${node.name}"？此操作不可撤销。`, danger: true })) return
     if (node.type === 'notebook') {
+      // 收集笔记本及其所有子笔记本的 ID
+      const collectIds = (n: NoteTreeNode): string[] => {
+        const ids: string[] = [n.id]
+        for (const child of n.children) {
+          if (child.type === 'notebook') ids.push(...collectIds(child))
+        }
+        return ids
+      }
+      const nbIds = collectIds(node)
+      const noteCount = notes.filter(n => nbIds.includes(n.notebookId)).length
+      if (!await confirm({
+        title: '删除笔记本',
+        message: `将删除笔记本 "${node.name}" 及其下 ${noteCount} 条笔记。\n删除后可在回收站中恢复。\n\n请输入笔记本名称以确认操作：`,
+        confirmText: '确认删除',
+        danger: true,
+        verifyText: node.name,
+        verifyLabel: `输入 "${node.name}" 确认删除`
+      })) return
       await deleteNotebook(node.id)
     } else {
+      if (!await confirm({ message: `确认删除笔记 "${node.name}"？此操作不可撤销。`, danger: true })) return
       await deleteNote(node.id)
     }
   }
@@ -497,8 +531,8 @@ export function Sidebar() {
             >
               {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </span>
-            <span style={{ marginRight: 4, fontSize: 14 }}>
-              {node.icon ?? (isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />)}
+            <span style={{ marginRight: 4, fontSize: 14, display: 'inline-flex', color: 'var(--text-secondary)' }}>
+              {renderNotebookIcon(node.icon, isExpanded)}
             </span>
             {isRenaming ? (
               <RenameInput
@@ -688,6 +722,26 @@ export function Sidebar() {
 
           <MenuItem icon={<Edit3 size={14} />} label="重命名" onClick={() => handleRename(contextMenu.node)} />
 
+          {/* 更换图标：仅笔记本节点显示 */}
+          {contextMenu.node.type === 'notebook' && (
+            <MenuItem
+              icon={<Palette size={14} />}
+              label="更换图标..."
+              onClick={(e) => {
+                const anchor = e.currentTarget as HTMLElement
+                // 在 DOM 移除前读取位置
+                const rect = anchor.getBoundingClientRect()
+                const nb = contextMenu.node
+                setContextMenu(null)
+                setIconPicker({
+                  notebookId: nb.id,
+                  currentIcon: nb.icon ?? null,
+                  position: { top: rect.top, left: rect.right + 6 }
+                })
+              }}
+            />
+          )}
+
           {/* 导出仅对笔记有效；右键笔记本时不显示 */}
           {contextMenu.node.type === 'note' && (
             <>
@@ -705,10 +759,40 @@ export function Sidebar() {
             </>
           )}
 
+          {/* Git 历史快照：仅对非文件/非网址笔记显示 */}
+          {(() => {
+            const note = useAppStore.getState().notes.find(n => n.id === contextMenu.node.id)
+            return contextMenu.node.type === 'note' && note && !['url', 'file'].includes(note.format)
+          })() && (
+            <>
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+              <MenuItem
+                icon={<History size={14} />}
+                label="Git 历史快照"
+                onClick={() => {
+                  const nodeId = contextMenu.node.id
+                  closeContextMenu()
+                  useAppStore.getState().selectNote(nodeId)
+                  setTimeout(() => window.dispatchEvent(new CustomEvent('inkslate:open-history')), 50)
+                }}
+              />
+            </>
+          )}
+
           <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
 
           <MenuItem icon={<Trash2 size={14} />} label="删除" onClick={() => handleDelete(contextMenu.node)} danger />
         </div>
+      )}
+
+      {/* 笔记本图标选择器（独立于 context menu，从 menu item 触发） */}
+      {iconPicker && (
+        <IconPicker
+          notebookId={iconPicker.notebookId}
+          currentIcon={iconPicker.currentIcon}
+          position={iconPicker.position}
+          onClose={() => setIconPicker(null)}
+        />
       )}
 
       <style>{`
@@ -736,60 +820,6 @@ export function Sidebar() {
           white-space: nowrap;
         }
       `}</style>
-      </div>
-
-      {/* 底部：回收站入口（带 badge） */}
-      <div style={{
-        borderTop: '1px solid var(--border-color)',
-        flexShrink: 0,
-        padding: '4px 0'
-      }}>
-        <div
-          onClick={() => {
-            if (viewMode !== 'recycle-bin') {
-              loadRecycleBin()
-              setViewMode('recycle-bin')
-            } else {
-              setViewMode('notes')
-            }
-          }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            height: 28,
-            padding: '0 12px',
-            gap: 8,
-            cursor: 'pointer',
-            color: viewMode === 'recycle-bin' ? 'var(--accent-color)' : 'var(--text-secondary)',
-            background: viewMode === 'recycle-bin' ? 'var(--bg-active)' : 'transparent',
-            fontSize: 12
-          }}
-          onMouseEnter={(e) => {
-            if (viewMode !== 'recycle-bin') {
-              e.currentTarget.style.background = 'var(--bg-hover)'
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (viewMode !== 'recycle-bin') {
-              e.currentTarget.style.background = 'transparent'
-            }
-          }}
-        >
-          <Inbox size={13} />
-          <span style={{ flex: 1 }}>回收站</span>
-          {recycleBinCount > 0 && (
-            <span style={{
-              fontSize: 10,
-              background: viewMode === 'recycle-bin' ? 'var(--accent-color)' : 'var(--bg-tertiary)',
-              color: viewMode === 'recycle-bin' ? '#fff' : 'var(--text-tertiary)',
-              padding: '1px 6px',
-              borderRadius: 8,
-              fontWeight: 500
-            }}>
-              {recycleBinCount}
-            </span>
-          )}
-        </div>
       </div>
 
       {/* 新建网址笔记的 URL 输入弹窗（Electron renderer 不支持 window.prompt） */}
@@ -913,7 +943,7 @@ export function Sidebar() {
   )
 }
 
-function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: (e: React.MouseEvent<HTMLDivElement>) => void; danger?: boolean }) {
   return (
     <div
       onClick={onClick}
