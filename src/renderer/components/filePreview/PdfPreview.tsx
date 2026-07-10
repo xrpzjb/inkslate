@@ -20,13 +20,22 @@ export function PdfPreview({ noteId }: { noteId: string }) {
   useEffect(() => {
     let cancelled = false
     let renderTask: any = null
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
 
     const load = async () => {
       setLoading(true)
       setError(null)
+      // 超时兜底：5s 后强制结束 loading，防止 spinner 永久卡住
+      timeoutId = setTimeout(() => {
+        if (!cancelled) {
+          cancelled = true
+          setLoading(false)
+        }
+      }, 5000)
       try {
         const data = await window.inkslateApi.fileNote.read(noteId)
         if (!data || cancelled) return
+        clearTimeout(timeoutId!)
         const loadingTask = (pdfjsLib as any).getDocument({ data })
         const pdf = await loadingTask.promise
         if (cancelled) {
@@ -50,6 +59,7 @@ export function PdfPreview({ noteId }: { noteId: string }) {
 
     return () => {
       cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
       if (renderTask) try { renderTask.cancel() } catch {}
       if (pdfDocRef.current) try { pdfDocRef.current.destroy() } catch {}
       pdfDocRef.current = null

@@ -151,6 +151,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentNote: null,
   openTabs: [],
   activeTabId: null,
+  /** 追踪 selectNote 请求序列，防止快速切换时旧请求覆盖新笔记 */
+  _selectNoteSeq: 0,
   loadNotebooks: async () => {
     const notebooks = await window.inkslateApi.notebooks.list()
     set({ notebooks })
@@ -173,7 +175,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ currentNote: null })
       return
     }
+    // 递增序列号，用于忽略快速切换时过时的响应
+    const seq = get()._selectNoteSeq + 1
+    set({ _selectNoteSeq: seq })
     const note = await window.inkslateApi.notes.get(id)
+    // 忽略过时响应（当前序列号已不是本次请求的 seq）
+    if (get()._selectNoteSeq !== seq) return
     set({ currentNote: note })
     // 多标签页：维护 openTabs + activeTabId
     //  - 笔记已在 openTabs 里：仅切激活（不重复追加），且不改变布局

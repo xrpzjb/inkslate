@@ -412,7 +412,9 @@ export function IconSidebar() {
                   onClick={it.onClick}
                 >
                   {/* 文字在左、check 在右（radio 列表常见布局，更整齐） */}
-                  <span className="icon-sidebar-popover-item-inner">{it.label}</span>
+                  <span className="icon-sidebar-popover-item-inner">
+                    {it.label}
+                  </span>
                   {it.active
                     ? <Check size={13} className="icon-sidebar-popover-check" />
                     : <span className="icon-sidebar-popover-check-spacer" />}

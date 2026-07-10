@@ -10,12 +10,21 @@ export function DocxPreview({ noteId }: { noteId: string }) {
 
   useEffect(() => {
     let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
     const load = async () => {
       setLoading(true)
       setError(null)
+      // 超时兜底：5s 后强制结束 loading，防止 spinner 永久卡住
+      timeoutId = setTimeout(() => {
+        if (!cancelled) {
+          cancelled = true
+          setLoading(false)
+        }
+      }, 5000)
       try {
         const data = await window.inkslateApi.fileNote.read(noteId)
         if (cancelled) return
+        clearTimeout(timeoutId!)
         if (!data) {
           setError('文件不存在或无法读取')
           setLoading(false)
@@ -44,7 +53,10 @@ export function DocxPreview({ noteId }: { noteId: string }) {
       }
     }
     load()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
   }, [noteId])
 
   const handleSaveAs = async () => {

@@ -2,7 +2,7 @@
 .tab-bar {
   display: flex;
   align-items: stretch;
-  height: 32px;
+  height: 40px;
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-color);
   overflow-x: auto;
@@ -36,7 +36,7 @@
   color: var(--text-secondary);
   border-right: 1px solid var(--border-color);
   position: relative;
-  font-size: 12px;
+  font-size: 14px;
   transition: background 80ms, color 80ms;
 }
 
@@ -51,17 +51,6 @@
   background: var(--bg-primary);
   color: var(--text-primary);
   font-weight: 500;
-}
-
-/* 激活 tab 顶部一根 accent 横线（编辑器/预览面板顶部对齐） */
-.tab-item.active::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent-color, #3b82f6);
 }
 
 /* 拖动中 */

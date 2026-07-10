@@ -389,7 +389,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const fontSizeCompartment = useRef(new Compartment())
   // settings.theme 可以是 'auto'，但 editorThemes 只有具体 12 种配色，'auto' 落到 'light'
   const settingsTheme = useAppStore(s => s.settings?.theme)
-  const theme: AppThemeId = ((settingsTheme === 'auto' || !settingsTheme) ? 'light' : settingsTheme) as AppThemeId
+  const theme: AppThemeId = ((settingsTheme === 'auto' || !settingsTheme || !(settingsTheme in editorThemes)) ? 'light' : settingsTheme) as AppThemeId
 
   useImperativeHandle(ref, () => ({
     insertText: (before: string, after = '', placeholder = '', cursorOffset?: number) => {

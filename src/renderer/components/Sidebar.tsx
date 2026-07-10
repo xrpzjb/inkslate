@@ -116,6 +116,8 @@ export function Sidebar() {
   const setViewMode = useAppStore(s => s.setViewMode)
   const recycleBinCount = useAppStore(s => s.recycleBinCount)
   const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
+  // 点击去抖：防止快速点击触发多个并发 selectNote 请求
+  const selectNoteTimer = useRef<NodeJS.Timeout | null>(null)
 
   // ============ 拖动排序 ============
   // 简化设计：笔记本和笔记拖动都视为"同级排序"。笔记本顶级拖到另一个笔记本下 → 不支持
@@ -581,7 +583,14 @@ export function Sidebar() {
         <div
           className={`tree-row ${isSelected ? 'selected' : ''}`}
           style={{ paddingLeft: 4 + depth * 10 }}
-          onClick={() => { setRenaming(null); selectNote(node.id) }}
+          onClick={() => {
+            setRenaming(null)
+            if (selectNoteTimer.current) clearTimeout(selectNoteTimer.current)
+            selectNoteTimer.current = setTimeout(() => {
+              selectNoteTimer.current = null
+              selectNote(node.id)
+            }, 80)
+          }}
           onContextMenu={(e) => handleContextMenu(e, node)}
           onDoubleClick={() => handleRename(node)}
           draggable
@@ -772,8 +781,12 @@ export function Sidebar() {
                 onClick={() => {
                   const nodeId = contextMenu.node.id
                   closeContextMenu()
-                  useAppStore.getState().selectNote(nodeId)
-                  setTimeout(() => window.dispatchEvent(new CustomEvent('inkslate:open-history')), 50)
+                  if (selectNoteTimer.current) clearTimeout(selectNoteTimer.current)
+                  selectNoteTimer.current = setTimeout(() => {
+                    selectNoteTimer.current = null
+                    useAppStore.getState().selectNote(nodeId)
+                    setTimeout(() => window.dispatchEvent(new CustomEvent('inkslate:open-history')), 50)
+                  }, 80)
                 }}
               />
             </>
@@ -799,8 +812,8 @@ export function Sidebar() {
         .tree-row {
           display: flex;
           align-items: center;
-          height: 26px;
-          font-size: 13px;
+          height: 30px;
+          font-size: 14px;
           color: var(--text-primary);
           cursor: pointer;
           user-select: none;

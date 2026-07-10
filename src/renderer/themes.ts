@@ -305,7 +305,7 @@ const pastoral: AppThemePalette = {
   'color-scheme': 'light',
 }
 
-// ============ 涓婚娉ㄥ唽琛?============
+// ============ 主题注册表 ============
 export type AppThemeId =
   | 'light'        // 默认
   | 'dark'         // 暗黑

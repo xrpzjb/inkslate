@@ -6,6 +6,8 @@ import { Preview } from './Preview'
 import { RecycleBinView } from './RecycleBinView'
 import { IconSidebar } from './IconSidebar'
 import { TabBar } from './TabBar'
+import { Search, X } from 'lucide-react'
+import { Note } from '@shared/types'
 import '../styles/layout.css'
 
 /** 侧栏 / 编辑器 / 预览 之间的水平拖拽 resize */
@@ -109,6 +111,51 @@ export function Layout() {
   const previewDividerRef = useRef<HTMLDivElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
 
+  // 搜索状态
+  const notes = useAppStore(s => s.notes)
+  const notebooks = useAppStore(s => s.notebooks)
+  const selectNote = useAppStore(s => s.selectNote)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Note[]>([])
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchPopupRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (searchPopupRef.current && searchPopupRef.current.contains(e.target as Node)) return
+      if (searchInputRef.current && searchInputRef.current.contains(e.target as Node)) return
+      setSearchResults([])
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [])
+
+  const doSearch = (q: string) => {
+    if (!q.trim()) { setSearchResults([]); return }
+    const lower = q.trim().toLowerCase()
+    setSearchResults(notes.filter(n =>
+      n.title.toLowerCase().includes(lower) ||
+      n.content.toLowerCase().includes(lower)
+    ))
+  }
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const q = e.target.value
+    setSearchQuery(q)
+    doSearch(q)
+  }
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') { setSearchQuery(''); setSearchResults([]); return }
+    if (e.key === 'Enter') doSearch(searchQuery)
+  }
+
+  const handleResultClick = (noteId: string) => {
+    setSearchQuery('')
+    setSearchResults([])
+    selectNote(noteId)
+  }
+
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth)
     window.addEventListener('resize', onResize)
@@ -142,6 +189,7 @@ export function Layout() {
     previewMax
   )
 
+  const sidebarHeaderRef = useRef<HTMLDivElement>(null)
   const lastSavedWidth = useRef(sidebarWidth)
   useEffect(() => {
     if (lastSavedWidth.current !== sidebarWidth && settings) {
@@ -169,8 +217,102 @@ export function Layout() {
         className={`layout-sidebar ${!sidebarVisible ? 'collapsed' : ''}`}
         style={{ width: sidebarVisible ? sidebarWidth : 0 }}
       >
-        <div className="panel-header">
-          <span className="panel-title">笔记本</span>
+        <div className="panel-header" ref={sidebarHeaderRef} style={{ position: 'relative' }}>
+          {/* 搜索框 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 6, padding: '0 8px', flex: 1, height: 28 }}>
+            <Search size={13} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+            <input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={handleSearchChange}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="搜索..."
+              style={{
+                flex: 1,
+                border: 'none',
+                background: 'transparent',
+                padding: '4px 0',
+                fontSize: 13,
+                color: 'var(--text-primary)',
+                outline: 'none',
+                minWidth: 0
+              }}
+            />
+            {searchQuery && (
+              <X
+                size={13}
+                style={{ color: 'var(--text-tertiary)', cursor: 'pointer', flexShrink: 0 }}
+                onClick={() => { setSearchQuery(''); setSearchResults([]) }}
+              />
+            )}
+          </div>
+          {/* 搜索结果弹窗：居中显示 */}
+          {searchResults.length > 0 && (
+            <div
+              ref={searchPopupRef}
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: 'calc(100% - 8px)',
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 6,
+                boxShadow: 'var(--shadow-md)',
+                zIndex: 1000,
+                maxHeight: 400,
+                overflowY: 'auto',
+                padding: '4px 0'
+              }}
+            >
+              <div style={{ padding: '4px 10px 6px', fontSize: 11, color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-color)', marginBottom: 4 }}>
+                找到 {searchResults.length} 条结果
+              </div>
+              {searchResults.map(note => {
+                const notebook = notebooks.find(nb => nb.id === note.notebookId)
+                const formatColors: Record<string, string> = {
+                  markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6',
+                  code: '#4a90e2', url: '#0ea5e9', file: '#16a34a'
+                }
+                // 提取内容匹配片段
+                const q = searchQuery.trim()
+                let snippet = ''
+                if (note.content && q) {
+                  const idx = note.content.toLowerCase().indexOf(q.toLowerCase())
+                  if (idx >= 0) {
+                    const start = Math.max(0, idx - 20)
+                    const end = Math.min(note.content.length, idx + q.length + 40)
+                    snippet = (start > 0 ? '…' : '') + note.content.slice(start, end).replace(/\n/g, ' ') + (end < note.content.length ? '…' : '')
+                  }
+                }
+                return (
+                  <div
+                    key={note.id}
+                    onClick={() => handleResultClick(note.id)}
+                    style={{
+                      padding: '6px 10px', cursor: 'pointer', fontSize: 13,
+                      color: 'var(--text-primary)', borderRadius: 4, margin: '0 4px',
+                      display: 'flex', alignItems: 'flex-start', gap: 6, flexDirection: 'column'
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                      <span style={{ color: formatColors[note.format] ?? '#7d8590', flexShrink: 0, fontSize: 12 }}>●</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontWeight: 500 }}>{note.title}</span>
+                      {notebook && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', flexShrink: 0 }}>{notebook.name}</span>}
+                    </div>
+                    {snippet && (
+                      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', paddingLeft: 18, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {snippet}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
         {sidebarVisible && <Sidebar />}
       </div>

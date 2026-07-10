@@ -11,12 +11,21 @@ export function XlsxPreview({ noteId }: { noteId: string }) {
 
   useEffect(() => {
     let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
     const load = async () => {
       setLoading(true)
       setError(null)
+      // 超时兜底：5s 后强制结束 loading，防止 spinner 永久卡住
+      timeoutId = setTimeout(() => {
+        if (!cancelled) {
+          cancelled = true
+          setLoading(false)
+        }
+      }, 5000)
       try {
         const data = await window.inkslateApi.fileNote.read(noteId)
         if (!data || cancelled) return
+        clearTimeout(timeoutId!)
         const wb = new ExcelJS.Workbook()
         await wb.xlsx.load(data)
         if (cancelled) return
@@ -33,7 +42,10 @@ export function XlsxPreview({ noteId }: { noteId: string }) {
       }
     }
     load()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
   }, [noteId])
 
   const handleSaveAs = async () => {

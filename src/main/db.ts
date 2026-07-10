@@ -673,7 +673,17 @@ const dbMethods = {
     const rows = notebookId
       ? d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC').all(notebookId)
       : d.prepare('SELECT * FROM notes WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC').all()
-    return rows.map((row: any) => rowToNote(row))
+    return rows.map((row: any) => {
+      let content = ''
+      try {
+        if (row.format !== 'file' && row.format !== 'url' && row.format !== 'richtext' && row.path) {
+          if (fs.existsSync(row.path)) {
+            content = fs.readFileSync(row.path, 'utf-8')
+          }
+        }
+      } catch {}
+      return rowToNote(row, content)
+    })
   },
 
   getNote(id: string): Note | null {
