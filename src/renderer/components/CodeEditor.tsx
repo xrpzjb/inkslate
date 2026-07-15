@@ -20,6 +20,19 @@ import type { AppThemeId } from '../themes'
 /** CJK 字符优先字体栈（编辑器里中文混排时用） */
 const cjkFont = `'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', sans-serif`
 
+/** 读取当前 --font-mono CSS 变量的实际值（CodeMirror 不支持 var()，必须给字面量） */
+function readMonoFont(): string {
+  if (typeof document === 'undefined') return cjkFont
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim()
+  return v || cjkFont
+}
+
+/** 读取当前 --editor-font-weight CSS 变量（粗体选项会设为 700） */
+function readMonoWeight(): string {
+  if (typeof document === 'undefined') return '400'
+  return getComputedStyle(document.documentElement).getPropertyValue('--editor-font-weight').trim() || '400'
+}
+
 function makeEditorTheme(opts: {
   isDark: boolean
   bg: string
@@ -28,7 +41,6 @@ function makeEditorTheme(opts: {
   activeLine: string
   gutterBg: string
   gutterFg: string
-  gutterBorder: string
   activeLineGutterFg: string
   selectionBg: string
   selectionFg: string
@@ -46,15 +58,18 @@ function makeEditorTheme(opts: {
     '&': { backgroundColor: opts.bg, color: opts.fg, height: '100%' },
     '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--font-mono)' },
     '.cm-content': {
-      caretColor: opts.caret, lineHeight: '1.6', padding: '12px 0',
+      caretColor: opts.caret, lineHeight: '1.4', padding: '8px 0 0 0',
       fontFamily: `var(--font-mono), ${cjkFont}`,
     },
     '.cm-cursor': { borderLeftColor: opts.caret },
     '.cm-activeLine': { backgroundColor: opts.activeLine },
     '.cm-gutters': {
       backgroundColor: opts.gutterBg, color: opts.gutterFg,
-      borderRight: `1px solid ${opts.gutterBorder}`, userSelect: 'none',
+      border: 'none', userSelect: 'none',
+      fontWeight: '400',
     },
+    '.cm-gutters-before': { borderRight: 'none' },
+    '.cm-gutters-after': { borderLeft: 'none' },
     '.cm-lineNumbers .cm-gutterElement': { padding: '0 12px 0 8px', minWidth: '40px', textAlign: 'right' },
     '.cm-activeLineGutter': { backgroundColor: opts.activeLine, color: opts.activeLineGutterFg },
   }, { dark: opts.isDark })
@@ -91,9 +106,7 @@ function makeEditorTheme(opts: {
   ])
 
   const selection = EditorView.theme({
-    '&.cm-focused .cm-selectionLayer .cm-selectionBackground': { backgroundColor: opts.selectionBg },
-    '&.cm-focused ::selection': { backgroundColor: opts.selectionBg },
-    '& .cm-selectionLayer .cm-selectionContent': { color: opts.selectionFg },
+    '& ::selection': { backgroundColor: opts.selectionBg, color: opts.selectionFg },
   })
 
   return [base, syntaxHighlighting(highlight), selection]
@@ -103,8 +116,8 @@ const editorLightExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#1a73e8', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: 'var(--accent-color)',
+  gutterBg: '#ffffff', gutterFg: '#999999',
+  activeLineGutterFg: 'var(--accent-color)',
   selectionBg: '#0d47a1', selectionFg: '#ffffff',
   c: {
     keyword: '#cf222e', comment: '#6a737d', string: '#0a3069',
@@ -122,10 +135,10 @@ const editorLightExt = makeEditorTheme({
 
 const editorDarkExt = makeEditorTheme({
   isDark: true,
-  bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
-  caret: '#58a6ff', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: 'var(--accent-color)',
+  bg: '#1e1e1e', fg: '#e8e8e8',
+  caret: '#58a6ff', activeLine: '#2d2d2e',
+  gutterBg: '#1e1e1e', gutterFg: '#808080',
+  activeLineGutterFg: '#58a6ff',
   selectionBg: '#1f6feb', selectionFg: '#ffffff',
   c: {
     keyword: '#ff7b72', comment: '#8b949e', string: '#a5d6ff',
@@ -145,8 +158,8 @@ const editorSolarizedExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#268bd2', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: 'var(--accent-color)',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: 'var(--accent-color)',
   selectionBg: '#b58900', selectionFg: '#ffffff',
   c: {
     keyword: '#859900', comment: '#93a1a1', string: '#2aa198',
@@ -166,8 +179,8 @@ const editorCyberpunkExt = makeEditorTheme({
   isDark: true,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#00f0ff', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#00f0ff',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#00f0ff',
   selectionBg: '#ff00aa', selectionFg: '#ffffff',
   c: {
     keyword: '#ff00aa', comment: '#6b5b95', string: '#00f0ff',
@@ -187,8 +200,8 @@ const editorDraculaExt = makeEditorTheme({
   isDark: true,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#f8f8f0', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#bd93f9',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#bd93f9',
   selectionBg: '#44475a', selectionFg: '#ffffff',
   c: {
     keyword: '#ff79c6', comment: '#6272a4', string: '#f1fa8c',
@@ -208,8 +221,8 @@ const editorDuneExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#c87533', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#c87533',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#c87533',
   selectionBg: '#c87533', selectionFg: '#ffffff',
   c: {
     keyword: '#a04020', comment: '#8b6a45', string: '#6b4a2b',
@@ -229,8 +242,8 @@ const editorMonetExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#a48bd9', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#a48bd9',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#a48bd9',
   selectionBg: '#a48bd9', selectionFg: '#ffffff',
   c: {
     keyword: '#8a6fc4', comment: '#a89bc8', string: '#5b5780',
@@ -250,8 +263,8 @@ const editorNewspaperExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#8b4513', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#8b4513',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#8b4513',
   selectionBg: '#8b4513', selectionFg: '#f4ecd8',
   c: {
     keyword: '#6b350f', comment: '#8a7050', string: '#5c4530',
@@ -271,8 +284,8 @@ const editorForestExt = makeEditorTheme({
   isDark: true,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#7fc285', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#7fc285',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#7fc285',
   selectionBg: '#345a45', selectionFg: '#d8e4dc',
   c: {
     keyword: '#9ed5a3', comment: '#5e7c5e', string: '#c5d8a8',
@@ -292,8 +305,8 @@ const editorSunsetExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#e85d2a', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#e85d2a',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#e85d2a',
   selectionBg: '#e85d2a', selectionFg: '#fff0e5',
   c: {
     keyword: '#c44a18', comment: '#b86850', string: '#a04020',
@@ -313,8 +326,8 @@ const editorNordicExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#5b8cb8', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#5b8cb8',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#5b8cb8',
   selectionBg: '#5b8cb8', selectionFg: '#ffffff',
   c: {
     keyword: '#4677a3', comment: '#7a8a9c', string: '#4a5d72',
@@ -334,8 +347,8 @@ const editorPastoralExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#7a9a3a', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-secondary)', gutterFg: 'var(--text-tertiary)',
-  gutterBorder: 'var(--border-color)', activeLineGutterFg: '#7a9a3a',
+  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  activeLineGutterFg: '#7a9a3a',
   selectionBg: '#7a9a3a', selectionFg: '#ffffff',
   c: {
     keyword: '#5e7c28', comment: '#7a8850', string: '#5a6828',
@@ -389,7 +402,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const fontSizeCompartment = useRef(new Compartment())
   // settings.theme 可以是 'auto'，但 editorThemes 只有具体 12 种配色，'auto' 落到 'light'
   const settingsTheme = useAppStore(s => s.settings?.theme)
+  // 编辑器独立暗色模式：默认关闭，关闭时用 settingsTheme；开启时强制用 'dark'
+  const editorDark = useAppStore(s => s.settings?.editorDark === true)
   const theme: AppThemeId = ((settingsTheme === 'auto' || !settingsTheme || !(settingsTheme in editorThemes)) ? 'light' : settingsTheme) as AppThemeId
+  const effectiveTheme: AppThemeId = editorDark ? 'dark' : theme
 
   useImperativeHandle(ref, () => ({
     insertText: (before: string, after = '', placeholder = '', cursorOffset?: number) => {
@@ -416,7 +432,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
       const lang = (language ?? '').toLowerCase()
       try {
-        let formatted: string
+        let formatted: string = ''
         let used = ''
 
         // 1. 优先按 language 分发
@@ -495,7 +511,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
     const fontSizeExtension = EditorView.theme({
       '&': { fontSize: `${fontSize}px` },
-      '.cm-content': { fontSize: `${fontSize}px` },
+      '.cm-content, .cm-gutters': { fontSize: `${fontSize}px` },
       '.cm-scroller': { overflow: 'auto' },
     })
 
@@ -520,8 +536,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         }
       ]),
       formatCompartment.current.of(languageExtension),
-      themeCompartment.current.of(editorThemes[theme]()),
+      themeCompartment.current.of(editorThemes[effectiveTheme]()),
       fontSizeCompartment.current.of(fontSizeExtension),
+
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           onChange(update.state.doc.toString())
@@ -577,20 +594,54 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   useEffect(() => {
     if (!viewRef.current) return
     viewRef.current.dispatch({
-      effects: themeCompartment.current.reconfigure(editorThemes[theme]())
+      effects: themeCompartment.current.reconfigure(editorThemes[effectiveTheme]())
     })
-  }, [theme])
+  }, [effectiveTheme])
 
   useEffect(() => {
     if (!viewRef.current) return
     const fontSizeExtension = EditorView.theme({
       '&': { fontSize: `${fontSize}px` },
-      '.cm-content': { fontSize: `${fontSize}px` },
+      '.cm-content, .cm-gutters': { fontSize: `${fontSize}px` },
     })
     viewRef.current.dispatch({
       effects: fontSizeCompartment.current.reconfigure(fontSizeExtension)
     })
   }, [fontSize])
+
+  // 监听 --font-mono、--editor-font-weight、--editor-font CSS 变量变化，
+  // 直接 inject style tag 到 document.head（绕开 CodeMirror compartment 优先级问题）
+  useEffect(() => {
+    const apply = () => {
+      const editorFont = getComputedStyle(document.documentElement).getPropertyValue('--editor-font').trim()
+      const mono = editorFont || readMonoFont()
+      const weight = readMonoWeight()
+      const styleId = 'cm-font-inject'
+      let styleEl = document.getElementById(styleId) as HTMLStyleElement | null
+      if (!styleEl) {
+        styleEl = document.createElement('style')
+        styleEl.id = styleId
+        document.head.appendChild(styleEl)
+      }
+      styleEl.textContent = `
+        .cm-editor .cm-content,
+        .cm-editor .cm-scroller {
+          font-family: ${mono}, ${cjkFont} !important;
+          font-weight: ${weight} !important;
+        }
+        .cm-editor .cm-gutters {
+          font-weight: 400 !important;
+        }
+      `
+    }
+    apply()
+    const observer = new MutationObserver(apply)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['style'],
+    })
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const view = viewRef.current
@@ -606,7 +657,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   return (
     <div
       ref={containerRef}
-      style={{ flex: 1, overflow: 'hidden', minHeight: 0, height: '100%' }}
+      style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }}
     />
   )
 })

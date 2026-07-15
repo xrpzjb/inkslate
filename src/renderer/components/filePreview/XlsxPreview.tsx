@@ -2,30 +2,57 @@ import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import ExcelJS from 'exceljs'
 
+/** ExcelJS 的 xlsx.load 在主线程上做 XML 解析，大表会卡几秒。整体用 20s 硬截断 */
+const HARD_TIMEOUT_MS = 20_000
+
 export function XlsxPreview({ noteId }: { noteId: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [workbook, setWorkbook] = useState<ExcelJS.Workbook | null>(null)
   const [sheetNames, setSheetNames] = useState<string[]>([])
   const [activeSheet, setActiveSheet] = useState(0)
+  const [status, setStatus] = useState('正在加载...')
 
   useEffect(() => {
     let cancelled = false
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let hardTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const finishLoading = (errorMsg: string | null = null) => {
+      if (cancelled) return
+      cancelled = true
+      if (hardTimeoutId) { clearTimeout(hardTimeoutId); hardTimeoutId = null }
+      if (errorMsg) setError(errorMsg)
+      setLoading(false)
+    }
+
     const load = async () => {
       setLoading(true)
       setError(null)
-      // 超时兜底：5s 后强制结束 loading，防止 spinner 永久卡住
-      timeoutId = setTimeout(() => {
-        if (!cancelled) {
-          cancelled = true
-          setLoading(false)
-        }
-      }, 5000)
+      setStatus('正在加载文件...')
+
+      // 硬超时：20s 后强制结束 loading（ExcelJS 在主线程上做 XML 解析）
+      hardTimeoutId = setTimeout(() => {
+        finishLoading(`表格加载超时（${HARD_TIMEOUT_MS / 1000}s），可能是文件过大或格式复杂`)
+      }, HARD_TIMEOUT_MS)
+
       try {
+        setStatus('正在读取文件...')
         const data = await window.inkslateApi.fileNote.read(noteId)
-        if (!data || cancelled) return
-        clearTimeout(timeoutId!)
+        if (cancelled) return
+        if (!data) {
+          finishLoading('文件不存在或无法读取')
+          return
+        }
+
+        // yield：让 spinner / 进度文案先画一帧，也让 pending 事件优先处理
+        setStatus('正在解析表格...')
+        await new Promise(r => setTimeout(r, 0))
+        if (cancelled) return
+
+        // 再 yield 一次，给切换笔记等操作留出窗口
+        await new Promise(r => setTimeout(r, 100))
+        if (cancelled) return
+
         const wb = new ExcelJS.Workbook()
         await wb.xlsx.load(data)
         if (cancelled) return
@@ -33,18 +60,17 @@ export function XlsxPreview({ noteId }: { noteId: string }) {
         const names = wb.worksheets.map(ws => ws.name)
         setSheetNames(names)
         setActiveSheet(0)
-        setLoading(false)
+        finishLoading()
       } catch (e) {
-        if (!cancelled) {
-          setError((e as Error).message || '表格加载失败')
-          setLoading(false)
-        }
+        if (cancelled) return
+        console.error('[XlsxPreview] load error:', e)
+        finishLoading((e as Error).message || '表格加载失败')
       }
     }
     load()
     return () => {
       cancelled = true
-      if (timeoutId) clearTimeout(timeoutId)
+      if (hardTimeoutId) clearTimeout(hardTimeoutId)
     }
   }, [noteId])
 
@@ -188,6 +214,9 @@ export function XlsxPreview({ noteId }: { noteId: string }) {
         <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
           {sheetNames.length > 0 ? `${activeSheet + 1} / ${sheetNames.length} 个工作表` : ''}
         </span>
+        {loading && (
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{status}</span>
+        )}
         <div style={{ flex: 1 }} />
         {loading && <Loader2 size={14} className="spin" style={{ color: 'var(--text-tertiary)' }} />}
         <button style={btnStyle} title="另存为..." onClick={handleSaveAs}>

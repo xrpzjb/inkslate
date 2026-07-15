@@ -1,9 +1,8 @@
-/* ============ 左侧竖向图标菜单（替代顶部 TitleBar） ============ */
+/* ============ 左侧竖向图标菜单 ============ */
 .icon-sidebar {
-  width: 44px;
+  width: 48px;
   flex-shrink: 0;
-  background: var(--bg-tertiary);
-  border-right: 1px solid var(--border-color);
+  background-color: #fff;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -12,6 +11,32 @@
   z-index: 50;
   overflow-y: auto;
   overflow-x: hidden;
+  border-right: 1px solid var(--border-color);
+}
+
+/* ============ 软件 Logo 图标（顶部，点击弹出全菜单） ============ */
+.icon-sidebar-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin: 6px 0 2px;
+  flex-shrink: 0;
+  transition: background 100ms, transform 100ms;
+  position: relative;
+}
+
+.icon-sidebar-logo:hover {
+  background: var(--bg-hover);
+  transform: scale(1.05);
+}
+
+.icon-sidebar-logo:active {
+  transform: scale(0.95);
 }
 
 .icon-sidebar-btn {
@@ -68,10 +93,10 @@
 }
 
 .icon-sidebar-sep {
+  /* 分组之间用空白间距自然分隔，去掉横线 */
   width: 24px;
-  height: 1px;
-  background: var(--border-color);
-  margin: 4px 0;
+  height: 0;
+  margin: 3px 0;
 }
 
 .icon-sidebar-spacer {

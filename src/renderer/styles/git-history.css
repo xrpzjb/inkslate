@@ -27,7 +27,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
-  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
   flex-shrink: 0;
 }
 
@@ -120,7 +120,6 @@
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 
@@ -133,7 +132,7 @@
 .history-commit-item {
   padding: 10px 16px;
   cursor: pointer;
-  border-bottom: 1px solid var(--border-color);
+  /* 无边框线，靠 hover 背景色区分 */
   transition: background 0.1s;
 }
 
@@ -196,8 +195,7 @@
   display: flex;
   gap: 0;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-tertiary);
+  background-color: var(--bg-tertiary);
   flex-shrink: 0;
 }
 

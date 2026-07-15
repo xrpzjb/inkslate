@@ -5,6 +5,8 @@ import { appThemes } from './themes'
 import { Layout } from './components/Layout'
 import { StatusBar } from './components/StatusBar'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
+import { SettingsDialog } from './components/SettingsDialog'
+import { AboutDialog } from './components/AboutDialog'
 import { RecycleBinSettingsDialog } from './components/RecycleBinSettingsDialog'
 import { GitSettingsDialog } from './components/GitSettingsDialog'
 import { ToastContainer, toast } from './components/Toast'
@@ -29,6 +31,8 @@ export default function App() {
 
   const [gitDialogOpen, setGitDialogOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [recycleBinSettingsOpen, setRecycleBinSettingsOpen] = useState(false)
   const [urlNoteDialogOpen, setUrlNoteDialogOpen] = useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
@@ -63,12 +67,49 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
+  // 监听"打开快捷键"自定义事件（设置面板跳转用）
+  useEffect(() => {
+    const handler = () => setShortcutsOpen(true)
+    window.addEventListener('inkslate:open-shortcuts', handler)
+    return () => window.removeEventListener('inkslate:open-shortcuts', handler)
+  }, [])
+
+  // 监听"打开关于"自定义事件
+  useEffect(() => {
+    const handler = () => setAboutOpen(true)
+    window.addEventListener('inkslate:open-about', handler)
+    return () => window.removeEventListener('inkslate:open-about', handler)
+  }, [])
+
   // 初始化加载
   useEffect(() => {
     (async () => {
       // 必须串行：loadSettings 拿到 openTabs/activeTabId 后，
       // 再加载 notebooks/notes/recycleBin，最后恢复选中的笔记
       await loadSettings()
+      // 恢复用户选择的全局字体
+      {
+        const s = useAppStore.getState().settings
+        const { FONT_OPTIONS } = await import('./components/SettingsDialog')
+        const applyCSSVar = (cssVar: string, fontValue: string | undefined) => {
+          if (!fontValue || fontValue === 'system') return
+          const opt = FONT_OPTIONS.find(o => o.value === fontValue)
+          if (opt) document.documentElement.style.setProperty(cssVar, opt.stack)
+        }
+        applyCSSVar('--font-family', s?.fontFamily)
+        if (s?.fontFamily) {
+          const opt = FONT_OPTIONS.find(o => o.value === s.fontFamily)
+          if (opt?.mono) {
+            document.documentElement.style.setProperty('--font-mono', opt.stack)
+            document.documentElement.style.setProperty('--editor-font-weight', opt.bold ? '700' : '400')
+          }
+        }
+        applyCSSVar('--editor-font', s?.editorFontFamily)
+        applyCSSVar('--tree-font', s?.treeFontFamily)
+        if (s?.treeFontSize) {
+          document.documentElement.style.setProperty('--tree-font-size', `${s.treeFontSize}px`)
+        }
+      }
       await Promise.all([loadNotebooks(), loadNotes(), loadRecycleBin()])
       // 恢复多标签页：优先用 activeTabId；不在 openTabs 里则取第一个；都没有则用 lastSelectedNoteId
       const state = useAppStore.getState()
@@ -299,6 +340,12 @@ export default function App() {
         case 'show-shortcuts':
           setShortcutsOpen(true)
           break
+        case 'show-settings':
+          setSettingsOpen(true)
+          break
+        case 'show-about':
+          setAboutOpen(true)
+          break
         case 'open-recycle-bin':
           loadRecycleBin()
           setViewMode('recycle-bin')
@@ -418,6 +465,34 @@ export default function App() {
     return () => clearInterval(interval)
   }, [])
 
+  // 自动同步：每 5 分钟检测一次，有未同步数据时自动先拉后推
+  useEffect(() => {
+    const autoSync = async () => {
+      try {
+        const s = useAppStore.getState().settings
+        if (!s?.gitSync?.configured || !s?.gitSync?.initialized) return
+        await refreshSyncStatus()
+        const status = useAppStore.getState().syncStatus
+        const pending = status.pendingFiles ?? 0
+        if (pending > 0 && status.state !== 'syncing') {
+          setSyncStatus({ state: 'syncing', message: '自动同步中...', pendingFiles: pending })
+          const r = await window.inkslateApi.git.sync()
+          if (r.ok) {
+            setSyncStatus({ state: 'success', message: r.message, lastSyncAt: Date.now() })
+          } else {
+            setSyncStatus({ state: 'error', message: '自动同步失败', detail: r.message })
+          }
+          await refreshSyncStatus()
+        }
+      } catch (e) {
+        // 静默失败，下次周期重试
+      }
+    }
+    autoSync() // 启动后立即检查一次
+    const timer = setInterval(autoSync, 300_000) // 5 分钟
+    return () => clearInterval(timer)
+  }, [])
+
   return (
     <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
@@ -433,6 +508,14 @@ export default function App() {
       )}
       {shortcutsOpen && createPortal(
         <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />,
+        document.body
+      )}
+      {settingsOpen && createPortal(
+        <SettingsDialog onClose={() => setSettingsOpen(false)} />,
+        document.body
+      )}
+      {aboutOpen && createPortal(
+        <AboutDialog onClose={() => setAboutOpen(false)} />,
         document.body
       )}
       {recycleBinSettingsOpen && createPortal(

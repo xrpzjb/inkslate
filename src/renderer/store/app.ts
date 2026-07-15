@@ -175,6 +175,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ currentNote: null })
       return
     }
+    // 立即用 store 里已有的 note 数据占位 currentNote，避免 await 期间 currentNote 仍是上一个笔记
+    // —— 切到文件笔记时尤其关键：PdfPreview/DocxPreview 会立刻卸载旧的，挂载新的，
+    //    不会卡在"高亮切了但内容还没切"的中间态
+    const cached = get().notes.find(n => n.id === id)
+    if (cached) {
+      set({ currentNote: cached })
+    }
     // 递增序列号，用于忽略快速切换时过时的响应
     const seq = get()._selectNoteSeq + 1
     set({ _selectNoteSeq: seq })
@@ -279,7 +286,31 @@ export const useAppStore = create<AppState>((set, get) => ({
       const saved = get().tabLayouts[id]
       if (saved) {
         set({ editorVisible: saved.editorVisible, previewVisible: saved.previewVisible })
+      } else if (note.format === 'url' || note.format === 'file') {
+        // 兜底：tabLayouts 是 zustand 内存态，重启后丢失。
+        // 但 openTabs 在 settings 里持久化了，启动时 App.tsx 只 selectNote(active)
+        // 恢复当前激活标签，openTabs 里其他标签的 tabLayouts 都是空。
+        // 这里按格式强制初始化：url/file 笔记的 Editor 不渲染，editorVisible 必为 false，
+        // 否则全局 editorVisible=true（上一个 md 标签打开过）会让 preview 卡在 previewWidth
+        // 填不满右侧 → 用户看到"半个屏幕空白"
+        if (get().editorVisible) {
+          set({ editorVisible: false })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, editorVisible: false } })
+          }
+        }
+        if (!get().previewVisible) {
+          set({ previewVisible: true })
+          if (layout) {
+            get().updateSettings({ layout: { ...layout, previewVisible: true } })
+          }
+        }
       }
+      // 无论 saved 与否，都把当前布局写回 tabLayouts，
+      // 保证后续切换/重启场景下，这个标签的布局不会再次缺失
+      set(state => ({
+        tabLayouts: { ...state.tabLayouts, [id]: { editorVisible: get().editorVisible, previewVisible: get().previewVisible } }
+      }))
     }
   },
 

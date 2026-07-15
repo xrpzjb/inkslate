@@ -9,33 +9,63 @@ import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 // 设置 worker（只设一次）
 ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = PdfWorker
 
+/** PDF 解析 + 渲染都在主线程；大文件会卡几秒。整体用 20s 硬截断兜底 */
+const HARD_TIMEOUT_MS = 20_000
+
 export function PdfPreview({ noteId }: { noteId: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pageCount, setPageCount] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
+  const [status, setStatus] = useState('正在加载...')
   const pdfDocRef = useRef<any>(null)
 
   useEffect(() => {
     let cancelled = false
     let renderTask: any = null
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let hardTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const clearTimers = () => {
+      if (hardTimeoutId) { clearTimeout(hardTimeoutId); hardTimeoutId = null }
+    }
+
+    const finishLoading = (errorMsg: string | null = null) => {
+      if (cancelled) return
+      cancelled = true
+      clearTimers()
+      if (errorMsg) setError(errorMsg)
+      setLoading(false)
+    }
 
     const load = async () => {
       setLoading(true)
       setError(null)
-      // 超时兜底：5s 后强制结束 loading，防止 spinner 永久卡住
-      timeoutId = setTimeout(() => {
-        if (!cancelled) {
-          cancelled = true
-          setLoading(false)
-        }
-      }, 5000)
+      setStatus('正在加载文件...')
+
+      // 硬超时：20s 后强制结束 loading（PDF 解析 + 渲染都会卡主线程）
+      hardTimeoutId = setTimeout(() => {
+        finishLoading(`PDF 加载超时（${HARD_TIMEOUT_MS / 1000}s），可能是文件过大或已损坏`)
+      }, HARD_TIMEOUT_MS)
+
       try {
+        setStatus('正在读取文件...')
         const data = await window.inkslateApi.fileNote.read(noteId)
-        if (!data || cancelled) return
-        clearTimeout(timeoutId!)
+        if (cancelled) return
+        if (!data) {
+          finishLoading('文件不存在或无法读取')
+          return
+        }
+
+        // yield：让 spinner / 进度文案先画一帧，也让 pending 事件优先处理
+        setStatus('正在解析 PDF...')
+        await new Promise(r => setTimeout(r, 0))
+        if (cancelled) return
+
+        // 再 yield 一次，给切换笔记等操作留出窗口
+        await new Promise(r => setTimeout(r, 100))
+        if (cancelled) return
+
         const loadingTask = (pdfjsLib as any).getDocument({ data })
         const pdf = await loadingTask.promise
         if (cancelled) {
@@ -45,13 +75,20 @@ export function PdfPreview({ noteId }: { noteId: string }) {
         pdfDocRef.current = pdf
         setPageCount(pdf.numPages)
         setCurrentPage(1)
-        await renderPage(pdf, 1)
-        if (!cancelled) setLoading(false)
-      } catch (e) {
-        if (!cancelled) {
-          setError((e as Error).message || '加载失败')
-          setLoading(false)
+
+        setStatus(`正在渲染首页（1 / ${pdf.numPages}）...`)
+        await new Promise(r => setTimeout(r, 0))
+        if (cancelled) {
+          pdf.destroy()
+          return
         }
+
+        await renderPage(pdf, 1)
+        finishLoading()
+      } catch (e) {
+        if (cancelled) return
+        console.error('[PdfPreview] load error:', e)
+        finishLoading((e as Error).message || '加载失败')
       }
     }
 
@@ -59,7 +96,7 @@ export function PdfPreview({ noteId }: { noteId: string }) {
 
     return () => {
       cancelled = true
-      if (timeoutId) clearTimeout(timeoutId)
+      clearTimers()
       if (renderTask) try { renderTask.cancel() } catch {}
       if (pdfDocRef.current) try { pdfDocRef.current.destroy() } catch {}
       pdfDocRef.current = null
@@ -147,6 +184,9 @@ export function PdfPreview({ noteId }: { noteId: string }) {
         <button style={btnStyle} title="下一页" onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= pageCount}>
           <ChevronRight size={16} />
         </button>
+        {loading && (
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{status}</span>
+        )}
         <div style={{ flex: 1 }} />
         {loading && <Loader2 size={14} className="spin" style={{ color: 'var(--text-tertiary)' }} />}
         <button style={btnStyle} title="另存为..." onClick={handleSaveAs}>

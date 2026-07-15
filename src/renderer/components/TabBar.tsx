@@ -1,19 +1,64 @@
 import { useRef, useState, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { X, Link2, Paperclip, Globe } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import './TabBar.css'
 
-/**
- * 多标签页：
- *  - 单击：激活该标签（如果不在 openTabs 里则先打开）
- *  - 关闭按钮 X：直接关闭（autoSave 已处理持久化）
- *  - 中键：关闭（VSCode 风格）
- *  - 拖拽：重排序
- *  - 超出宽度：横向滚动
- *
- * 显示笔记：title（fallback 为 '未命名'）
- * 标签上多余的"格式图标"暂不加，避免拥挤
- */
+/** Markdown 笔记图标 */
+function MarkdownIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 6 L5 18" />
+      <path d="M5 6 L12 14" />
+      <path d="M12 14 L19 6" />
+      <path d="M19 6 L19 18" />
+    </svg>
+  )
+}
+
+/** 代码笔记图标 */
+function CodeIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 6 L2 12 L8 18" />
+      <path d="M16 6 L22 12 L16 18" />
+      <path d="M15 4 L9 20" />
+    </svg>
+  )
+}
+
+/** 富文本笔记图标 */
+function RichTextIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6 L20 6" />
+      <path d="M12 6 L12 19" />
+    </svg>
+  )
+}
+
+/** 根据笔记格式返回对应图标组件 */
+function TabFormatIcon({ format, size = 13 }: { format: string; size?: number }) {
+  switch (format) {
+    case 'markdown': return <MarkdownIcon size={size} />
+    case 'code':     return <CodeIcon size={size} />
+    case 'richtext': return <RichTextIcon size={size} />
+    case 'url':     return <Link2 size={size} />
+    case 'file':     return <Paperclip size={size} />
+    case 'html':     return <Globe size={size} />
+    default:         return <MarkdownIcon size={size} />
+  }
+}
+
+/** 各格式图标颜色 */
+const FORMAT_COLORS: Record<string, string> = {
+  markdown: '#7d8590',
+  html:     '#e67e22',
+  richtext: '#9b59b6',
+  code:     '#4a90e2',
+  url:      '#0ea5e9',
+  file:     '#16a34a',
+}
+
 export function TabBar() {
   const openTabs = useAppStore(s => s.openTabs)
   const activeTabId = useAppStore(s => s.activeTabId)
@@ -120,6 +165,9 @@ export function TabBar() {
             onDragEnd={handleDragEnd}
             title={tab.title || '未命名'}
           >
+            <span style={{ color: FORMAT_COLORS[tab.format] ?? '#7d8590', display: 'inline-flex', flexShrink: 0 }}>
+              <TabFormatIcon format={tab.format} size={13} />
+            </span>
             <span className="tab-title">{tab.title || '未命名'}</span>
             <button
               className="tab-close"

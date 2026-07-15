@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FilePlus, Trash2,
   Cloud, CloudOff, CloudUpload, Loader2,
-  Palette, Keyboard, Info,
+  Palette,
   PanelLeftClose, PanelLeftOpen,
   Check, Upload, Download, Settings,
   AlertCircle, RefreshCw
@@ -12,6 +12,28 @@ import { useAppStore } from '../store/app'
 import { THEME_LABELS } from '../../shared/themeLabels'
 import { appThemes } from '../themes'
 import './IconSidebar.css'
+
+/** 菜单数据结构（与 TitleBar 共用） */
+interface MenuItem {
+  id?: string
+  label?: string
+  submenu?: MenuItem[]
+  accelerator?: string
+  disabled?: boolean
+  type?: 'normal' | 'separator' | 'radio' | 'checkbox'
+  checked?: boolean
+  arg?: any
+}
+
+interface MenuData {
+  label: string
+  submenu: MenuItem[]
+}
+
+interface MenuPathItem {
+  menuIndex: number
+  itemIndex: number
+}
 
 /**
  * 同步状态：5 个用户能感知的视觉态 + 1 个瞬时态
@@ -69,17 +91,82 @@ export function IconSidebar() {
   const sidebarVisible = useAppStore(s => s.sidebarVisible)
   const syncStatus = useAppStore(s => s.syncStatus)
 
-  const [popover, setPopover] = useState<null | 'new' | 'sync' | 'theme'>(null)
+  const [popover, setPopover] = useState<null | 'new' | 'sync' | 'theme' | 'menu'>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const newBtnRef = useRef<HTMLButtonElement>(null)
   const syncBtnRef = useRef<HTMLButtonElement>(null)
   const themeBtnRef = useRef<HTMLButtonElement>(null)
+  const logoBtnRef = useRef<HTMLButtonElement>(null)
 
-  // success 状态自动回退（2.5s）
+  // ===== 顶部菜单（来自 TitleBar 逻辑） =====
+  const [menus, setMenus] = useState<MenuData[]>([])
+  const [menuOpenIndex, setMenuOpenIndex] = useState<number | null>(null)
+  const [menuPath, setMenuPath] = useState<MenuPathItem[]>([])
+  const menuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const load = () => {
+      window.inkslateApi.getMenuData().then((data) => setMenus(data || []))
+    }
+    load()
+    const cleanup = window.inkslateApi.onMenu((event) => {
+      if (event === 'menu-rebuild') load()
+    })
+    return () => cleanup()
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!rootRef.current) return
+      if (!rootRef.current.contains(e.target as Node)) {
+        setMenuOpenIndex(null)
+        setMenuPath([])
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const closeMenu = useCallback(() => {
+    setMenuOpenIndex(null)
+    setMenuPath([])
+    setPopover(null)
+  }, [])
+
+  const scheduleMenuClose = useCallback(() => {
+    if (menuCloseTimer.current) clearTimeout(menuCloseTimer.current)
+    menuCloseTimer.current = setTimeout(() => {
+      setMenuOpenIndex(null)
+      setMenuPath([])
+    }, 150)
+  }, [])
+
+  const onMenuItemClick = useCallback((item: MenuItem) => {
+    if (item.type === 'separator' || item.disabled) return
+    if (item.submenu && item.submenu.length > 0) return
+    if (item.id) {
+      window.inkslateApi.clickMenu(item.id, item.arg)
+    }
+    closeMenu()
+  }, [closeMenu])
+
+  const currentMenuItems: MenuItem[] = (() => {
+    if (menuOpenIndex === null) return []
+    return menus[menuOpenIndex]?.submenu || []
+  })()
+
+  const handleLogoClick = () => {
+    if (popover === 'menu') {
+      setPopover(null)
+    } else {
+      setPopover('menu')
+    }
+  }
+
+  // ===== 成功状态自动回退（2.5s） =====
   useEffect(() => {
     if (syncStatus.state !== 'success') return
     const t = setTimeout(() => {
-      // success → 根据 pendingFiles 决定回到 connected / pending
       const pending = (syncStatus.pendingFiles ?? 0) > 0
       useAppStore.getState().setSyncStatus({
         ...syncStatus,
@@ -297,17 +384,10 @@ export function IconSidebar() {
         {/* ===== Group: 帮助 ===== */}
         <button
           className="icon-sidebar-btn"
-          onClick={() => clickMenu('shortcuts')}
-          title="快捷键"
+          onClick={() => clickMenu('settings')}
+          title="设置"
         >
-          <Keyboard size={20} />
-        </button>
-        <button
-          className="icon-sidebar-btn"
-          onClick={() => clickMenu('about')}
-          title="关于"
-        >
-          <Info size={20} />
+          <Settings size={20} />
         </button>
 
         <div className="icon-sidebar-sep" />
@@ -424,7 +504,131 @@ export function IconSidebar() {
         </div>,
         document.body
       )}
+
+      {/* ===== 顶部 Logo 菜单（多级下拉） ===== */}
+      {popover === 'menu' && logoBtnRef.current && createPortal(
+        <div
+          className="icon-sidebar-popover"
+          style={popoverPos(logoBtnRef.current)}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {menus.map((m, menuIdx) => (
+            <div key={menuIdx}>
+              {m.label ? (
+                <div
+                  className="icon-sidebar-popover-item"
+                  style={{ fontWeight: 600, color: 'var(--text-secondary)', cursor: 'default' }}
+                >
+                  {m.label}
+                </div>
+              ) : null}
+              {m.submenu?.map((item, itemIdx) => (
+                item.type === 'separator'
+                  ? <div key={`sep-${itemIdx}`} className="icon-sidebar-popover-sep" />
+                  : <MenuPopoverItem
+                      key={item.id || itemIdx}
+                      item={item}
+                      onClick={() => onMenuItemClick(item)}
+                      onMouseEnterSub={(hasSub: boolean) => {
+                        if (hasSub) {
+                          setMenuPath([{ menuIndex: menuIdx, itemIndex: itemIdx }])
+                        } else {
+                          setMenuPath([])
+                        }
+                      }}
+                      hasSubmenu={!!(item.submenu && item.submenu.length > 0)}
+                      isActive={menuPath[0]?.menuIndex === menuIdx && menuPath[0]?.itemIndex === itemIdx}
+                    />
+              ))}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </>
+  )
+}
+
+/** 菜单项组件 */
+function MenuPopoverItem({
+  item, onClick, onMouseEnterSub, hasSubmenu, isActive
+}: {
+  item: MenuItem
+  onClick: () => void
+  onMouseEnterSub: (hasSub: boolean) => void
+  hasSubmenu: boolean
+  isActive: boolean
+}) {
+  const [showSub, setShowSub] = useState(false)
+
+  return (
+    <div
+      className={`icon-sidebar-popover-item${item.disabled ? ' disabled' : ''}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (item.disabled) return
+        if (hasSubmenu) {
+          setShowSub(true)
+          onMouseEnterSub(true)
+        } else {
+          onClick()
+        }
+      }}
+      onMouseEnter={() => {
+        if (hasSubmenu) {
+          setShowSub(true)
+          onMouseEnterSub(true)
+        }
+      }}
+      onMouseLeave={() => {
+        if (hasSubmenu) {
+          setShowSub(false)
+          onMouseEnterSub(false)
+        }
+      }}
+    >
+      <span className="icon-sidebar-popover-item-inner">
+        {item.type === 'radio' && (
+          <span className="icon-sidebar-radio">
+            {item.checked ? '●' : '○'}
+          </span>
+        )}
+        {item.label}
+      </span>
+      {item.accelerator && <span className="icon-sidebar-popover-hint">{item.accelerator}</span>}
+      {hasSubmenu && <span className="icon-sidebar-arrow">▶</span>}
+    </div>
+  )
+}
+
+/** 软件 Logo SVG 图标：墨与石板」 */
+function InkslateLogo({ size = 24 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ display: 'block' }}
+    >
+      {/* 石板背景：圆角矩形，模拟笔记本/石板 */}
+      <rect x="2" y="2" width="20" height="20" rx="4" fill="var(--accent-color)" fillOpacity="0.15" />
+      <rect x="2" y="2" width="20" height="20" rx="4" stroke="var(--accent-color)" strokeWidth="1.5" strokeOpacity="0.6" />
+
+      {/* 左侧竖线：笔记本装订边 */}
+      <line x1="6" y1="6" x2="6" y2="18" stroke="var(--accent-color)" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.7" />
+
+      {/* 横线1 */}
+      <line x1="9" y1="9" x2="18" y2="9" stroke="var(--accent-color)" strokeWidth="1.2" strokeLinecap="round" />
+      {/* 横线2 */}
+      <line x1="9" y1="12.5" x2="15" y2="12.5" stroke="var(--accent-color)" strokeWidth="1.2" strokeLinecap="round" />
+      {/* 横线3 */}
+      <line x1="9" y1="16" x2="13" y2="16" stroke="var(--accent-color)" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.5" />
+
+      {/* 右下角墨迹点 */}
+      <circle cx="18.5" cy="17.5" r="1.5" fill="var(--accent-color)" fillOpacity="0.4" />
+    </svg>
   )
 }
 

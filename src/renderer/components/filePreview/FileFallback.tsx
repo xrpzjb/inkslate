@@ -21,11 +21,12 @@ function pickIcon(ext: string) {
   return File
 }
 
-export function FileFallback({ noteId, fileName, fileExt, fileSize }: {
+export function FileFallback({ noteId, fileName, fileExt, fileSize, statusHint }: {
   noteId: string
   fileName?: string
   fileExt?: string
   fileSize?: number
+  statusHint?: string
 }) {
   const updateNote = useAppStore(s => s.updateNote)
   const [busy, setBusy] = useState(false)
@@ -109,7 +110,7 @@ export function FileFallback({ noteId, fileName, fileExt, fileSize }: {
           marginTop: 8,
           opacity: 0.7
         }}>
-          此文件类型不支持预览，可另存为或替换为其他文件
+          {statusHint || '此文件类型不支持预览，可另存为或替换为其他文件'}
         </div>
       </div>
 

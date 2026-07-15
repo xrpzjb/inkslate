@@ -3,39 +3,79 @@ import { Download, Loader2 } from 'lucide-react'
 // docx-preview：vanilla JS 库，直接调 renderAsync
 import { renderAsync } from 'docx-preview'
 
+/** renderAsync 在主线程上跑 XML 解析 + DOM 构建，大文档会卡几秒到十几秒。
+ *  - 渲染前用 setTimeout(0) 让出一次主线程，让 spinner / 进度文案先画一帧
+ *  - 渲染用 Promise.race 卡 10s，超时主动 reject
+ *  - 整体用 15s 硬截断兜底，文件再烂也不会让 UI 永远卡死 */
+const RENDER_TIMEOUT_MS = 10_000
+const HARD_TIMEOUT_MS = 15_000
+
 export function DocxPreview({ noteId }: { noteId: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState('正在加载...')
 
   useEffect(() => {
     let cancelled = false
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let hardTimeoutId: ReturnType<typeof setTimeout> | null = null
+    let renderTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const clearTimers = () => {
+      if (hardTimeoutId) { clearTimeout(hardTimeoutId); hardTimeoutId = null }
+      if (renderTimeoutId) { clearTimeout(renderTimeoutId); renderTimeoutId = null }
+    }
+
+    const finishLoading = (errorMsg: string | null = null) => {
+      if (cancelled) return
+      cancelled = true
+      clearTimers()
+      if (errorMsg) setError(errorMsg)
+      setLoading(false)
+    }
+
     const load = async () => {
       setLoading(true)
       setError(null)
-      // 超时兜底：5s 后强制结束 loading，防止 spinner 永久卡住
-      timeoutId = setTimeout(() => {
-        if (!cancelled) {
-          cancelled = true
-          setLoading(false)
-        }
-      }, 5000)
+      setStatus('正在加载文件...')
+
+      // 硬超时：15s 后强制结束 loading（防 renderAsync 在主线程上死循环）
+      hardTimeoutId = setTimeout(() => {
+        finishLoading('文档加载超时（15s），可能是文档过大或格式复杂')
+      }, HARD_TIMEOUT_MS)
+
       try {
+        setStatus('正在读取文件...')
         const data = await window.inkslateApi.fileNote.read(noteId)
         if (cancelled) return
-        clearTimeout(timeoutId!)
+
         if (!data) {
-          setError('文件不存在或无法读取')
-          setLoading(false)
+          finishLoading('文件不存在或无法读取')
           return
         }
+
+        // yield 到事件循环：让 spinner / 进度文案先画一帧，
+        // 避免大文件一上来就堵死主线程，spinner 看着像卡住
+        setStatus('正在解析文档...')
+        await new Promise(r => setTimeout(r, 0))
+        if (cancelled) return
+
         const container = containerRef.current
-        if (!container) return
+        if (!container) {
+          finishLoading('容器未就绪')
+          return
+        }
+
         // 清空旧内容
         container.innerHTML = ''
-        // docx-preview 接收 ArrayBuffer/Blob
-        await renderAsync(data, container, undefined, {
+
+        // yield 100ms 让 pending 事件（如切笔记的 click）先处理
+        await new Promise(r => setTimeout(r, 100))
+        if (cancelled) return
+
+        // renderAsync 单独的超时：10s 卡住就主动 reject，释放主线程
+        setStatus('正在渲染文档...')
+        const renderPromise = renderAsync(data, container, undefined, {
           className: 'docx-container',
           inWrapper: true,
           ignoreWidth: false,
@@ -43,19 +83,27 @@ export function DocxPreview({ noteId }: { noteId: string }) {
           breakPages: true,
           experimental: true
         } as any)
-        if (!cancelled) setLoading(false)
+
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          renderTimeoutId = setTimeout(
+            () => reject(new Error(`文档渲染超时（${RENDER_TIMEOUT_MS / 1000}s），可能是文档过大或格式复杂`)),
+            RENDER_TIMEOUT_MS
+          )
+        })
+
+        await Promise.race([renderPromise, timeoutPromise])
+        finishLoading()
       } catch (e) {
-        if (!cancelled) {
-          console.error('[DocxPreview] render error:', e)
-          setError((e as Error).message || '文档加载失败')
-          setLoading(false)
-        }
+        if (cancelled) return
+        console.error('[DocxPreview] render error:', e)
+        finishLoading((e as Error).message || '文档加载失败')
       }
     }
+
     load()
     return () => {
       cancelled = true
-      if (timeoutId) clearTimeout(timeoutId)
+      clearTimers()
     }
   }, [noteId])
 
@@ -82,6 +130,9 @@ export function DocxPreview({ noteId }: { noteId: string }) {
         flexShrink: 0
       }}>
         <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Word 文档预览</span>
+        {loading && (
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{status}</span>
+        )}
         <div style={{ flex: 1 }} />
         {loading && <Loader2 size={14} className="spin" style={{ color: 'var(--text-tertiary)' }} />}
         <button

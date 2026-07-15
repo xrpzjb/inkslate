@@ -66,6 +66,7 @@ export function StatusBar() {
   const theme = useAppStore(s => s.theme)
   const notes = useAppStore(s => s.notes)
   const currentNote = useAppStore(s => s.currentNote)
+  const updateNote = useAppStore(s => s.updateNote)
   const saveStatus = useAppStore(s => s.saveStatus)
   const sidebarVisible = useAppStore(s => s.sidebarVisible)
   const previewVisible = useAppStore(s => s.previewVisible)
@@ -77,6 +78,11 @@ export function StatusBar() {
   const [syncPopoverOpen, setSyncPopoverOpen] = useState(false)
   const syncBtnRef = useRef<HTMLSpanElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+
+  // 语言切换 popover
+  const [langPopoverOpen, setLangPopoverOpen] = useState(false)
+  const langBtnRef = useRef<HTMLSpanElement>(null)
+  const langPopoverRef = useRef<HTMLDivElement>(null)
 
   const visual = pickSyncVisual(syncStatus)
   const label = syncLabelCompact(visual, syncStatus.pendingFiles)
@@ -114,6 +120,26 @@ export function StatusBar() {
       document.removeEventListener('keydown', onKey)
     }
   }, [syncPopoverOpen])
+
+  // 点击外面 / Esc 关闭语言 popover
+  useEffect(() => {
+    if (!langPopoverOpen) return
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (langBtnRef.current?.contains(target)) return
+      if (langPopoverRef.current?.contains(target)) return
+      setLangPopoverOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLangPopoverOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [langPopoverOpen])
 
   // 右下角的侧栏/编辑器/预览切换按钮：只有 markdown/html 笔记才需要
   // —— code/url/file/richtext 笔记的布局是固定的（editor/preview 二选一强制），
@@ -156,6 +182,44 @@ export function StatusBar() {
 
   const clickMenu = (id: string) => window.inkslateApi.clickMenu(id)
 
+  // 代码笔记的 language 切换：仅在 code 类型时显示
+  const LANG_OPTIONS: { id: string; label: string }[] = [
+    { id: 'plaintext', label: '纯文本' },
+    { id: 'javascript', label: 'JavaScript' },
+    { id: 'typescript', label: 'TypeScript' },
+    { id: 'python', label: 'Python' },
+    { id: 'java', label: 'Java' },
+    { id: 'go', label: 'Go' },
+    { id: 'rust', label: 'Rust' },
+    { id: 'c', label: 'C' },
+    { id: 'cpp', label: 'C++' },
+    { id: 'csharp', label: 'C#' },
+    { id: 'ruby', label: 'Ruby' },
+    { id: 'php', label: 'PHP' },
+    { id: 'html', label: 'HTML' },
+    { id: 'css', label: 'CSS' },
+    { id: 'json', label: 'JSON' },
+    { id: 'xml', label: 'XML' },
+    { id: 'yaml', label: 'YAML' },
+    { id: 'markdown', label: 'Markdown' },
+    { id: 'shell', label: 'Shell' },
+    { id: 'sql', label: 'SQL' },
+    { id: 'kotlin', label: 'Kotlin' },
+    { id: 'swift', label: 'Swift' },
+    { id: 'dart', label: 'Dart' }
+  ]
+  const currentLangLabel = (() => {
+    if (currentNote?.format !== 'code') return null
+    const id = (currentNote.language ?? 'plaintext').toLowerCase()
+    return LANG_OPTIONS.find(o => o.id === id)?.label ?? currentNote.language ?? '纯文本'
+  })()
+  const handlePickLang = (langId: string) => {
+    if (!currentNote || currentNote.format !== 'code') return
+    setLangPopoverOpen(false)
+    if ((currentNote.language ?? 'plaintext').toLowerCase() === langId) return
+    updateNote(currentNote.id, { language: langId as any })
+  }
+
   // popover 位置：在 sync 按钮正上方，避免被 StatusBar 切掉
   const popoverPos = (): React.CSSProperties | undefined => {
     const btn = syncBtnRef.current
@@ -169,6 +233,19 @@ export function StatusBar() {
     }
   }
 
+  // 语言 popover 位置：在 lang 按钮正上方，右对齐
+  const langPopoverPos = (): React.CSSProperties | undefined => {
+    const btn = langBtnRef.current
+    if (!btn) return undefined
+    const rect = btn.getBoundingClientRect()
+    return {
+      position: 'fixed',
+      bottom: window.innerHeight - rect.top + 6,
+      right: Math.max(0, window.innerWidth - rect.right),
+      zIndex: 99999
+    }
+  }
+
   return (
     <div style={{
       height: 24,
@@ -176,8 +253,7 @@ export function StatusBar() {
       alignItems: 'center',
       justifyContent: 'space-between',
       padding: '0 12px',
-      borderTop: '1px solid var(--border-color)',
-      background: 'var(--bg-tertiary)',
+      backgroundColor: 'var(--bg-tertiary)',
       fontSize: 11,
       color: 'var(--text-tertiary)',
       userSelect: 'none'
@@ -207,6 +283,23 @@ export function StatusBar() {
         )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* 当前笔记的编程语言：仅 code 类型显示，点击切换 */}
+        {currentLangLabel && (
+          <span
+            ref={langBtnRef}
+            title="切换代码语言"
+            onClick={() => setLangPopoverOpen(o => !o)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              cursor: 'pointer',
+              color: langPopoverOpen ? 'var(--text-primary)' : 'inherit'
+            }}
+          >
+            语言: {currentLangLabel}
+          </span>
+        )}
         <span>主题: {getThemeLabel(theme)}</span>
         {/* 同步状态指示器：可点击查看详情/触发操作 */}
         <span
@@ -353,6 +446,31 @@ export function StatusBar() {
         document.body
       )}
 
+      {/* 语言切换 popover：列在 lang 按钮正上方 */}
+      {langPopoverOpen && langBtnRef.current && createPortal(
+        <div
+          ref={langPopoverRef}
+          className="statusbar-lang-popover"
+          style={langPopoverPos()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {LANG_OPTIONS.map(opt => {
+            const isCurrent = (currentNote?.language ?? 'plaintext').toLowerCase() === opt.id
+            return (
+              <div
+                key={opt.id}
+                className={`statusbar-lang-item ${isCurrent ? 'active' : ''}`}
+                onClick={() => handlePickLang(opt.id)}
+              >
+                <span>{opt.label}</span>
+                {isCurrent && <span style={{ color: 'var(--accent-color)' }}>●</span>}
+              </div>
+            )
+          })}
+        </div>,
+        document.body
+      )}
+
       <style>{statusbarCss}</style>
     </div>
   )
@@ -435,5 +553,37 @@ const statusbarCss = `
     color: var(--text-tertiary);
     font-size: 10px;
     font-family: ui-monospace, monospace;
+  }
+
+  /* 语言切换 popover */
+  .statusbar-lang-popover {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    padding: 4px;
+    min-width: 160px;
+    max-height: 320px;
+    overflow-y: auto;
+    font-size: 12px;
+    color: var(--text-primary);
+    animation: statusbarSyncFadeIn 0.12s ease;
+  }
+  .statusbar-lang-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-primary);
+  }
+  .statusbar-lang-item:hover {
+    background: var(--bg-hover);
+  }
+  .statusbar-lang-item.active {
+    color: var(--accent-color);
+    font-weight: 500;
   }
 `

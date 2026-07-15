@@ -74,7 +74,17 @@ export interface GitCommitEntry {
 
 export interface AppSettings {
   theme: 'light' | 'dark' | 'auto' | 'solarized' | 'cyberpunk' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral'
+  /** 编辑器独立暗色模式（仅在 light 默认主题下生效）：true 强制编辑器用 dark 配色 */
+  editorDark?: boolean
+  /** 全局 UI 字体选项 id（对应 SettingsDialog FONT_OPTIONS） */
+  fontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   fontSize: number
+  /** 编辑区域字体选项 id，不设置则跟随全局 fontFamily */
+  editorFontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
+  /** 树状图字体选项 id，不设置则跟随全局 fontFamily */
+  treeFontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
+  /** 树状图字体大小（px） */
+  treeFontSize?: number
   layout: {
     sidebarWidth: number
     sidebarVisible: boolean

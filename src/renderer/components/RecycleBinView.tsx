@@ -43,7 +43,7 @@ export function RecycleBinView() {
       {/* 顶部：标题 + 提示 */}
       <div style={{
         padding: '20px 32px 12px',
-        borderBottom: '1px solid var(--border-color)',
+        backgroundColor: 'var(--bg-primary)',
         flexShrink: 0
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -76,7 +76,7 @@ export function RecycleBinView() {
         display: 'flex',
         gap: 0,
         padding: '0 32px',
-        borderBottom: '1px solid var(--border-color)',
+        backgroundColor: 'var(--bg-secondary)',
         flexShrink: 0
       }}>
         <TabButton active={tab === 'notes'} onClick={() => setTab('notes')} count={deletedNotes.length}>

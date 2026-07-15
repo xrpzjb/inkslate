@@ -12,6 +12,7 @@ let db: Database.Database | null = null
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'auto',
   fontSize: 14,
+  treeFontSize: 14,
   layout: {
     sidebarWidth: 260,
     sidebarVisible: true,

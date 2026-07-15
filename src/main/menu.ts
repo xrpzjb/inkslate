@@ -147,8 +147,9 @@ export function buildMenuData(): MenuData[] {
     {
       label: '帮助',
       submenu: [
-        { id: 'about', label: '关于 墨与石板' },
-        { id: 'shortcuts', label: '快捷键' }
+        { id: 'settings', label: '设置...' },
+        { id: 'shortcuts', label: '快捷键' },
+        { id: 'about', label: '关于 墨与石板' }
       ]
     }
   ]
@@ -239,14 +240,10 @@ export async function handleMenuClick(id: string, arg: any) {
     case 'git-settings': sendToRenderer('menu:git-settings'); return
     // 帮助
     case 'about':
-      dialog.showMessageBox({
-        type: 'info',
-        title: '关于 墨与石板',
-        message: '墨与石板',
-        detail: `一款支持 HTML 显示的 Markdown 桌面笔记应用\n\n作者：heimin\n本项目全程使用 minimax m3 开发\n\n版本: ${app.getVersion()}`
-      })
+      sendToRenderer('menu:show-about')
       return
     case 'shortcuts': sendToRenderer('menu:show-shortcuts'); return
+    case 'settings': sendToRenderer('menu:show-settings'); return
   }
 }
 

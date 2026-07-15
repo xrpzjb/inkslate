@@ -3,8 +3,7 @@
   display: flex;
   align-items: center;
   height: 32px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
   user-select: none;
   position: relative;
   flex-shrink: 0;

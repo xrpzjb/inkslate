@@ -533,7 +533,7 @@ export function Sidebar() {
             >
               {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </span>
-            <span style={{ marginRight: 4, fontSize: 14, display: 'inline-flex', color: 'var(--text-secondary)' }}>
+            <span style={{ marginRight: 4, display: 'inline-flex', color: 'var(--text-secondary)' }}>
               {renderNotebookIcon(node.icon, isExpanded)}
             </span>
             {isRenaming ? (
@@ -727,7 +727,7 @@ export function Sidebar() {
 
                     <MenuItem icon={<FolderPlus size={14} />} label="新建子笔记本" onClick={() => handleNewNotebook(contextMenu.node.id)} />
 
-          <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+          <div style={{ height: 6 }} />
 
           <MenuItem icon={<Edit3 size={14} />} label="重命名" onClick={() => handleRename(contextMenu.node)} />
 
@@ -754,7 +754,7 @@ export function Sidebar() {
           {/* 导出仅对笔记有效；右键笔记本时不显示 */}
           {contextMenu.node.type === 'note' && (
             <>
-              <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+              <div style={{ height: 6 }} />
               <MenuItem
                 icon={<FileCode size={14} />}
                 label="导出为 HTML..."
@@ -774,7 +774,7 @@ export function Sidebar() {
             return contextMenu.node.type === 'note' && note && !['url', 'file'].includes(note.format)
           })() && (
             <>
-              <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+              <div style={{ height: 6 }} />
               <MenuItem
                 icon={<History size={14} />}
                 label="Git 历史快照"
@@ -792,7 +792,7 @@ export function Sidebar() {
             </>
           )}
 
-          <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+          <div style={{ height: 6 }} />
 
           <MenuItem icon={<Trash2 size={14} />} label="删除" onClick={() => handleDelete(contextMenu.node)} danger />
         </div>
@@ -812,19 +812,25 @@ export function Sidebar() {
         .tree-row {
           display: flex;
           align-items: center;
-          height: 30px;
-          font-size: 14px;
+          height: calc(var(--tree-font-size, 14px) + 16px);
+          font-size: var(--tree-font-size, 14px);
+          font-family: var(--tree-font, var(--font-family));
           color: var(--text-primary);
           cursor: pointer;
           user-select: none;
           gap: 4px;
         }
+        .tree-row svg {
+          width: 1em;
+          height: 1em;
+        }
         .tree-row:hover {
           background-color: var(--bg-hover);
         }
         .tree-row.selected {
-          background-color: var(--bg-active);
-          color: var(--accent-color);
+          background-color: #ffffff;
+          border-bottom: 1px solid #E4E4E4;
+          box-shadow: 0 2px 6px rgba(228, 228, 228, 0.6);
         }
         .tree-label {
           flex: 1;

@@ -165,6 +165,11 @@ export function Layout() {
   const isRichText = currentNote?.format === 'richtext'
   const isCode = currentNote?.format === 'code'
   const effectivePreviewVisible = previewVisible && !isRichText && !isCode
+  // url/file 笔记不渲染 Editor（见下方条件渲染），editor 这一列物理上为空。
+  // 即便全局 editorVisible=true（上一个 md 笔记打开过），editor 也不占位。
+  // 真正的"editor 是否占位"要参考这个。
+  const isNoEditorFormat = currentNote?.format === 'url' || currentNote?.format === 'file'
+  const editorEffectivelyVisible = editorVisible && !isNoEditorFormat
 
   // 拖动 max：保证编辑器至少有 240px 可见，预览至少有 200px 可见（隐藏时给 0）
   // —— 物理上"挤不掉"另一栏
@@ -217,33 +222,34 @@ export function Layout() {
         className={`layout-sidebar ${!sidebarVisible ? 'collapsed' : ''}`}
         style={{ width: sidebarVisible ? sidebarWidth : 0 }}
       >
-        <div className="panel-header" ref={sidebarHeaderRef} style={{ position: 'relative' }}>
-          {/* 搜索框 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 6, padding: '0 8px', flex: 1, height: 28 }}>
-            <Search size={13} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+        <div className="panel-header" ref={sidebarHeaderRef} style={{ position: 'relative', padding: '4px 10px' }}>
+          {/* 搜索框：直接作为 panel-header 内容，高度撑满 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', padding: '0 4px', flex: 1, height: 36, boxSizing: 'border-box' }}>
             <input
               ref={searchInputRef}
               value={searchQuery}
               onChange={handleSearchChange}
               onKeyDown={handleSearchKeyDown}
-              placeholder="搜索..."
+              placeholder="快速搜索"
               style={{
                 flex: 1,
                 border: 'none',
                 background: 'transparent',
-                padding: '4px 0',
+                padding: '5px 0',
                 fontSize: 13,
                 color: 'var(--text-primary)',
                 outline: 'none',
                 minWidth: 0
               }}
             />
-            {searchQuery && (
+            {searchQuery ? (
               <X
-                size={13}
+                size={14}
                 style={{ color: 'var(--text-tertiary)', cursor: 'pointer', flexShrink: 0 }}
                 onClick={() => { setSearchQuery(''); setSearchResults([]) }}
               />
+            ) : (
+              <Search size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
             )}
           </div>
           {/* 搜索结果弹窗：居中显示 */}
@@ -266,8 +272,8 @@ export function Layout() {
                 padding: '4px 0'
               }}
             >
-              <div style={{ padding: '4px 10px 6px', fontSize: 11, color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-color)', marginBottom: 4 }}>
-                找到 {searchResults.length} 条结果
+              <div style={{ padding: '4px 10px 6px', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+                快速搜索: {searchResults.length} 条结果
               </div>
               {searchResults.map(note => {
                 const notebook = notebooks.find(nb => nb.id === note.notebookId)
@@ -348,12 +354,10 @@ export function Layout() {
 
                     <div
                       ref={previewDividerRef}
-                      className="layout-divider"
+                      className="layout-divider right"
                       style={{
-                        // 编辑器隐藏时 divider 不可见也不可拖 —— preview 已接管整块
-                        // 编辑器显示但 preview 隐藏时也不可拖
-                        visibility: (effectivePreviewVisible && editorVisible) ? 'visible' : 'hidden',
-                        pointerEvents: (effectivePreviewVisible && editorVisible) ? 'auto' : 'none'
+                        visibility: (effectivePreviewVisible && editorEffectivelyVisible) ? 'visible' : 'hidden',
+                        pointerEvents: (effectivePreviewVisible && editorEffectivelyVisible) ? 'auto' : 'none'
                       }}
                     />
 
@@ -362,19 +366,21 @@ export function Layout() {
                       className={`layout-preview ${!effectivePreviewVisible ? 'collapsed' : ''}`}
                       style={{
                         // 关键设计：
-                        //  - editor 显示 + preview 显示：preview 用 previewWidth，preview-divider 可拖
-                        //  - editor 隐藏 + preview 显示：preview 用 flex: 1 接管右侧全部空间，
-                        //    左边界保持在 preview-divider 位置不动（preview-divider 仍可见位置），
-                        //    但 divider 不可拖（见上面 visibility 设置）
+                        //  - editor 实际占位 + preview 显示：preview 用 previewWidth，preview-divider 可拖
+                        //  - editor 不占位（editorVisible=false 或 url/file 格式）+ preview 显示：
+                        //    preview 用 flex: 1 接管右侧全部空间，左边界保持在 preview-divider 位置不动，
+                        //    divider 不可拖（见上面 visibility 设置）
                         //  - preview 隐藏：preview width 0
+                        // —— 修复：之前只看 editorVisible，导致 MD 打开 editor 后切到 url/file 标签，
+                        //    preview 还卡在 previewWidth 不肯填满，右侧半屏空白
                         width: effectivePreviewVisible
-                          ? (editorVisible ? previewWidth : 'auto')
+                          ? (editorEffectivelyVisible ? previewWidth : 'auto')
                           : 0,
-                        flex: effectivePreviewVisible ? (editorVisible ? 'none' : 1) : 'none',
+                        flex: effectivePreviewVisible ? (editorEffectivelyVisible ? 'none' : 1) : 'none',
                         minWidth: 0
                       }}
                     >
-                      {effectivePreviewVisible && <Preview />}
+                      {effectivePreviewVisible && <Preview key={currentNote?.id} />}
                     </div>
                   </div>
                 </div>

@@ -17,20 +17,11 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-sidebar);
+  background-color: var(--bg-tertiary);
   overflow: hidden;
-  /* 背景向右延伸 1px 盖住分隔线，消除白缝 */
   position: relative;
-}
-
-.layout-sidebar::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: -1px;
-  bottom: 0;
-  width: 1px;
-  background-color: var(--bg-sidebar);
+  /* 跟 editor / preview 之间的 border-left 对齐，sidebar 右侧也加一条 1px 分隔线 */
+  border-right: 1px solid var(--border-color);
 }
 
 .layout-editor {
@@ -40,11 +31,13 @@
   background-color: var(--bg-primary);
   overflow: hidden;
   min-width: 0;
+  border-right: 1px solid var(--border-color);
 }
 
 .layout-editor.collapsed {
   width: 0 !important;
   flex: none !important;
+  border-right: none !important;
 }
 
 .layout-preview {
@@ -53,49 +46,63 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-secondary);
+  background-color: var(--bg-preview);
   overflow: hidden;
-  /* transition 在收起/展开时由 .collapsed 类单独控制 */
+  /* 边线交给 layout-editor（border-right） / layout-sidebar（border-right） / tab-bar（border-bottom） 画，
+   * preview 自身不画，避免和上面的线在 file/url 笔记时叠成 2px */
 }
 
+/* 拖拽手柄：0 宽度，纯命中区，视觉分隔线由 panel 的 border 提供 */
 .layout-divider {
-  /* hit area 11px（左右各溢出 5px 到相邻 panel），视觉上仍只显示中间 1px */
-  width: 11px;
-  margin: 0 -5px;
+  width: 0;
+  margin: 0;
   cursor: col-resize;
   flex-shrink: 0;
   position: relative;
   z-index: 2;
-  background: transparent;
 }
 
+/* 命中区：向两侧扩展 5px */
 .layout-divider::before {
   content: '';
   position: absolute;
   top: 0;
-  left: 5px;
+  left: -5px;
+  width: 11px;
+  bottom: 0;
+  pointer-events: auto;
+}
+
+/* hover 高亮线：覆盖在 panel border 之上，默认透明，hover 时淡入 */
+.layout-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -1px;
   width: 1px;
   bottom: 0;
-  background-color: var(--border-color);
-  transition: background-color var(--transition);
-  pointer-events: none;
-}
-
-.layout-divider:hover::before {
   background-color: var(--accent-color);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
 }
 
-/* 区域标题栏 - 横线延伸接上左右 divider */
+.layout-divider:hover::after {
+  opacity: 0.5;
+}
+
+/* 右侧 panel（preview）的 border-left 需要不同偏移 */
+.layout-divider.right::after {
+  left: 0;
+}
+
+/* 区域标题栏 - 无边框线，靠背景色自然分区 */
 .panel-header {
-  height: var(--header-height);
-  min-height: var(--header-height);
-  max-height: var(--header-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--bg-tertiary);
+  padding: 0 10px;
+  background-color: var(--bg-tertiary) !important;
   flex-shrink: 0;
   user-select: none;
   box-sizing: border-box;
@@ -136,11 +143,10 @@
 .layout-sidebar.collapsed {
   width: 0 !important;
   border-right: none;
-  transition: width var(--transition);
+  transition: width var(--transition), border-color var(--transition);
 }
 
 .layout-preview.collapsed {
   width: 0 !important;
-  border-left: none;
-  transition: width var(--transition);
+  display: none !important;
 }

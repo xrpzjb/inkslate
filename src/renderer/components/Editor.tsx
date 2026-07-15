@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
-import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
 import { toast } from './Toast'
@@ -16,6 +16,7 @@ export function Editor() {
   const updateNote = useAppStore(s => s.updateNote)
   const updateCurrentNoteDraft = useAppStore(s => s.updateCurrentNoteDraft)
   const settings = useAppStore(s => s.settings)
+  const updateSettings = useAppStore(s => s.updateSettings)
 
   const [content, setContent] = useState(() => currentNote?.content ?? '')
   const previewVisible = useAppStore(s => s.previewVisible)
@@ -308,8 +309,7 @@ export function Editor() {
         height: 'var(--header-height)',
         minHeight: 'var(--header-height)',
         padding: '0 16px',
-        borderBottom: '1px solid var(--border-color)',
-        background: 'var(--bg-tertiary)',
+        backgroundColor: '#fff',
         flexShrink: 0,
         boxSizing: 'border-box',
         marginLeft: -1,
@@ -350,6 +350,36 @@ export function Editor() {
             <History size={16} />
           </button>
         )}
+        {/* 美化（格式化代码）：仅 code 类型且 language 在 CodeEditor 支持列表内才显示 */}
+        {currentNote && currentNote.format === 'code' && isFormatableLanguage(currentNote.language) && (
+          <button
+            className="panel-action-btn"
+            onClick={handleFormatCode}
+            title={`美化代码（${getLangLabel(currentNote.language)}）`}
+          >
+            <Wand2 size={16} />
+          </button>
+        )}
+        {/* 保存：仅对非文件/非网址笔记显示（与 History 同步） */}
+        {currentNote && !['url', 'file'].includes(currentNote.format) && (
+          <button
+            className="panel-action-btn"
+            onClick={handleSave}
+            title="保存 (Ctrl+S)"
+          >
+            <Save size={16} />
+          </button>
+        )}
+        {/* 编辑器暗色模式切换：仅在 light 默认主题下显示 */}
+        {settings?.theme === 'light' && (
+          <button
+            className="panel-action-btn"
+            onClick={() => updateSettings({ editorDark: !(settings?.editorDark === true) })}
+            title={settings?.editorDark === true ? '切换到默认编辑器' : '切换到暗黑编辑器'}
+          >
+            {settings?.editorDark === true ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        )}
       </div>
 
             {(currentNote.format === 'markdown' || currentNote.format === 'html') && (
@@ -357,8 +387,7 @@ export function Editor() {
           display: 'flex',
           gap: 2,
           padding: '4px 8px',
-          borderBottom: '1px solid var(--border-color)',
-          background: 'var(--bg-tertiary)',
+          backgroundColor: 'var(--bg-tertiary)',
           flexShrink: 0,
           marginLeft: -1,
           marginRight: -1,
@@ -398,13 +427,6 @@ export function Editor() {
             insertText(t, '', '', t.indexOf('E ='))
           }} />
           <MermaidMenu onInsert={insertMermaid} />
-          <div style={{ flex: 1 }} />
-          <ToolbarBtn
-            icon={<Wand2 size={14} />}
-            title="格式化代码（按 language 自动检测）"
-            onClick={handleFormatCode}
-          />
-          <ToolbarBtn icon={<Save size={14} />} title="保存 (Ctrl+S)" onClick={handleSave} />
         </div>
       )}
 
@@ -444,31 +466,6 @@ export function Editor() {
           </div>
         </ModalShell>,
         document.body
-      )}
-
-      {currentNote.format === 'code' && (
-        <div style={{
-          display: 'flex',
-          gap: 2,
-          padding: '4px 8px',
-          borderBottom: '1px solid var(--border-color)',
-          background: 'var(--bg-tertiary)',
-          flexShrink: 0,
-          alignItems: 'center',
-          marginLeft: -1,
-          marginRight: -1
-        }}>
-          <span style={{ fontSize: 11, color: 'var(--text-tertiary)', padding: '0 8px' }}>
-            语言: {getLangLabel(currentNote.language)}
-          </span>
-          <div style={{ flex: 1 }} />
-          <ToolbarBtn
-            icon={<Wand2 size={14} />}
-            title="格式化代码 (按当前语言)"
-            onClick={handleFormatCode}
-          />
-          <ToolbarBtn icon={<Save size={14} />} title="保存 (Ctrl+S)" onClick={handleSave} />
-        </div>
       )}
 
       {currentNote.format === 'url' && (
@@ -782,8 +779,7 @@ function RichTextEditor({ value, onChange, fontSize }: {
         display: 'flex',
         gap: 2,
         padding: '4px 8px',
-        borderBottom: '1px solid var(--border-color)',
-        background: 'var(--bg-tertiary)',
+        backgroundColor: 'var(--bg-tertiary)',
         flexShrink: 0,
         flexWrap: 'wrap'
       }}>
@@ -1195,6 +1191,12 @@ function getLangLabel(lang?: string): string {
     kotlin: 'Kotlin', swift: 'Swift', dart: 'Dart'
   }
   return map[lang ?? ''] ?? lang ?? '纯文本'
+}
+
+/** CodeEditor.formatCode 支持美化的语言（与 CodeEditor.tsx 内的 if 分支保持同步） */
+const FORMATABLE_LANGS = new Set(['json', 'sql', 'javascript', 'typescript', 'html', 'css'])
+function isFormatableLanguage(lang?: string): boolean {
+  return !!lang && FORMATABLE_LANGS.has(lang.toLowerCase())
 }
 
 /** 图表按钮：点击展开 6 种 mermaid 模板下拉 */
