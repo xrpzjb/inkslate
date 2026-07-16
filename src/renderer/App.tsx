@@ -317,8 +317,8 @@ export default function App() {
               // 即使失败也刷一下（让 pendingFiles 反映提交/拉取后的状态）
               await refreshSyncStatus()
             } else {
-              setSyncStatus({ state: 'success', message: r.message, lastSyncAt: Date.now() })
-              toast.success(r.message)
+              setSyncStatus({ state: 'success', message: '同步成功', lastSyncAt: Date.now() })
+              toast.success('同步成功')
               // 如果 pull 阶段拉到了新数据，重建树
               if (r.pulled) {
                 await useAppStore.getState().loadNotebooks()

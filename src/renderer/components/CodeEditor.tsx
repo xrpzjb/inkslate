@@ -418,10 +418,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const fontSizeCompartment = useRef(new Compartment())
   // settings.theme 可以是 'auto'，但 editorThemes 只有具体 12 种配色，'auto' 落到 'light'
   const settingsTheme = useAppStore(s => s.settings?.theme)
-  // 编辑器独立暗色模式：默认关闭，关闭时用 settingsTheme；开启时强制用 'dark'
+  // 编辑器独立暗色模式：仅对浅色主题生效；深色主题本身已是暗色，无需覆盖
   const editorDark = useAppStore(s => s.settings?.editorDark === true)
   const theme: AppThemeId = ((settingsTheme === 'auto' || !settingsTheme || !(settingsTheme in editorThemes)) ? 'light' : settingsTheme) as AppThemeId
-  const effectiveTheme: AppThemeId = editorDark ? 'dark' : theme
+  const themeIsDark = selectionColors[theme] != null && ['dark', 'cyberpunk', 'dracula', 'forest'].includes(theme)
+  const effectiveTheme: AppThemeId = (editorDark && !themeIsDark) ? 'dark' : theme
 
   useImperativeHandle(ref, () => ({
     insertText: (before: string, after = '', placeholder = '', cursorOffset?: number) => {

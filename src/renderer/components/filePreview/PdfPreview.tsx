@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
-// pdfjs-dist v6：用 .mjs 入口；worker 用动态 URL 加载
 import * as pdfjsLib from 'pdfjs-dist'
-// worker 文件：直接 import URL，vite 会打包
-// @ts-ignore - pdfjs-dist build/workers 没有类型声明
+// @ts-ignore
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
-// 设置 worker（只设一次）
 ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = PdfWorker
 
-/** PDF 解析 + 渲染都在主线程；大文件会卡几秒。整体用 20s 硬截断兜底 */
-const HARD_TIMEOUT_MS = 20_000
+const HARD_TIMEOUT_MS = 30_000
 
 export function PdfPreview({ noteId }: { noteId: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -20,6 +16,7 @@ export function PdfPreview({ noteId }: { noteId: string }) {
   const [currentPage, setCurrentPage] = useState(1)
   const [status, setStatus] = useState('正在加载...')
   const pdfDocRef = useRef<any>(null)
+  const loadingTaskRef = useRef<any>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -67,6 +64,7 @@ export function PdfPreview({ noteId }: { noteId: string }) {
         if (cancelled) return
 
         const loadingTask = (pdfjsLib as any).getDocument({ data })
+        loadingTaskRef.current = loadingTask
         const pdf = await loadingTask.promise
         if (cancelled) {
           pdf.destroy()
@@ -98,6 +96,8 @@ export function PdfPreview({ noteId }: { noteId: string }) {
       cancelled = true
       clearTimers()
       if (renderTask) try { renderTask.cancel() } catch {}
+      if (loadingTaskRef.current) try { loadingTaskRef.current.destroy() } catch {}
+      loadingTaskRef.current = null
       if (pdfDocRef.current) try { pdfDocRef.current.destroy() } catch {}
       pdfDocRef.current = null
     }
