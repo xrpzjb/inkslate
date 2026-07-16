@@ -446,4 +446,192 @@ ${payload?.html ?? ''}
   ipcMain.handle(IPC_CHANNELS.GIT_GET_WORKDIR, async (): Promise<string> => {
     return gitMgr.getWorkDir()
   })
+
+  // ============ AI ============
+  const aiTools = [
+    {
+      type: 'function',
+      function: {
+        name: 'scan_dir',
+        description: '扫描指定目录，返回目录下的文件和子目录列表',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: '要扫描的目录绝对路径，不传则扫描笔记根目录' }
+          },
+          required: []
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'grep_dir',
+        description: '递归搜索目录下所有文本文件，按正则匹配行。用于批量查找代码中的接口、函数等',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: '要搜索的目录绝对路径' },
+            pattern: { type: 'string', description: '正则表达式，如 @GetMapping|@PostMapping' }
+          },
+          required: ['path', 'pattern']
+        }
+      }
+    }
+  ]
+
+  const execAiTool = (name: string, args: any): string => {
+    switch (name) {
+      case 'scan_dir': {
+        const dir = args.path || getFilesDir()
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true })
+          return entries.map(e => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`).join('\n') || '(空目录)'
+        } catch (e: any) {
+          return `扫描失败: ${e.message}`
+        }
+      }
+      case 'read_file': {
+        try {
+          if (!fs.existsSync(args.path)) return `文件不存在: ${args.path}`
+          const content = fs.readFileSync(args.path, 'utf-8')
+          if (content.length > 50000) return content.slice(0, 50000) + '\n...(内容过长已截断)'
+          return content
+        } catch (e: any) {
+          return `读取失败: ${e.message}`
+        }
+      }
+      case 'grep_dir': {
+        try {
+          const dir = args.path
+          const pattern = new RegExp(args.pattern, 'i')
+          const results: string[] = []
+          const walk = (d: string) => {
+            const entries = fs.readdirSync(d, { withFileTypes: true })
+            for (const e of entries) {
+              const fp = path.join(d, e.name)
+              if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== '.git') {
+                walk(fp)
+              } else if (e.isFile() && results.length < 2000) {
+                try {
+                  const content = fs.readFileSync(fp, 'utf-8')
+                  const lines = content.split('\n')
+                  for (let i = 0; i < lines.length && results.length < 2000; i++) {
+                    if (pattern.test(lines[i])) {
+                      results.push(`${fp}:${i + 1}  ${lines[i].trim()}`)
+                    }
+                  }
+                } catch {}
+              }
+            }
+          }
+          walk(dir)
+          return results.join('\n') || '(无匹配)'
+        } catch (e: any) {
+          return `搜索失败: ${e.message}`
+        }
+      }
+      default:
+        return `未知工具: ${name}`
+    }
+  }
+
+  const parseTextToolCalls = (text: string): Array<{ name: string; args: any }> => {
+    const results: Array<{ name: string; args: any }> = []
+    // 匹配 scan_dir("...")、read_file("...")、grep_dir("...", "...")
+    // 支持双引号、单引号、反引号
+    const re = /(scan_dir|read_file|grep_dir)\s*\(\s*["'`]([^"'`]*)["'`](?:\s*,\s*["'`]([^"'`]*)["'`])?\s*\)/g
+    let m
+    while ((m = re.exec(text)) !== null) {
+      const name = m[1]
+      const arg1 = m[2]
+      const arg2 = m[3]
+      if (name === 'grep_dir') {
+        results.push({ name, args: { path: arg1, pattern: arg2 || '.' } })
+      } else {
+        results.push({ name, args: name === 'scan_dir' ? { path: arg1 } : { path: arg1 } })
+      }
+    }
+    return results
+  }
+
+  ipcMain.handle(IPC_CHANNELS.AI_CHAT, async (_, messages: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string }>): Promise<string | null> => {
+    const settings = dbApi.getSettings()
+    const ai = settings.ai
+    if (!ai?.configured || !ai?.apiUrl || !ai?.apiKey) {
+      throw new Error('AI 未配置，请在设置中配置 AI 模型')
+    }
+
+    try {
+      let currentMessages = [...messages]
+
+      for (let round = 0; round < 100; round++) {
+        const resp = await fetch(ai.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${ai.apiKey}`
+          },
+          body: JSON.stringify({
+            model: ai.model || 'deepseek-v4-flash',
+            messages: currentMessages,
+            tools: aiTools,
+            tool_choice: 'auto',
+            stream: false
+          })
+        })
+
+        if (!resp.ok) {
+          const err = await resp.text().catch(() => resp.statusText)
+          throw new Error(`AI API 错误 (${resp.status}): ${err}`)
+        }
+
+        const data = await resp.json() as any
+        const choice = data?.choices?.[0]
+        const msg = choice?.message
+
+        if (!msg) throw new Error('AI 返回数据异常')
+
+        // 正式 function calling
+        if (msg.tool_calls && msg.tool_calls.length > 0) {
+          currentMessages.push(msg)
+          for (const tc of msg.tool_calls) {
+            const fn = tc.function
+            const result = execAiTool(fn.name, JSON.parse(fn.arguments || '{}'))
+            currentMessages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: result
+            })
+          }
+          continue
+        }
+
+        // 兜底：文本中提取工具调用
+        const textCalls = parseTextToolCalls(msg.content || '')
+        if (textCalls.length > 0) {
+          currentMessages.push(msg)
+          for (const tc of textCalls) {
+            const result = execAiTool(tc.name, tc.args || {})
+            currentMessages.push({
+              role: 'tool',
+              tool_call_id: `text_${tc.name}`,
+              content: result
+            })
+          }
+          continue
+        }
+
+        return msg.content ?? null
+      }
+
+      return '(AI 工具调用轮次超限)'
+    } catch (e: any) {
+      throw new Error(e?.message ?? 'AI 请求失败')
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AI_CONFIGURE, async (_, config: AppSettings['ai']): Promise<void> => {
+    await dbApi.updateSettings({ ai: config } as any)
+  })
 }

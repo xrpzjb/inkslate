@@ -5,20 +5,9 @@
   height: 44px;
   background-color: var(--bg-tertiary) !important;
   border-bottom: 1px solid var(--border-color);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  overflow: hidden;
   flex-shrink: 0;
   user-select: none;
-}
-
-.tab-bar::-webkit-scrollbar {
-  height: 4px;
-}
-
-.tab-bar::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 2px;
 }
 
 /* 单个 tab */
@@ -103,4 +92,36 @@
 .tab-close:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+/* ============ "更多" 按钮 ============ */
+.tab-more {
+  min-width: unset;
+  width: 36px;
+  justify-content: center;
+  padding: 0;
+}
+
+.tab-more-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  z-index: 9999;
+  padding: 4px;
+}
+
+.tab-more-popover .tab-item {
+  height: 36px;
+  border-radius: 4px;
+}
+
+.tab-more-popover .tab-item.active {
+  background: var(--accent-bg);
 }

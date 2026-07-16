@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
+// worker 文件没有 import/export，但后缀是 .mjs，pdfjs 内部 new Worker(url) 不带 type:'module'
+// → 浏览器将 .mjs 当模块加载失败 → 回退主线程。用 ?raw 读内容 → Blob URL → 经典 Worker 正确加载
 // @ts-ignore
-import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import workerCode from 'pdfjs-dist/build/pdf.worker.min.mjs?raw'
 
-;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = PdfWorker
+try {
+  const blob = new Blob([workerCode], { type: 'application/javascript' })
+  ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob)
+} catch {
+  // @ts-ignore
+  import('pdfjs-dist/build/pdf.worker.min.mjs?url').then(m => {
+    ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = m.default
+  })
+}
 
 const HARD_TIMEOUT_MS = 30_000
 

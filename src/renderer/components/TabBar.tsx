@@ -1,9 +1,8 @@
 import { useRef, useState, useEffect } from 'react'
-import { X, Link2, Paperclip, Globe } from 'lucide-react'
+import { X, Link2, Paperclip, Globe, ChevronDown } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import './TabBar.css'
 
-/** Markdown 笔记图标 */
 function MarkdownIcon({ size = 13 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -15,7 +14,6 @@ function MarkdownIcon({ size = 13 }: { size?: number }) {
   )
 }
 
-/** 代码笔记图标 */
 function CodeIcon({ size = 13 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -26,7 +24,6 @@ function CodeIcon({ size = 13 }: { size?: number }) {
   )
 }
 
-/** 富文本笔记图标 */
 function RichTextIcon({ size = 13 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -36,7 +33,6 @@ function RichTextIcon({ size = 13 }: { size?: number }) {
   )
 }
 
-/** 根据笔记格式返回对应图标组件 */
 function TabFormatIcon({ format, size = 13 }: { format: string; size?: number }) {
   switch (format) {
     case 'markdown': return <MarkdownIcon size={size} />
@@ -49,7 +45,6 @@ function TabFormatIcon({ format, size = 13 }: { format: string; size?: number })
   }
 }
 
-/** 各格式图标颜色 */
 const FORMAT_COLORS: Record<string, string> = {
   markdown: '#7d8590',
   html:     '#e67e22',
@@ -58,6 +53,8 @@ const FORMAT_COLORS: Record<string, string> = {
   url:      '#0ea5e9',
   file:     '#16a34a',
 }
+
+const TAB_WIDTH = 160 // 大概每个 tab 的宽度
 
 export function TabBar() {
   const openTabs = useAppStore(s => s.openTabs)
@@ -73,25 +70,45 @@ export function TabBar() {
 
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
-  const scrollerRef = useRef<HTMLDivElement>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const barRef = useRef<HTMLDivElement>(null)
+  const moreRef = useRef<HTMLDivElement>(null)
 
-  // 激活标签变化时自动滚到可见
+  // 计算能显示几个 tab
+  const [visibleCount, setVisibleCount] = useState(tabs.length)
   useEffect(() => {
-    if (!activeTabId || !scrollerRef.current) return
-    const el = scrollerRef.current.querySelector(`[data-tab-id="${activeTabId}"]`) as HTMLElement | null
+    const el = barRef.current
     if (!el) return
-    const parent = scrollerRef.current
-    const elLeft = el.offsetLeft
-    const elRight = elLeft + el.offsetWidth
-    if (elLeft < parent.scrollLeft) {
-      parent.scrollLeft = elLeft
-    } else if (elRight > parent.scrollLeft + parent.clientWidth) {
-      parent.scrollLeft = elRight - parent.clientWidth
+    const calc = () => {
+      const w = el.clientWidth
+      const max = Math.max(1, Math.floor((w - 44) / TAB_WIDTH))
+      setVisibleCount(max)
     }
-  }, [activeTabId, tabs.length])
+    calc()
+    const ro = new ResizeObserver(calc)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [tabs.length])
+
+  const visibleTabs = tabs.slice(0, visibleCount)
+  const overflowTabs = tabs.slice(visibleCount)
+
+  // 点外面关闭 more 列表
+  useEffect(() => {
+    if (!moreOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (moreRef.current?.contains(e.target as Node)) return
+      setMoreOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [moreOpen])
 
   const handleClick = (id: string) => {
-    if (id !== activeTabId) activateTab(id)
+    if (id !== activeTabId) {
+      activateTab(id)
+      setMoreOpen(false)
+    }
   }
 
   const handleMiddleClick = (e: React.MouseEvent, id: string) => {
@@ -104,7 +121,6 @@ export function TabBar() {
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDragId(id)
     e.dataTransfer.effectAllowed = 'move'
-    // 必须 setData 才能在 Firefox 里 drag
     e.dataTransfer.setData('text/plain', id)
   }
 
@@ -113,10 +129,6 @@ export function TabBar() {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
     setDropTargetId(id)
-  }
-
-  const handleDragLeave = (id: string) => {
-    if (dropTargetId === id) setDropTargetId(null)
   }
 
   const handleDrop = (e: React.DragEvent, dropId: string) => {
@@ -140,49 +152,66 @@ export function TabBar() {
 
   if (tabs.length === 0) return null
 
+  const renderTab = (tab: typeof tabs[0]) => {
+    const isActive = tab.id === activeTabId
+    const isDropTarget = dropTargetId === tab.id && dragId && dragId !== tab.id
+    return (
+      <div
+        key={tab.id}
+        data-tab-id={tab.id}
+        className={
+          'tab-item'
+          + (isActive ? ' active' : '')
+          + (isDropTarget ? ' drop-target' : '')
+          + (dragId === tab.id ? ' dragging' : '')
+        }
+        onClick={() => handleClick(tab.id)}
+        onMouseDown={(e) => handleMiddleClick(e, tab.id)}
+        draggable
+        onDragStart={(e) => handleDragStart(e, tab.id)}
+        onDragOver={(e) => handleDragOver(e, tab.id)}
+        onDragLeave={() => setDropTargetId(null)}
+        onDrop={(e) => handleDrop(e, tab.id)}
+        onDragEnd={handleDragEnd}
+        title={tab.title || '未命名'}
+      >
+        <span style={{ color: FORMAT_COLORS[tab.format] ?? '#7d8590', display: 'inline-flex', flexShrink: 0 }}>
+          <TabFormatIcon format={tab.format} size={13} />
+        </span>
+        <span className="tab-title">{tab.title || '未命名'}</span>
+        <button
+          className="tab-close"
+          onClick={(e) => {
+            e.stopPropagation()
+            closeTab(tab.id)
+          }}
+          title="关闭标签"
+          tabIndex={-1}
+        >
+          <X size={12} />
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div className="tab-bar" ref={scrollerRef}>
-      {tabs.map(tab => {
-        const isActive = tab.id === activeTabId
-        const isDropTarget = dropTargetId === tab.id && dragId && dragId !== tab.id
-        return (
+    <div className="tab-bar" ref={barRef}>
+      {visibleTabs.map(renderTab)}
+      {overflowTabs.length > 0 && (
+        <div ref={moreRef} style={{ position: 'relative', flexShrink: 0 }}>
           <div
-            key={tab.id}
-            data-tab-id={tab.id}
-            className={
-              'tab-item'
-              + (isActive ? ' active' : '')
-              + (isDropTarget ? ' drop-target' : '')
-              + (dragId === tab.id ? ' dragging' : '')
-            }
-            onClick={() => handleClick(tab.id)}
-            onMouseDown={(e) => handleMiddleClick(e, tab.id)}
-            draggable
-            onDragStart={(e) => handleDragStart(e, tab.id)}
-            onDragOver={(e) => handleDragOver(e, tab.id)}
-            onDragLeave={() => handleDragLeave(tab.id)}
-            onDrop={(e) => handleDrop(e, tab.id)}
-            onDragEnd={handleDragEnd}
-            title={tab.title || '未命名'}
+            className={'tab-item tab-more' + (moreOpen ? ' active' : '')}
+            onClick={() => setMoreOpen(!moreOpen)}
           >
-            <span style={{ color: FORMAT_COLORS[tab.format] ?? '#7d8590', display: 'inline-flex', flexShrink: 0 }}>
-              <TabFormatIcon format={tab.format} size={13} />
-            </span>
-            <span className="tab-title">{tab.title || '未命名'}</span>
-            <button
-              className="tab-close"
-              onClick={(e) => {
-                e.stopPropagation()
-                closeTab(tab.id)
-              }}
-              title="关闭标签"
-              tabIndex={-1}
-            >
-              <X size={12} />
-            </button>
+            <ChevronDown size={14} />
           </div>
-        )
-      })}
+          {moreOpen && (
+            <div className="tab-more-popover">
+              {overflowTabs.map(renderTab)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

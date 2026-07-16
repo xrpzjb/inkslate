@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, Settings as SettingsIcon, Type, Keyboard, Info } from 'lucide-react'
+import { X, Settings as SettingsIcon, Type, Keyboard, Info, Bot } from 'lucide-react'
 import { useAppStore } from '../store/app'
 
 /** 全局字体选项 */
@@ -66,6 +66,26 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [treeFontFamily, setTreeFontFamily] = useState<string>(settings?.treeFontFamily ?? fontFamily)
   const [treeFontSize, setTreeFontSize] = useState<number>(settings?.treeFontSize ?? 14)
   const [showTreeCount, setShowTreeCount] = useState<boolean>(settings?.showTreeCount !== false)
+  // AI 设置
+  const aiPresets: Record<string, { label: string; url: string; model: string }> = {
+    deepseek:   { label: 'DeepSeek',               url: 'https://api.deepseek.com/chat/completions',              model: 'deepseek-v4-flash' },
+    qwen:       { label: '通义千问 (Qwen)',         url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus' },
+    glm:        { label: '智谱 GLM',                url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4-flash' },
+    moonshot:   { label: '月之暗面 (Kimi)',         url: 'https://api.moonshot.cn/v1/chat/completions',           model: 'moonshot-v1-8k' },
+    openai:     { label: 'OpenAI',                  url: 'https://api.openai.com/v1/chat/completions',            model: 'gpt-4o-mini' },
+    custom:     { label: '自定义 (OpenAI 兼容)',    url: '',                                                     model: '' },
+  }
+  const aiModels: Record<string, string[]> = {
+    deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    qwen:     ['qwen-turbo', 'qwen-plus', 'qwen-max', 'qwen-long'],
+    glm:      ['glm-4-flash', 'glm-4-plus', 'glm-4-air', 'glm-4-long'],
+    moonshot: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    openai:   ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
+  }
+  const [aiProvider, setAiProvider] = useState(settings?.ai?.provider ?? 'deepseek')
+  const [aiUrl, setAiUrl] = useState(settings?.ai?.apiUrl ?? aiPresets['deepseek'].url)
+  const [aiModel, setAiModel] = useState(settings?.ai?.model ?? aiPresets['deepseek'].model)
+  const [aiKey, setAiKey] = useState(settings?.ai?.apiKey ?? '')
 
   const persist = (patch: Record<string, unknown>) => {
     const cur = useAppStore.getState().settings
@@ -111,6 +131,21 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     persist({ showTreeCount: next })
   }
 
+  const handleAiProviderChange = (prov: string) => {
+    setAiProvider(prov)
+    const preset = aiPresets[prov]
+    if (preset) {
+      setAiUrl(preset.url)
+      setAiModel(preset.model)
+    }
+  }
+
+  const saveAiConfig = () => {
+    const ai = { provider: aiProvider, apiUrl: aiUrl, model: aiModel, apiKey: aiKey, configured: !!(aiUrl && aiKey) } as any
+    persist({ ai })
+    window.inkslateApi.ai.configure(ai).catch(() => {})
+  }
+
   const openShortcuts = () => {
     window.dispatchEvent(new CustomEvent('inkslate:open-shortcuts'))
     onClose()
@@ -119,6 +154,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const openAbout = () => {
     window.dispatchEvent(new CustomEvent('inkslate:open-about'))
     onClose()
+  }
+
+  const aiInputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border-color)',
+    background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13,
+    outline: 'none', marginBottom: 8, boxSizing: 'border-box'
   }
 
   return (
@@ -162,6 +203,48 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <input type="checkbox" checked={showTreeCount} onChange={handleTreeCountToggle} />
               <span className="settings-toggle-slider" />
             </label>
+          </div>
+
+          {/* AI 大模型 */}
+          <div className="settings-section">
+            <h3 className="shortcuts-group-title"><Bot size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />AI 写作</h3>
+            <div style={{ marginBottom: 8 }}>
+              <select className="settings-font-select" value={aiProvider} onChange={(e) => handleAiProviderChange(e.target.value)}>
+                {Object.entries(aiPresets).map(([key, p]) => (
+                  <option key={key} value={key}>{p.label}</option>
+                ))}
+              </select>
+            </div>
+            <input
+              value={aiUrl}
+              onChange={(e) => setAiUrl(e.target.value)}
+              onBlur={saveAiConfig}
+              placeholder="API 地址"
+              style={aiInputStyle}
+            />
+            <div style={{ marginBottom: 8 }}>
+              <input
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                onBlur={saveAiConfig}
+                placeholder="模型名称或自定义输入"
+                list="ai-model-list"
+                style={aiInputStyle}
+              />
+              <datalist id="ai-model-list">
+                {(aiModels[aiProvider] || []).map(m => <option key={m} value={m} />)}
+              </datalist>
+            </div>
+            <input
+              value={aiKey}
+              onChange={(e) => setAiKey(e.target.value)}
+              onBlur={saveAiConfig}
+              placeholder="API Key"
+              type="password"
+              autoComplete="off"
+              style={aiInputStyle}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>支持 DeepSeek / 通义千问 / GLM / Kimi 等国内大模型</div>
           </div>
 
           {/* 快捷键入口 */}

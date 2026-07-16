@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react'
+import { useEffect, useRef, useState, useCallback, useLayoutEffect, forwardRef, useImperativeHandle } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { appThemes } from '../themes'
-import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2 } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
 import { toast } from './Toast'
@@ -29,6 +29,7 @@ export function Editor() {
   const titleTimerRef = useRef<NodeJS.Timeout | null>(null)
   const contentTimerRef = useRef<NodeJS.Timeout | null>(null)
   const codeEditorRef = useRef<import('./CodeEditor').CodeEditorHandle>(null)
+  const richtextEditorRef = useRef<{ setHTML: (html: string) => void }>(null)
 
   // 关键防御：跟踪"本组件正在为哪个 note 持有本地 title/content 草稿"。
   // 切笔记时：旧 note 的草稿用完即弃，新 note 的同步效果跑完后才允许写入。
@@ -196,6 +197,25 @@ export function Editor() {
     }
   }
 
+  // CodeEditor 的 onSave 在 useEffect 内闭包，不会随 title/content 变化更新。
+  // 用 ref 持有最新值，传给 CodeEditor 的始终是最新值。
+  const contentRef = useRef(content)
+  contentRef.current = content
+  const titleRef = useRef(title)
+  titleRef.current = title
+  const currentNoteRef = useRef(currentNote)
+  currentNoteRef.current = currentNote
+
+  const stableSave = useCallback(() => {
+    const cn = currentNoteRef.current
+    if (!cn || cn.id !== editingNoteIdRef.current) return
+    if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
+    if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
+    setSaveStatus({ saving: true })
+    updateNote(cn.id, { content: contentRef.current, title: titleRef.current })
+      .finally(() => setSaveStatus({ saving: false }))
+  }, [])
+
   // 监听菜单触发的保存事件
   useEffect(() => {
     const onSaveEvent = () => handleSave()
@@ -209,6 +229,10 @@ export function Editor() {
 
   // ============ 表格弹窗 ============
   const [tableDlg, setTableDlg] = useState({ open: false, rows: 3, cols: 3 })
+  // AI 对话框
+  const [aiOpen, setAiOpen] = useState(false)
+  // 按笔记 ID 维度存储对话历史
+  const [aiConvs, setAiConvs] = useState<Record<string, Array<{ role: 'user' | 'assistant'; content: string }>>>({})
 
   const confirmMarkdownTable = useCallback(() => {
     const rows = Math.max(2, Math.min(20, tableDlg.rows))
@@ -345,7 +369,7 @@ export function Editor() {
             outline: 'none'
           }}
         />
-                {currentNote?.format !== 'richtext' && !previewVisible && (
+                {currentNote?.format !== 'richtext' && currentNote?.format !== 'code' && !previewVisible && (
           <button
             className="panel-action-btn"
             onClick={togglePreview}
@@ -362,6 +386,16 @@ export function Editor() {
             title="Git 历史快照"
           >
             <History size={16} />
+          </button>
+        )}
+        {/* AI 写作 */}
+        {currentNote && !['url', 'file'].includes(currentNote.format) && (
+          <button
+            className="panel-action-btn"
+            onClick={() => setAiOpen(true)}
+            title="AI 写作"
+          >
+            <Bot size={16} />
           </button>
         )}
         {/* 美化（格式化代码）：仅 code 类型且 language 在 CodeEditor 支持列表内才显示 */}
@@ -393,8 +427,34 @@ export function Editor() {
           >
             {settings?.editorDark === true ? <Sun size={16} /> : <Moon size={16} />}
           </button>
-        )}
-      </div>
+      )}
+      {aiOpen && createPortal(
+        <AIDialog
+          noteId={currentNote?.id ?? ''}
+          noteTitle={currentNote?.title ?? ''}
+          noteContent={content}
+          noteFormat={currentNote?.format ?? 'markdown'}
+          history={currentNote?.id ? (aiConvs[currentNote.id] || []) : []}
+          onHistoryChange={(h) => {
+            if (currentNote?.id) setAiConvs(prev => ({ ...prev, [currentNote.id]: h }))
+          }}
+          onClose={() => setAiOpen(false)}
+          onInsert={(text) => {
+            codeEditorRef.current?.insertText(text, '', '', undefined)
+            setAiOpen(false)
+          }}
+          onReplace={(text) => {
+            if (currentNote?.format === 'richtext') {
+              richtextEditorRef.current?.setHTML(text)
+            } else {
+              setContent(text)
+            }
+            setAiOpen(false)
+          }}
+        />,
+        document.body
+      )}
+    </div>
 
             {(currentNote.format === 'markdown' || currentNote.format === 'html') && (
         <div style={{
@@ -529,6 +589,7 @@ export function Editor() {
           minHeight: 0
         }}>
           <RichTextEditor
+            ref={richtextEditorRef}
             value={content}
             onChange={setContent}
             fontSize={fontSize}
@@ -550,7 +611,7 @@ export function Editor() {
             fontSize={fontSize}
             format={currentNote.format as 'markdown' | 'html' | 'code'}
             language={currentNote.language}
-            onSave={handleSave}
+            onSave={stableSave}
           />
         </div>
       )}
@@ -560,14 +621,24 @@ export function Editor() {
 
 /**
  */
-function RichTextEditor({ value, onChange, fontSize, editorDark }: {
+const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
   value: string
   onChange: (v: string) => void
   fontSize: number
   editorDark: boolean
-}) {
+}>(function RichTextEditor({ value, onChange, fontSize, editorDark }, ref) {
   const editorRef = useRef<HTMLDivElement>(null)
   const isInternalUpdate = useRef(false)
+
+  useImperativeHandle(ref, () => ({
+    setHTML: (html: string) => {
+      if (editorRef.current) {
+        isInternalUpdate.current = true
+        editorRef.current.innerHTML = html
+        onChange(htmlToValue(editorRef.current.innerHTML))
+      }
+    }
+  }))
 
   // 弹窗状态
   const [linkDlg, setLinkDlg] = useState({ open: false, url: '', text: '' })
@@ -1002,7 +1073,7 @@ function RichTextEditor({ value, onChange, fontSize, editorDark }: {
       />
     </div>
   )
-}
+})
 
 function escapeHtml(s: string): string {
   return s
@@ -1292,4 +1363,179 @@ function MermaidMenu({ onInsert }: { onInsert: (type: string) => void }) {
       )}
     </div>
   )
+}
+
+function AIDialog({ noteId, noteTitle, noteContent, noteFormat, history, onHistoryChange, onClose, onInsert, onReplace }: {
+  noteId: string
+  noteTitle: string
+  noteContent: string
+  noteFormat: string
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+  onHistoryChange: (h: Array<{ role: 'user' | 'assistant'; content: string }>) => void
+  onClose: () => void
+  onInsert: (text: string) => void
+  onReplace: (text: string) => void
+}) {
+  const [prompt, setPrompt] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const taRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    taRef.current?.focus()
+  }, [])
+
+  const handleSend = async () => {
+    if (!prompt.trim() || loading) return
+    const userMsg = prompt.trim()
+    setPrompt('')
+    setLoading(true)
+    setError('')
+
+    const newHistory = [...history, { role: 'user' as const, content: userMsg }]
+    onHistoryChange(newHistory)
+
+    try {
+      const formatHint = noteFormat === 'html' ? '你必须输出纯 HTML 代码（不要用 ```html 包裹），直接输出正文，不要闲聊。'
+        : noteFormat === 'richtext' ? '你必须输出纯 HTML（不要用代码块包裹），包含表格、列表等直接用 <table><h1><ul> 等 HTML 标签，不要用 Markdown 语法。直接输出正文。'
+        : noteFormat === 'code' ? '你必须输出纯代码，不要用代码块包裹，只输出代码本身。'
+        : '使用 Markdown 格式输出，直接输出正文，不要闲聊。'
+
+      const systemMsg = {
+        role: 'system',
+        content: `你是 Inkslate 的 AI 方案助手。你拥有 scan_dir、read_file、grep_dir 三个工具，可以访问用户的本地文件系统。
+
+高效工作流：
+1. 先用 scan_dir 了解目录结构
+2. 用 grep_dir 批量搜索，一次获取所有匹配行
+3. 仅在需要详细信息时才用 read_file 读取单个文件
+4. 在单条回复中尽量批量调用工具
+
+输出规则：
+- ${formatHint}
+- 不要输出"数据很全面"、"我将更新到笔记中"等闲聊
+- 不要说你"无法访问本地文件系统"——你有工具
+- 不要要求用户自己执行命令
+
+当前笔记：${noteTitle ? `"${noteTitle}"` : '(未命名)'}${noteContent ? `\n现有内容：\`\`\`\n${noteContent.slice(0, 2000)}${noteContent.length > 2000 ? '\n...(省略)' : ''}\n\`\`\`` : ''}`
+      }
+      const messages = [systemMsg, ...newHistory.map(m => ({ role: m.role, content: m.content }))]
+      const res = await window.inkslateApi.ai.chat(messages)
+      onHistoryChange([...newHistory, { role: 'assistant', content: res || 'AI 未返回内容' }])
+    } catch (e: any) {
+      setError(e?.message || '请求失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const lastAssistant = [...history].reverse().find(m => m.role === 'assistant')?.content
+
+  const stripFence = (text: string) => {
+    // 去掉开头 ```xxx\n 和结尾 \n```
+    return text.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '')
+  }
+
+  return (
+    <div className="search-dialog-overlay" onMouseDown={onClose}>
+      <div className="search-dialog" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ width: 750, maxHeight: '88vh', minHeight: '60vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="search-dialog-input-row" style={{ flexShrink: 0, justifyContent: 'space-between', padding: '8px 16px' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+            <Bot size={16} style={{ color: 'var(--accent-color)' }} />AI 写作
+          </span>
+          {history.length > 0 && (
+            <button onClick={() => { onHistoryChange([]); setError('') }} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
+              清空对话
+            </button>
+          )}
+        </div>
+
+        <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: '8px 16px' }}>
+          {history.length === 0 && !loading && (
+            <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-tertiary)', fontSize: 13 }}>
+              输入提示词开始 AI 写作，多轮对话保留上下文
+            </div>
+          )}
+          {history.map((msg, i) => (
+            <div key={i} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>
+                {msg.role === 'user' ? '你' : 'AI'}
+              </div>
+              <div style={{
+                fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.7,
+                whiteSpace: 'pre-wrap', padding: '8px 12px', borderRadius: 6,
+                background: msg.role === 'user' ? 'var(--bg-secondary)' : 'var(--accent-bg)',
+                border: msg.role === 'user' ? '1px solid var(--border-color)' : '1px solid transparent'
+              }}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, color: 'var(--text-tertiary)', fontSize: 13 }}>
+              <Loader2 size={16} style={{ animation: 'ai-spin 1s linear infinite' }} />
+              思考中...
+              <style>{`@keyframes ai-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+            </div>
+          )}
+          {error && (
+            <div style={{ padding: '8px 12px', color: '#ef4444', fontSize: 13, borderRadius: 6, background: 'rgba(239,68,68,0.08)' }}>
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div style={{ flexShrink: 0, borderTop: '1px solid var(--border-color)', padding: '6px 12px', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <textarea
+            ref={taRef}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+            }}
+            placeholder="输入提示词，Enter 发送，Shift+Enter 换行"
+            rows={2}
+            style={{
+              flex: 1, border: 'none', background: 'transparent', color: 'var(--text-primary)',
+              fontSize: 14, outline: 'none', resize: 'none', fontFamily: 'var(--font-family)',
+              lineHeight: 1.5, minWidth: 0
+            }}
+          />
+          <button
+            onClick={handleSend}
+            disabled={!prompt.trim() || loading}
+            style={{
+              padding: '6px 16px', borderRadius: 6, border: 'none',
+              background: loading ? 'var(--bg-hover)' : 'var(--accent-color)',
+              color: loading ? 'var(--text-tertiary)' : '#fff',
+              fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+              flexShrink: 0, marginBottom: 2
+            }}
+          >
+            {loading ? '...' : '发送'}
+          </button>
+        </div>
+
+        {lastAssistant && (
+          <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
+            <button onClick={() => onInsert(stripFence(lastAssistant!))} style={aiBtnStyle('var(--accent-color)')}>
+              插入到光标位置
+            </button>
+            <button onClick={() => onReplace(stripFence(lastAssistant!))} style={aiBtnStyle('#22c55e')}>
+              替换全部内容
+            </button>
+            <div style={{ flex: 1 }} />
+            <button onClick={onClose} style={{ ...aiBtnStyle('transparent'), color: 'var(--text-primary)' }}>关闭</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function aiBtnStyle(bg: string): React.CSSProperties {
+  return {
+    padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border-color)',
+    background: bg, color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 500
+  }
 }

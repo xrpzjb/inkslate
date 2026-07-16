@@ -108,6 +108,16 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.GIT_SHOW_FILE, oid, filepath)
   },
 
+  /** AI 大模型 */
+  ai: {
+    /** 发送对话消息，返回 AI 回复 */
+    chat: (messages: Array<{ role: string; content: string }>): Promise<string | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AI_CHAT, messages),
+    /** 保存 AI 配置 */
+    configure: (config: any): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AI_CONFIGURE, config)
+  },
+
   recycleBin: {
     purgeExpired: (): Promise<{ notes: number; notebooks: number }> =>
       ipcRenderer.invoke(IPC_CHANNELS.RECYCLE_BIN_PURGE_EXPIRED),

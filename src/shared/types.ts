@@ -140,6 +140,19 @@ export interface AppSettings {
     /** 最近一次同步（push/pull 任一成功）的时间戳，毫秒 */
     lastSyncAt?: number
   }
+  /** AI 大模型配置 */
+  ai?: {
+    /** 提供商 */
+    provider: 'openai' | 'deepseek' | 'qwen' | 'glm' | 'ernie' | 'moonshot' | 'custom'
+    /** API 地址 */
+    apiUrl: string
+    /** 模型名 */
+    model: string
+    /** API Key */
+    apiKey: string
+    /** 是否已配置 */
+    configured: boolean
+  }
 }
 
 export interface SyncStatus {
@@ -241,5 +254,8 @@ export const IPC_CHANNELS = {
   GIT_CLONE: 'git:clone',
   GIT_LOG: 'git:log',
   GIT_SHOW_FILE: 'git:show-file',
-  GIT_GET_WORKDIR: 'git:get-workdir'
+  GIT_GET_WORKDIR: 'git:get-workdir',
+  // AI
+  AI_CHAT: 'ai:chat',
+  AI_CONFIGURE: 'ai:configure'
 } as const
