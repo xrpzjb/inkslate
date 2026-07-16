@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import * as LucideIcons from 'lucide-react'
 import { X, ChevronLeft, ChevronRight } from 'lucide-react'
+import * as PhosphorIcons from '@phosphor-icons/react'
 import { useAppStore } from '../store/app'
 import { toast } from './Toast'
 import './IconPicker.css'
@@ -14,19 +15,23 @@ import './IconPicker.css'
  */
 const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
   {
+    name: '全部',
+    icons: [] as string[] // 运行时填充全部图标
+  },
+  {
     name: '常用',
     icons: [
-      'Book', 'Star', 'Heart', 'Home', 'Folder', 'FolderOpen', 'Archive',
-      'Inbox', 'Lightbulb', 'Notebook', 'Bookmark', 'FileText', 'Briefcase',
-      'Palette', 'Globe', 'Settings', 'User', 'Search', 'Bell', 'Calendar',
+      'Bookmark', 'Star', 'Heart', 'Home', 'Folder', 'FolderOpen', 'Archive',
+      'Inbox', 'Lightbulb', 'NotebookText', 'BookText', 'FileText', 'BriefcaseBusiness',
+      'Palette', 'Globe', 'Settings', 'UserRound', 'Search', 'Bell', 'CalendarRange',
       'Clock', 'Flag', 'Tag', 'Pin', 'Rocket', 'Zap', 'Target', 'Award'
     ]
   },
   {
     name: '文档',
     icons: [
-      'FileText', 'File', 'FilePlus', 'FileEdit', 'FileSpreadsheet',
-      'FileImage', 'Notebook', 'Book', 'BookOpen', 'BookMarked',
+      'FileText', 'File', 'FilePlus', 'FilePen', 'FileSpreadsheet',
+      'FileImage', 'NotebookText', 'BookOpenText', 'Book', 'BookMarked',
       'Clipboard', 'ClipboardList', 'ScrollText', 'Newspaper',
       'Pen', 'PenTool', 'Eraser', 'Printer', 'Paperclip', 'Link'
     ]
@@ -138,6 +143,20 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
       'Pointer', 'Handshake', 'HeartHandshake',
       'Clap', 'Wave', 'Scan', 'ScanFace'
     ]
+  },
+  {
+    name: '实心',
+    icons: [
+      'ph:MonitorPlayFill', 'ph:HeartFill', 'ph:StarFill', 'ph:BookmarkFill',
+      'ph:FolderFill', 'ph:FileTextFill', 'ph:HouseFill', 'ph:LightbulbFill',
+      'ph:GlobeFill', 'ph:EnvelopeFill', 'ph:ChatCircleFill', 'ph:PhoneFill',
+      'ph:CameraFill', 'ph:ImageFill', 'ph:MusicNoteFill', 'ph:FilmStripFill',
+      'ph:FlagFill', 'ph:PushPinFill', 'ph:MapPinFill', 'ph:CompassFill',
+      'ph:WrenchFill', 'ph:GearFill', 'ph:PackageFill', 'ph:ClipboardTextFill',
+      'ph:SunFill', 'ph:MoonFill', 'ph:CloudRainFill', 'ph:UmbrellaFill',
+      'ph:CoffeeFill', 'ph:PizzaFill', 'ph:CarFill', 'ph:AirplaneFill',
+      'ph:CatFill', 'ph:DogFill', 'ph:ThumbsUpFill', 'ph:HandHeartFill'
+    ]
   }
 ]
 
@@ -156,10 +175,21 @@ export function IconPicker({ notebookId, currentIcon, position, onClose }: IconP
   const wrapRef = useRef<HTMLDivElement>(null)
   const catScrollRef = useRef<HTMLDivElement>(null)
 
-  const currentCategory = ICON_CATEGORIES[categoryIdx]
-  const icons = currentCategory?.icons ?? []
+  // 运行时填充"全部"标签页：合并所有分类图标并去重
+  const allIcons = useMemo(() => {
+    const set = new Set<string>()
+    for (let i = 1; i < ICON_CATEGORIES.length; i++) {
+      for (const icon of ICON_CATEGORIES[i].icons) {
+        set.add(icon)
+      }
+    }
+    return Array.from(set)
+  }, [])
 
-  // 点击外面关闭
+  const currentCategory = categoryIdx === 0
+    ? { name: '全部', icons: allIcons }
+    : ICON_CATEGORIES[categoryIdx]
+  const icons = currentCategory?.icons ?? []
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onClose()
@@ -233,7 +263,9 @@ export function IconPicker({ notebookId, currentIcon, position, onClose }: IconP
 
       <div className="notebook-icon-picker-grid">
         {icons.map(name => {
-          const Icon = (LucideIcons as any)[name]
+          const Icon = name.startsWith('ph:')
+            ? (PhosphorIcons as any)[name.slice(3)]
+            : (LucideIcons as any)[name]
           if (!Icon) return null
           const isSelected = selected === name
           return (

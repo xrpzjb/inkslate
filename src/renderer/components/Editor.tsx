@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon } from 'lucide-react'
@@ -35,7 +35,8 @@ export function Editor() {
   const lastDraftRef = useRef<{ id: string; title: string; content: string } | null>(null)
 
   // 同步当前笔记（切换时 + 外部重命名时）
-  useEffect(() => {
+  // 用 useLayoutEffect：在浏览器绘制前同步 content/title，避免切换到笔记时先闪一帧空白
+  useLayoutEffect(() => {
     if (currentNote) {
       // 切到新 note 前：把上一个 note 的草稿 flush 一次（清掉 timer 立即写库）
       const last = lastDraftRef.current
@@ -51,7 +52,8 @@ export function Editor() {
         }
         // 异步 flush（不 await，避免阻塞 UI）
         // —— 把上一个 note 的最终草稿一次性写入库
-        if (last.title !== undefined) {
+        // 防御：不保存空标题，不覆盖已有标题
+        if (last.title !== undefined && last.title.trim()) {
           updateNote(last.id, { title: last.title }).catch(() => {})
         }
         if (last.content !== undefined) {
@@ -59,10 +61,10 @@ export function Editor() {
         }
       }
 
-      setContent(currentNote.content)
-      setTitle(currentNote.title)
+      setContent(currentNote.content ?? '')
+      setTitle(currentNote.title ?? '')
       editingNoteIdRef.current = currentNote.id
-      lastDraftRef.current = { id: currentNote.id, title: currentNote.title, content: currentNote.content }
+      lastDraftRef.current = { id: currentNote.id, title: currentNote.title ?? '', content: currentNote.content ?? '' }
     } else {
       // 切到无选中状态：也 flush 一次
       const last = lastDraftRef.current
@@ -103,13 +105,15 @@ export function Editor() {
   }, [currentNote?.title])
 
   // 即时同步草稿到 store（不进库），让 Preview 实时看到最新内容
+  // 仅响应用户编辑（content / title 变化），不随 currentNote 对象变动触发，
+  // 避免异步 fetch 返回的新对象覆盖掉已正确渲染的本地草稿。
   useEffect(() => {
     if (!currentNote) return
     // 关键 guard：只为本组件正在编辑的 note 同步草稿
     if (currentNote.id !== editingNoteIdRef.current) return
     if (content === currentNote.content && title === currentNote.title) return
     updateCurrentNoteDraft({ content, title })
-  }, [content, title, currentNote])
+  }, [content, title])
 
   // 标题：立即写库（单行输入，成本低，用户期望即时反馈）
   useEffect(() => {
@@ -120,6 +124,8 @@ export function Editor() {
     titleTimerRef.current = setTimeout(() => {
       // 二次 guard：timer 触发时再次确认还在编辑同一个 note
       if (currentNote.id !== editingNoteIdRef.current) return
+      // 防御：不保存空标题
+      if (!title?.trim()) return
       // 只传 title，避免覆盖 content
       updateNote(currentNote.id, { title }).catch(() => { /* 错误已在 updateNote 内部处理 */ })
     }, 300) // 300ms 防抖，避免连续按键触发多次写入
@@ -301,7 +307,7 @@ export function Editor() {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }} data-editor-dark={settings?.editorDark === true ? 'true' : undefined}>
             <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -309,11 +315,16 @@ export function Editor() {
         height: 'var(--header-height)',
         minHeight: 'var(--header-height)',
         padding: '0 16px',
-        backgroundColor: '#fff',
+        backgroundColor: settings?.editorDark ? '#1e1e1e' : 'var(--bg-primary)',
         flexShrink: 0,
         boxSizing: 'border-box',
         marginLeft: -1,
-        marginRight: -1
+        marginRight: -1,
+        position: 'relative',
+        zIndex: 1,
+        boxShadow: currentNote?.format === 'code'
+          ? (settings?.editorDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)')
+          : undefined
       }}>
         <input
           value={title}
@@ -327,7 +338,7 @@ export function Editor() {
             fontSize: 16,
             fontWeight: 600,
             padding: 0,
-            color: 'var(--text-primary)',
+            color: settings?.editorDark ? '#e8e8e8' : 'var(--text-primary)',
             outline: 'none'
           }}
         />
@@ -387,11 +398,14 @@ export function Editor() {
           display: 'flex',
           gap: 2,
           padding: '4px 8px',
-          backgroundColor: 'var(--bg-tertiary)',
+          backgroundColor: settings?.editorDark ? '#1e1e1e' : 'var(--bg-primary)',
           flexShrink: 0,
           marginLeft: -1,
           marginRight: -1,
-          flexWrap: 'wrap'
+          flexWrap: 'wrap',
+          position: 'relative',
+          zIndex: 1,
+          boxShadow: settings?.editorDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)'
         }}>
           <ToolbarBtn icon={<Bold size={14} />} title="粗体 (Ctrl+B)" onClick={() => insertText('**', '**', 'bold')} />
           <ToolbarBtn icon={<Italic size={14} />} title="斜体 (Ctrl+I)" onClick={() => insertText('*', '*', 'italic')} />
@@ -474,7 +488,7 @@ export function Editor() {
           gap: 8,
           padding: '8px 12px',
           borderBottom: '1px solid var(--border-color)',
-          background: 'var(--bg-tertiary)',
+          background: settings?.editorDark ? '#2a2a2b' : 'var(--bg-tertiary)',
           flexShrink: 0,
           alignItems: 'center',
           marginLeft: -1,
@@ -508,26 +522,34 @@ export function Editor() {
           flex: 1,
           display: 'flex',
           overflow: 'hidden',
-          background: 'var(--bg-primary)',
+          background: settings?.editorDark ? '#1e1e1e' : 'var(--bg-primary)',
           minHeight: 0
         }}>
           <RichTextEditor
             value={content}
             onChange={setContent}
             fontSize={fontSize}
+            editorDark={settings?.editorDark === true}
           />
         </div>
       ) : (
-        <CodeEditor
-          key={currentNote.id}
-          ref={codeEditorRef}
-          value={content}
-          onChange={setContent}
-          fontSize={fontSize}
-          format={currentNote.format as 'markdown' | 'html' | 'code'}
-          language={currentNote.language}
-          onSave={handleSave}
-        />
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0
+        }}>
+          <CodeEditor
+            key={currentNote.id}
+            ref={codeEditorRef}
+            value={content}
+            onChange={setContent}
+            fontSize={fontSize}
+            format={currentNote.format as 'markdown' | 'html' | 'code'}
+            language={currentNote.language}
+            onSave={handleSave}
+          />
+        </div>
       )}
     </div>
   )
@@ -535,10 +557,11 @@ export function Editor() {
 
 /**
  */
-function RichTextEditor({ value, onChange, fontSize }: {
+function RichTextEditor({ value, onChange, fontSize, editorDark }: {
   value: string
   onChange: (v: string) => void
   fontSize: number
+  editorDark: boolean
 }) {
   const editorRef = useRef<HTMLDivElement>(null)
   const isInternalUpdate = useRef(false)
@@ -779,9 +802,12 @@ function RichTextEditor({ value, onChange, fontSize }: {
         display: 'flex',
         gap: 2,
         padding: '4px 8px',
-        backgroundColor: 'var(--bg-tertiary)',
+        backgroundColor: editorDark ? '#1e1e1e' : 'var(--bg-primary)',
         flexShrink: 0,
-        flexWrap: 'wrap'
+        flexWrap: 'wrap',
+        position: 'relative',
+        zIndex: 1,
+        boxShadow: editorDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)'
       }}>
         <ToolbarBtn icon={<Undo2 size={14} />} title="撤销 (Ctrl+Z)" onClick={() => exec('undo')} />
         <ToolbarBtn icon={<Redo2 size={14} />} title="重做 (Ctrl+Shift+Z)" onClick={() => exec('redo')} />
@@ -961,13 +987,13 @@ function RichTextEditor({ value, onChange, fontSize }: {
         onBlur={handleInput}
         style={{
           flex: 1,
-          padding: '16px 24px',
+          padding: '8px 24px',
           outline: 'none',
           overflow: 'auto',
-          background: 'var(--bg-primary)',
+          background: editorDark ? '#1e1e1e' : 'var(--bg-primary)',
           color: 'var(--text-primary)',
-          fontSize: fontSize + 1,
-          lineHeight: 1.7,
+          fontSize,
+          lineHeight: 1.6,
           minHeight: 0
         }}
       />

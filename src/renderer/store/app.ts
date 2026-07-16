@@ -15,6 +15,7 @@ interface AppState {
   notebooks: Notebook[]
   notes: Note[]
   selectedNoteId: string | null
+  selectedNotebookId: string | null
   currentNote: Note | null
   /** 多标签页：当前打开的笔记 id 列表（按打开顺序，不含已删除/已回收的） */
   openTabs: string[]
@@ -35,6 +36,7 @@ interface AppState {
   loadNotebooks: () => Promise<void>
   loadNotes: () => Promise<void>
   selectNote: (id: string | null) => Promise<void>
+  selectNotebook: (id: string | null) => void
   createNotebook: (name: string, parentId: string | null, icon?: string) => Promise<void>
   createNote: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: Note['format'], language?: Note['language'], url?: string) => Promise<void>
   /** 仅更新内存里的 currentNote，不写库。供编辑器输入时即时同步给 Preview。 */
@@ -148,6 +150,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   notebooks: [],
   notes: [],
   selectedNoteId: null,
+  selectedNotebookId: null,
   currentNote: null,
   openTabs: [],
   activeTabId: null,
@@ -176,10 +179,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
     // 立即用 store 里已有的 note 数据占位 currentNote，避免 await 期间 currentNote 仍是上一个笔记
-    // —— 切到文件笔记时尤其关键：PdfPreview/DocxPreview 会立刻卸载旧的，挂载新的，
-    //    不会卡在"高亮切了但内容还没切"的中间态
+    // 但仅当 currentNote 非 null（即切换笔记时）才做抢占。
+    // 启动时 currentNote 为 null，跳过缓存抢占，避免缓存内容为空导致编辑器先闪一帧空白。
     const cached = get().notes.find(n => n.id === id)
-    if (cached) {
+    if (cached && get().currentNote) {
       set({ currentNote: cached })
     }
     // 递增序列号，用于忽略快速切换时过时的响应
@@ -214,8 +217,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ tabLayouts: layouts })
     }
 
-    // 仅对新打开的标签页做布局初始化，已打开的标签页切换时恢复其保存的布局
-    if (note && isNewTab) {
+    // 布局初始化：
+    //  - 代码/富文本笔记：无论新标签还是已有标签，都必须确保 editor 可见、预览关闭，
+    //    否则启动时恢复的 layout 可能是上次看 markdown 时保存的 editorVisible=false → 右半空白
+    //  - 其他格式：仅对新打开的标签页做布局初始化
+    if (note && (note.format === 'code' || note.format === 'richtext')) {
+      if (layout && layout.previewVisible) {
+        get().updateSettings({ layout: { ...layout, previewVisible: false } })
+      }
+      set({ previewVisible: false })
+      if (!get().editorVisible) {
+        set({ editorVisible: true })
+        if (layout) {
+          get().updateSettings({ layout: { ...layout, editorVisible: true } })
+        }
+      }
+    } else if (note && isNewTab) {
       // 代码/富文本笔记不需要预览面板：选中的瞬间自动收起
       if (note.format === 'code' || note.format === 'richtext') {
         if (layout && layout.previewVisible) {
@@ -312,6 +329,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         tabLayouts: { ...state.tabLayouts, [id]: { editorVisible: get().editorVisible, previewVisible: get().previewVisible } }
       }))
     }
+  },
+
+  selectNotebook: (id) => {
+    set({ selectedNotebookId: id })
   },
 
   // ============ 多标签页 ============

@@ -7,17 +7,23 @@ import {
   FileDown, FileCode, Globe, Link2, Paperclip, Palette, History
 } from 'lucide-react'
 import * as LucideIcons from 'lucide-react'
+import * as PhosphorIcons from '@phosphor-icons/react'
 import { toast } from './Toast'
 import { confirm } from './ConfirmDialog'
 import { IconPicker } from './IconPicker'
 
-/** 笔记本图标：把 DB 里存的图标名（字符串）查表渲染成 lucide 组件。
+/** 笔记本图标：把 DB 里存的图标名（字符串）查表渲染成 lucide / phosphor 组件。
  *  - 没设图标 → 展开用 FolderOpen，折叠用 Folder
  *  - 设了图标但找不到对应组件 → 兜底用 Folder
+ *  - 以 ph: 开头的图标名从 Phosphor Icons 查找，支持实心填充图标
  */
 function renderNotebookIcon(iconName: string | null | undefined, isExpanded: boolean) {
   if (!iconName) {
     return isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />
+  }
+  if (iconName.startsWith('ph:')) {
+    const Icon = (PhosphorIcons as any)[iconName.slice(3)]
+    if (Icon) return <Icon size={14} weight="fill" />
   }
   const Icon = (LucideIcons as any)[iconName]
   if (Icon) return <Icon size={14} />
@@ -103,7 +109,9 @@ export function Sidebar() {
   const notebooks = useAppStore(s => s.notebooks)
   const notes = useAppStore(s => s.notes)
   const selectedNoteId = useAppStore(s => s.selectedNoteId)
+  const selectedNotebookId = useAppStore(s => s.selectedNotebookId)
   const selectNote = useAppStore(s => s.selectNote)
+  const selectNotebook = useAppStore(s => s.selectNotebook)
   const createNote = useAppStore(s => s.createNote)
   const createNotebook = useAppStore(s => s.createNotebook)
   const renameNotebook = useAppStore(s => s.renameNotebook)
@@ -151,6 +159,17 @@ export function Sidebar() {
   }, [storedExpanded])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: NoteTreeNode } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const onDown = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null)
+      }
+    }
+    document.addEventListener('mousedown', onDown, true)
+    return () => document.removeEventListener('mousedown', onDown, true)
+  }, [contextMenu])
   // 笔记本图标选择器：null 时不显示，否则 { notebookId, position }
   const [iconPicker, setIconPicker] = useState<{ notebookId: string; currentIcon: string | null; position: { top: number; left: number } } | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; type: 'notebook' | 'note'; value: string } | null>(null)
@@ -495,7 +514,7 @@ export function Sidebar() {
 
   const renderNode = (node: NoteTreeNode, depth: number = 0) => {
     const isExpanded = expanded.has(node.id)
-    const isSelected = selectedNoteId === node.id
+    const isSelected = selectedNoteId === node.id || selectedNotebookId === node.id
     const isRenaming = renaming?.id === node.id
 
     if (node.type === 'notebook') {
@@ -516,7 +535,7 @@ export function Sidebar() {
           <div
             className={`tree-row ${isSelected ? 'selected' : ''}`}
             style={{ paddingLeft: 4 + depth * 10 }}
-            onClick={() => setRenaming(null)}
+            onClick={() => { setRenaming(null); selectNotebook(node.id) }}
             onContextMenu={(e) => handleContextMenu(e, node)}
             onDoubleClick={() => handleRename(node)}
             draggable
@@ -585,6 +604,7 @@ export function Sidebar() {
           style={{ paddingLeft: 4 + depth * 10 }}
           onClick={() => {
             setRenaming(null)
+            selectNotebook(null)
             if (selectNoteTimer.current) clearTimeout(selectNoteTimer.current)
             selectNoteTimer.current = setTimeout(() => {
               selectNoteTimer.current = null
@@ -828,9 +848,8 @@ export function Sidebar() {
           background-color: var(--bg-hover);
         }
         .tree-row.selected {
-          background-color: #ffffff;
-          border-bottom: 1px solid #E4E4E4;
-          box-shadow: 0 2px 6px rgba(228, 228, 228, 0.6);
+          background-color: var(--bg-primary);
+          box-shadow: 0 2px 6px rgba(0,0,0,0.08);
         }
         .tree-label {
           flex: 1;

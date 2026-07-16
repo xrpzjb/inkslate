@@ -298,13 +298,6 @@ export function IconSidebar() {
     { kind: 'sep' },
     {
       kind: 'item' as const,
-      id: 'theme-solarized',
-      label: THEME_LABELS.solarized,
-      active: theme === 'solarized',
-      onClick: () => handlePickTheme('solarized')
-    },
-    {
-      kind: 'item' as const,
       id: 'theme-auto',
       label: THEME_LABELS.auto,
       active: theme === 'auto',

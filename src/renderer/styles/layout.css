@@ -20,7 +20,6 @@
   background-color: var(--bg-tertiary);
   overflow: hidden;
   position: relative;
-  /* 跟 editor / preview 之间的 border-left 对齐，sidebar 右侧也加一条 1px 分隔线 */
   border-right: 1px solid var(--border-color);
 }
 
@@ -31,13 +30,11 @@
   background-color: var(--bg-primary);
   overflow: hidden;
   min-width: 0;
-  border-right: 1px solid var(--border-color);
 }
 
 .layout-editor.collapsed {
   width: 0 !important;
   flex: none !important;
-  border-right: none !important;
 }
 
 .layout-preview {
@@ -48,8 +45,7 @@
   flex-direction: column;
   background-color: var(--bg-preview);
   overflow: hidden;
-  /* 边线交给 layout-editor（border-right） / layout-sidebar（border-right） / tab-bar（border-bottom） 画，
-   * preview 自身不画，避免和上面的线在 file/url 笔记时叠成 2px */
+  border-left: 1px solid var(--border-color);
 }
 
 /* 拖拽手柄：0 宽度，纯命中区，视觉分隔线由 panel 的 border 提供 */
@@ -139,6 +135,25 @@
   color: var(--text-primary);
 }
 
+/* 编辑器独立暗色模式下的标题栏按钮 */
+[data-editor-dark="true"] {
+  background-color: #1e1e1e;
+}
+[data-editor-dark="true"] .panel-action-btn {
+  color: #b0b0b0;
+}
+[data-editor-dark="true"] .panel-action-btn:hover {
+  background-color: #3a3a3a;
+  color: #e8e8e8;
+}
+
+/* 编辑器工具栏按钮（ToolbarBtn 等内联 style 使用 CSS 变量，在此重写变量值） */
+[data-editor-dark="true"] {
+  --text-secondary: #b0b0b0;
+  --text-primary: #e8e8e8;
+  --bg-hover: #3a3a3a;
+}
+
 /* 收起/展开状态 - 有过渡动画 */
 .layout-sidebar.collapsed {
   width: 0 !important;
@@ -148,5 +163,6 @@
 
 .layout-preview.collapsed {
   width: 0 !important;
-  display: none !important;
+  border-left: none;
+  transition: width var(--transition);
 }
