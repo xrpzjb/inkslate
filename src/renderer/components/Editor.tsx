@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
+import { appThemes } from '../themes'
 import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
@@ -17,6 +18,8 @@ export function Editor() {
   const updateCurrentNoteDraft = useAppStore(s => s.updateCurrentNoteDraft)
   const settings = useAppStore(s => s.settings)
   const updateSettings = useAppStore(s => s.updateSettings)
+  const shadowDark = settings?.editorDark === true ||
+    (settings?.theme != null && appThemes[settings.theme as keyof typeof appThemes]?.colorScheme === 'dark')
 
   const [content, setContent] = useState(() => currentNote?.content ?? '')
   const previewVisible = useAppStore(s => s.previewVisible)
@@ -323,7 +326,7 @@ export function Editor() {
         position: 'relative',
         zIndex: 1,
         boxShadow: currentNote?.format === 'code'
-          ? (settings?.editorDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)')
+          ? (shadowDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)')
           : undefined
       }}>
         <input
@@ -405,7 +408,7 @@ export function Editor() {
           flexWrap: 'wrap',
           position: 'relative',
           zIndex: 1,
-          boxShadow: settings?.editorDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)'
+          boxShadow: shadowDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)'
         }}>
           <ToolbarBtn icon={<Bold size={14} />} title="粗体 (Ctrl+B)" onClick={() => insertText('**', '**', 'bold')} />
           <ToolbarBtn icon={<Italic size={14} />} title="斜体 (Ctrl+I)" onClick={() => insertText('*', '*', 'italic')} />
@@ -529,7 +532,7 @@ export function Editor() {
             value={content}
             onChange={setContent}
             fontSize={fontSize}
-            editorDark={settings?.editorDark === true}
+            editorDark={shadowDark}
           />
         </div>
       ) : (

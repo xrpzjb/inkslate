@@ -85,6 +85,8 @@ export interface AppSettings {
   treeFontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   /** 树状图字体大小（px） */
   treeFontSize?: number
+  /** 树状图显示子级数量 */
+  showTreeCount?: boolean
   layout: {
     sidebarWidth: number
     sidebarVisible: boolean

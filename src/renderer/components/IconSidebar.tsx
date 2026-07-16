@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  FilePlus, Trash2,
+  FilePlus, Trash2, Search,
   Cloud, CloudOff, CloudUpload, Loader2,
   Palette,
   PanelLeftClose, PanelLeftOpen,
@@ -92,6 +92,7 @@ export function IconSidebar() {
   const syncStatus = useAppStore(s => s.syncStatus)
 
   const [popover, setPopover] = useState<null | 'new' | 'sync' | 'theme' | 'menu'>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const newBtnRef = useRef<HTMLButtonElement>(null)
   const syncBtnRef = useRef<HTMLButtonElement>(null)
@@ -312,6 +313,17 @@ export function IconSidebar() {
   return (
     <>
       <nav className="icon-sidebar" ref={rootRef}>
+        {/* ===== Group: 搜索 ===== */}
+        <button
+          className={'icon-sidebar-btn' + (searchOpen ? ' active' : '')}
+          onClick={() => setSearchOpen(true)}
+          title="搜索"
+        >
+          <Search size={20} />
+        </button>
+
+        <div className="icon-sidebar-sep" />
+
         {/* ===== Group: 创建 ===== */}
         <button
           ref={newBtnRef}
@@ -538,6 +550,11 @@ export function IconSidebar() {
         </div>,
         document.body
       )}
+
+      {searchOpen && createPortal(
+        <SearchDialog onClose={() => setSearchOpen(false)} />,
+        document.body
+      )}
     </>
   )
 }
@@ -657,4 +674,84 @@ function popoverPos(btn: HTMLElement): React.CSSProperties {
     top: rect.top,
     left: rect.right + 4
   }
+}
+
+/** 搜索弹框 */
+function SearchDialog({ onClose }: { onClose: () => void }) {
+  const notes = useAppStore(s => s.notes)
+  const selectNote = useAppStore(s => s.selectNote)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    inputRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const lower = query.trim().toLowerCase()
+  const results = lower
+    ? notes
+        .filter(n => !n.isDeleted && (n.title.toLowerCase().includes(lower) || n.content.toLowerCase().includes(lower)))
+        .slice(0, 50)
+    : []
+
+  const highlight = (text: string) => {
+    if (!lower) return text
+    const idx = text.toLowerCase().indexOf(lower)
+    if (idx < 0) return text
+    return (
+      <>
+        {text.slice(0, idx)}
+        <mark>{text.slice(idx, idx + lower.length)}</mark>
+        {text.slice(idx + lower.length)}
+      </>
+    )
+  }
+
+  const snippet = (text: string, maxLen = 120) => {
+    const idx = text.toLowerCase().indexOf(lower)
+    if (idx < 0) return text.slice(0, maxLen)
+    const start = Math.max(0, idx - 40)
+    const end = Math.min(text.length, idx + lower.length + 40)
+    const prefix = start > 0 ? '…' : ''
+    const suffix = end < text.length ? '…' : ''
+    return prefix + text.slice(start, end) + suffix
+  }
+
+  const handleClick = async (id: string) => {
+    await selectNote(id)
+    onClose()
+  }
+
+  return (
+    <div className="search-dialog-overlay" onMouseDown={onClose}>
+      <div className="search-dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="search-dialog-input-row">
+          <Search size={16} className="search-dialog-input-icon" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索笔记标题或内容…"
+            className="search-dialog-input"
+          />
+        </div>
+        <div className="search-dialog-results">
+          {results.length === 0 && lower && (
+            <div className="search-dialog-empty">未找到匹配的笔记</div>
+          )}
+          {results.map(note => (
+            <div key={note.id} className="search-dialog-item" onClick={() => handleClick(note.id)}>
+              <div className="search-dialog-item-title">{highlight(note.title || '未命名')}</div>
+              <div className="search-dialog-item-snippet">{highlight(snippet(note.content))}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }

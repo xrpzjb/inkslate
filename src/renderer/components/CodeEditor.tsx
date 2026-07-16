@@ -106,8 +106,9 @@ function makeEditorTheme(opts: {
   ])
 
   const selection = EditorView.theme({
-    '& ::selection': { backgroundColor: opts.selectionBg, color: opts.selectionFg },
-  })
+    '.cm-selectionBackground': { backgroundColor: opts.selectionBg },
+    '.cm-focused .cm-selectionBackground': { backgroundColor: opts.selectionBg },
+  }, { dark: opts.isDark })
 
   return [base, syntaxHighlighting(highlight), selection]
 }
@@ -116,7 +117,7 @@ const editorLightExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#1a73e8', activeLine: 'var(--bg-hover)',
-  gutterBg: '#ffffff', gutterFg: '#999999',
+  gutterBg: 'var(--bg-primary)', gutterFg: '#999999',
   activeLineGutterFg: 'var(--accent-color)',
   selectionBg: '#0d47a1', selectionFg: '#ffffff',
   c: {
@@ -158,7 +159,7 @@ const editorSolarizedExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#268bd2', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: 'var(--accent-color)',
   selectionBg: '#b58900', selectionFg: '#ffffff',
   c: {
@@ -179,7 +180,7 @@ const editorCyberpunkExt = makeEditorTheme({
   isDark: true,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#00f0ff', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#00f0ff',
   selectionBg: '#ff00aa', selectionFg: '#ffffff',
   c: {
@@ -200,7 +201,7 @@ const editorDraculaExt = makeEditorTheme({
   isDark: true,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#f8f8f0', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#bd93f9',
   selectionBg: '#44475a', selectionFg: '#ffffff',
   c: {
@@ -221,7 +222,7 @@ const editorDuneExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#c87533', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#c87533',
   selectionBg: '#c87533', selectionFg: '#ffffff',
   c: {
@@ -242,7 +243,7 @@ const editorMonetExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#a48bd9', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#a48bd9',
   selectionBg: '#a48bd9', selectionFg: '#ffffff',
   c: {
@@ -263,7 +264,7 @@ const editorNewspaperExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#8b4513', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#8b4513',
   selectionBg: '#8b4513', selectionFg: '#f4ecd8',
   c: {
@@ -284,7 +285,7 @@ const editorForestExt = makeEditorTheme({
   isDark: true,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#7fc285', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#7fc285',
   selectionBg: '#345a45', selectionFg: '#d8e4dc',
   c: {
@@ -305,7 +306,7 @@ const editorSunsetExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#e85d2a', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#e85d2a',
   selectionBg: '#e85d2a', selectionFg: '#fff0e5',
   c: {
@@ -326,7 +327,7 @@ const editorNordicExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#5b8cb8', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#5b8cb8',
   selectionBg: '#5b8cb8', selectionFg: '#ffffff',
   c: {
@@ -347,7 +348,7 @@ const editorPastoralExt = makeEditorTheme({
   isDark: false,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
   caret: '#7a9a3a', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-tertiary)', gutterFg: 'var(--text-tertiary)',
+  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
   activeLineGutterFg: '#7a9a3a',
   selectionBg: '#7a9a3a', selectionFg: '#ffffff',
   c: {
@@ -377,6 +378,21 @@ const editorThemes: Record<AppThemeId, () => Extension> = {
   'sunset': () => editorSunsetExt,
   'nordic': () => editorNordicExt,
   'pastoral': () => editorPastoralExt,
+}
+
+const selectionColors: Record<AppThemeId, string> = {
+  light:     '#0d47a1',
+  dark:      '#1f6feb',
+  solarized: '#b58900',
+  cyberpunk: '#ff00aa',
+  dracula:   '#44475a',
+  dune:      '#c87533',
+  monet:     '#a48bd9',
+  newspaper: '#8b4513',
+  forest:    '#3b82f6',
+  sunset:    '#e85d2a',
+  nordic:    '#5b8cb8',
+  pastoral:  '#7a9a3a',
 }
 
 export interface CodeEditorHandle {
@@ -520,6 +536,17 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       highlightActiveLine(),
       history(),
       drawSelection(),
+      // 双击选中时裁掉行尾换行符，避免光标落到下一行导致下一行高亮
+      EditorState.transactionFilter.of(tr => {
+        if (!tr.selection) return tr
+        const sel = tr.selection.main
+        if (sel.empty) return tr
+        const doc = tr.startState.doc
+        if (sel.to > sel.from && sel.to <= doc.length && doc.sliceString(sel.to - 1, sel.to) === '\n') {
+          return [tr, { selection: { anchor: sel.anchor, head: sel.to - 1 } }]
+        }
+        return tr
+      }),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
@@ -642,6 +669,33 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     })
     return () => observer.disconnect()
   }, [])
+
+  // 选中背景色：用 injected style 绕过 CM6 的 hideNativeSelection 优先级覆盖
+  // CM6 通过 hideNativeSelection (Prec.highest) 设置
+  //   .cm-line ::selection { transparent !important }
+  //   .cm-content :focus::selection { Highlight !important }
+  //   .cm-selectionBackground { #d9d9d9 / #222 }
+  // 这些 rules 优先级一致且 CM6 style 注入时间晚于本 effect，
+  // 因此加 html 前缀提高 specificity，确保本样式始终生效。
+  useEffect(() => {
+    const color = selectionColors[effectiveTheme] ?? '#0d47a1'
+    const styleId = 'cm-selection-inject'
+    let styleEl = document.getElementById(styleId) as HTMLStyleElement | null
+    if (!styleEl) {
+      styleEl = document.createElement('style')
+      styleEl.id = styleId
+      document.head.appendChild(styleEl)
+    }
+    styleEl.textContent = `
+      html .cm-editor .cm-line ::selection { background-color: ${color} !important; color: #ffffff !important; }
+      html .cm-editor .cm-line::selection { background-color: ${color} !important; color: #ffffff !important; }
+      html .cm-editor .cm-content :focus::selection { background-color: ${color} !important; color: #ffffff !important; }
+      html .cm-editor .cm-content :focus ::selection { background-color: ${color} !important; color: #ffffff !important; }
+      html .cm-editor .cm-content ::selection { background-color: ${color} !important; color: #ffffff !important; }
+      html .cm-editor .cm-selectionBackground { background-color: ${color} !important; }
+      html .cm-editor.cm-focused .cm-selectionBackground { background-color: ${color} !important; }
+    `
+  }, [effectiveTheme])
 
   useEffect(() => {
     const view = viewRef.current

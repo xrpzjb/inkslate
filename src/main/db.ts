@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     configured: false
   },
   autoSync: false,
+  showTreeCount: true,
   recycleBin: {
     retentionDays: 30,
     autoCleanup: true

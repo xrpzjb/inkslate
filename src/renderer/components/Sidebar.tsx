@@ -124,6 +124,7 @@ export function Sidebar() {
   const setViewMode = useAppStore(s => s.setViewMode)
   const recycleBinCount = useAppStore(s => s.recycleBinCount)
   const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
+  const showTreeCount = useAppStore(s => s.settings?.showTreeCount !== false)
   // 点击去抖：防止快速点击触发多个并发 selectNote 请求
   const selectNoteTimer = useRef<NodeJS.Timeout | null>(null)
 
@@ -563,7 +564,10 @@ export function Sidebar() {
                 onCancel={cancelRename}
               />
             ) : (
-              <span className="tree-label">{node.name}</span>
+              <>
+                <span className="tree-label">{node.name}</span>
+                {showTreeCount && <span className="tree-count">{node.children.length}</span>}
+              </>
             )}
           </div>
           {isDragOver && <div style={dropLineStyle} />}
@@ -642,7 +646,10 @@ export function Sidebar() {
               onCancel={cancelRename}
             />
           ) : (
-            <span className="tree-label">{node.name}</span>
+            <>
+              <span className="tree-label">{node.name}</span>
+              {showTreeCount && <span className="tree-count">{node.children.length}</span>}
+            </>
           )}
         </div>
         {isDragOver && <div style={dropLineStyle} />}
@@ -653,8 +660,8 @@ export function Sidebar() {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }} onClick={closeContextMenu}>
-        <div className="tree" style={{ padding: '4px 0' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 0 4px 0' }} onClick={closeContextMenu}>
+        <div className="tree" style={{ padding: '0 0 4px 0', marginTop: -2 }}>
           {tree.length === 0 ? (
             <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
               还没有笔记本
@@ -856,6 +863,19 @@ export function Sidebar() {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+        .tree-count {
+          font-size: 10px;
+          color: var(--text-tertiary);
+          background: var(--bg-hover);
+          border-radius: 8px;
+          padding: 0 5px;
+          line-height: 16px;
+          min-width: 16px;
+          text-align: center;
+          flex-shrink: 0;
+          margin-left: 6px;
+          margin-right: 8px;
         }
       `}</style>
       </div>

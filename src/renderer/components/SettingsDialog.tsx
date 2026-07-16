@@ -13,26 +13,18 @@ export const FONT_OPTIONS: { value: string; label: string; stack: string; mono?:
   { value: 'sourcehan', label: '思源黑体（圆润）', stack: '"Source Han Sans CN", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif' },
 ]
 
-/** 单个字体选择列表（无状态 UI，由外部传入当前值和回调） */
-function FontOptionList({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+/** 字体选择下拉框 */
+function FontSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <div className="settings-font-list" role="radiogroup">
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="settings-font-select"
+    >
       {FONT_OPTIONS.map(opt => (
-        <div
-          key={opt.value}
-          className={'settings-font-option' + (value === opt.value ? ' active' : '')}
-          role="radio"
-          aria-checked={value === opt.value}
-          tabIndex={0}
-          onClick={() => onChange(opt.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChange(opt.value) } }}
-        >
-          <span className="settings-font-label" style={{ fontFamily: opt.stack }}>
-            {opt.label}
-          </span>
-        </div>
+        <option key={opt.value} value={opt.value}>{opt.label}</option>
       ))}
-    </div>
+    </select>
   )
 }
 
@@ -73,6 +65,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [editorFontFamily, setEditorFontFamily] = useState<string>(settings?.editorFontFamily ?? fontFamily)
   const [treeFontFamily, setTreeFontFamily] = useState<string>(settings?.treeFontFamily ?? fontFamily)
   const [treeFontSize, setTreeFontSize] = useState<number>(settings?.treeFontSize ?? 14)
+  const [showTreeCount, setShowTreeCount] = useState<boolean>(settings?.showTreeCount !== false)
 
   const persist = (patch: Record<string, unknown>) => {
     const cur = useAppStore.getState().settings
@@ -112,6 +105,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     persist({ treeFontSize: newSize })
   }
 
+  const handleTreeCountToggle = () => {
+    const next = !showTreeCount
+    setShowTreeCount(next)
+    persist({ showTreeCount: next })
+  }
+
   const openShortcuts = () => {
     window.dispatchEvent(new CustomEvent('inkslate:open-shortcuts'))
     onClose()
@@ -136,23 +135,33 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           {/* 全局字体 */}
           <div className="settings-section">
             <h3 className="shortcuts-group-title"><Type size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />全局字体</h3>
-            <FontOptionList value={fontFamily} onChange={handleFontChange} />
+            <FontSelect value={fontFamily} onChange={handleFontChange} />
           </div>
 
           {/* 编辑区域字体 */}
           <div className="settings-section">
             <h3 className="shortcuts-group-title"><Type size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />编辑区域字体</h3>
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>留空则跟随全局字体</div>
-            <FontOptionList value={editorFontFamily} onChange={handleEditorFontChange} />
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>留空则跟随全局字体</div>
+            <FontSelect value={editorFontFamily} onChange={handleEditorFontChange} />
             <FontSizeControl value={fontSize} onChange={handleEditorFontSizeChange} />
           </div>
 
           {/* 树状图字体 */}
           <div className="settings-section">
             <h3 className="shortcuts-group-title"><Type size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />树状图字体</h3>
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>留空则跟随全局字体</div>
-            <FontOptionList value={treeFontFamily} onChange={handleTreeFontChange} />
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>留空则跟随全局字体</div>
+            <FontSelect value={treeFontFamily} onChange={handleTreeFontChange} />
             <FontSizeControl value={treeFontSize} onChange={handleTreeFontSizeChange} />
+          </div>
+
+          {/* 树状图数量标签 */}
+          <div className="settings-section">
+            <h3 className="shortcuts-group-title"><Type size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />树状图</h3>
+            <label className="settings-toggle-row">
+              <span>笔记子级数量标签</span>
+              <input type="checkbox" checked={showTreeCount} onChange={handleTreeCountToggle} />
+              <span className="settings-toggle-slider" />
+            </label>
           </div>
 
           {/* 快捷键入口 */}
@@ -241,41 +250,27 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           font-size: 11px;
           color: var(--text-tertiary);
         }
-        .settings-section { margin-bottom: 20px; }
+        .settings-section { margin-bottom: 20px; padding: 0 10px; }
         .settings-section:last-child { margin-bottom: 0; }
-        .settings-font-list { display: flex; flex-direction: column; gap: 6px; }
-        .settings-font-option {
-          display: flex; align-items: center; gap: 8px;
-          padding: 8px 10px; border-radius: 6px;
+        .settings-font-select {
+          width: 100%;
+          padding: 8px 0;
+          border-radius: 6px;
           border: 1px solid var(--border-color);
-          cursor: pointer; transition: background 100ms, border-color 100ms;
+          background: var(--bg-secondary);
+          color: var(--text-primary);
+          font-size: 13px;
           outline: none;
+          cursor: pointer;
         }
-        .settings-font-option:hover { background: var(--bg-hover); }
-        .settings-font-option:focus-visible { box-shadow: 0 0 0 2px var(--accent-color); }
-        .settings-font-option.active {
-          background: var(--accent-bg);
+        .settings-font-select:focus {
           border-color: var(--accent-color);
         }
-        .settings-font-option::before {
-          content: '';
-          width: 14px; height: 14px;
-          border-radius: 50%;
-          border: 2px solid var(--text-tertiary);
-          flex-shrink: 0;
-          transition: border-color 100ms, background 100ms;
-        }
-        .settings-font-option.active::before {
-          border-color: var(--accent-color);
-          background: var(--accent-color);
-          box-shadow: inset 0 0 0 3px var(--accent-bg);
-        }
-        .settings-font-label { font-size: 14px; color: var(--text-primary); }
         .settings-font-size-row {
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 8px 10px;
+          padding: 8px 0;
         }
         .settings-size-btn {
           width: 36px; height: 36px;
@@ -305,6 +300,44 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           font-size: 13px; transition: background 100ms;
         }
         .settings-link-btn:hover { background: var(--bg-hover); }
+        .settings-toggle-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 6px 0;
+          cursor: pointer;
+          font-size: 13px;
+          color: var(--text-primary);
+        }
+        .settings-toggle-row input[type="checkbox"] {
+          display: none;
+        }
+        .settings-toggle-slider {
+          width: 36px;
+          height: 20px;
+          border-radius: 10px;
+          background: var(--text-tertiary);
+          position: relative;
+          transition: background 200ms;
+          flex-shrink: 0;
+        }
+        .settings-toggle-slider::after {
+          content: '';
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          background: var(--bg-primary);
+          transition: transform 200ms;
+        }
+        .settings-toggle-row input:checked + .settings-toggle-slider {
+          background: var(--accent-color);
+        }
+        .settings-toggle-row input:checked + .settings-toggle-slider::after {
+          transform: translateX(16px);
+        }
       `}</style>
     </div>
   )
