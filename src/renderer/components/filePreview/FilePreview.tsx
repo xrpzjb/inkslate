@@ -25,7 +25,15 @@ export function FilePreview() {
 
   useEffect(() => {
     setReady(false)
-  }, [currentNote?.id])
+    if (!currentNote) return
+    const ext = (currentNote.fileExt || '').toLowerCase()
+    if (!HEAVY_EXTS.has(ext)) {
+      setReady(true)
+      return
+    }
+    const timer = setTimeout(() => setReady(true), 300)
+    return () => clearTimeout(timer)
+  }, [currentNote?.id, currentNote?.fileExt])
 
   if (!currentNote) return null
   const ext = (currentNote.fileExt || '').toLowerCase()
@@ -37,21 +45,12 @@ export function FilePreview() {
 
   if (HEAVY_EXTS.has(ext) && !ready) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: 40, gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: 40, gap: 12 }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{currentNote.fileName || '未命名文件'}</div>
         <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
           {currentNote.fileExt?.toUpperCase()} 文件 · {formatFileSize(currentNote.fileSize)}
         </div>
-        <button
-          onClick={() => setReady(true)}
-          style={{
-            padding: '8px 24px', borderRadius: 6, border: 'none',
-            background: 'var(--accent-color)', color: '#fff',
-            fontSize: 14, fontWeight: 600, cursor: 'pointer'
-          }}
-        >
-          加载预览
-        </button>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>准备预览中…可随时切换笔记</div>
       </div>
     )
   }

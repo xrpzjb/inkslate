@@ -24,7 +24,7 @@ npm install --registry=https://registry.npmmirror.com
 npm config set registry https://registry.npmmirror.com
 ```
 
-恢复官方源：
+**恢复官方源：**
 
 ```bash
 npm config set registry https://registry.npmjs.org

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useAppStore } from '../store/app'
 import { Sidebar } from './Sidebar'
-import { Editor } from './Editor'
+import { Editor, AIDialog } from './Editor'
 import { Preview } from './Preview'
 import { RecycleBinView } from './RecycleBinView'
 import { IconSidebar } from './IconSidebar'
@@ -103,6 +103,22 @@ export function Layout() {
   const isRecycleBin = viewMode === 'recycle-bin'
 
   const [sidebarWidth, setSidebarWidth] = useState(settings?.layout.sidebarWidth ?? 260)
+
+  // AI 侧栏面板
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [aiPanelConvs, setAiPanelConvs] = useState<Record<string, Array<{ role: 'user' | 'assistant'; content: string }>>>({})
+  const prevSidebarVisible = useRef(sidebarVisible)
+
+  useEffect(() => {
+    const onOpen = () => {
+      prevSidebarVisible.current = sidebarVisible
+      if (!sidebarVisible) toggleSidebar()
+      if (sidebarWidth < 200) setSidebarWidth(260)
+      setAiPanelOpen(true)
+    }
+    window.addEventListener('inkslate:open-ai-panel', onOpen)
+    return () => window.removeEventListener('inkslate:open-ai-panel', onOpen)
+  }, [sidebarVisible, sidebarWidth, toggleSidebar])
   const [previewWidth, setPreviewWidth] = useState(420)
   // 窗口宽度：用于动态计算 max 拖动上界，保证任何一栏都不会把其他挤到看不见
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
@@ -219,7 +235,7 @@ export function Layout() {
       <IconSidebar />
       <div
         ref={sidebarRef}
-        className={`layout-sidebar ${!sidebarVisible ? 'collapsed' : ''}`}
+        className={`layout-sidebar ${!sidebarVisible && !aiPanelOpen ? 'collapsed' : ''}`}
         style={{ width: sidebarVisible ? sidebarWidth : 0 }}
       >
         <div className="panel-header" ref={sidebarHeaderRef} style={{ position: 'relative', padding: '4px 10px' }}>
@@ -320,10 +336,29 @@ export function Layout() {
             </div>
           )}
         </div>
-        {sidebarVisible && <Sidebar />}
+        {aiPanelOpen ? (
+          <AIDialog
+            mode="panel"
+            noteId={currentNote?.id ?? ''}
+            noteTitle={currentNote?.title ?? ''}
+            noteContent={currentNote?.content ?? ''}
+            noteFormat={currentNote?.format ?? 'markdown'}
+            history={currentNote?.id ? (aiPanelConvs[currentNote.id] || []) : []}
+            onHistoryChange={(h) => {
+              if (currentNote?.id) setAiPanelConvs(prev => ({ ...prev, [currentNote.id]: h }))
+            }}
+            onClose={() => {
+              setAiPanelOpen(false)
+              if (!prevSidebarVisible.current) toggleSidebar()
+            }}
+            onReplace={(text) => {
+              window.dispatchEvent(new CustomEvent('inkslate:ai-replace', { detail: text }))
+            }}
+          />
+        ) : sidebarVisible ? <Sidebar /> : null}
       </div>
 
-            {sidebarVisible && <div ref={sidebarDividerRef} className="layout-divider" />}
+            {(sidebarVisible || aiPanelOpen) && <div ref={sidebarDividerRef} className="layout-divider" />}
 
             {isRecycleBin ? (
               <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>

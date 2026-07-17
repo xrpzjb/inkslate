@@ -1,10 +1,10 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useAppStore, buildNoteTree } from '../store/app'
-import { NoteTreeNode, Note } from '@shared/types'
+import { NoteTreeNode, Note, Notebook } from '@shared/types'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
-  FileDown, FileCode, Globe, Link2, Paperclip, Palette, History
+  FileDown, FileCode, Globe, Link2, Paperclip, Palette, History, ArrowRightLeft
 } from 'lucide-react'
 import * as LucideIcons from 'lucide-react'
 import * as PhosphorIcons from '@phosphor-icons/react'
@@ -120,6 +120,8 @@ export function Sidebar() {
   const deleteNote = useAppStore(s => s.deleteNote)
   const reorderNotes = useAppStore(s => s.reorderNotes)
   const reorderNotebooks = useAppStore(s => s.reorderNotebooks)
+  const moveNote = useAppStore(s => s.moveNote)
+  const moveNotebook = useAppStore(s => s.moveNotebook)
   const viewMode = useAppStore(s => s.viewMode)
   const setViewMode = useAppStore(s => s.setViewMode)
   const recycleBinCount = useAppStore(s => s.recycleBinCount)
@@ -180,6 +182,12 @@ export function Sidebar() {
     parentId: string | null
     name: string
     value: string
+  } | null>(null)
+  // 移动弹框
+  const [moveDialog, setMoveDialog] = useState<{
+    nodeId: string
+    nodeType: 'notebook' | 'note'
+    nodeName: string
   } | null>(null)
 
   useEffect(() => {
@@ -568,13 +576,53 @@ export function Sidebar() {
                 <span className="tree-label">{node.name}</span>
                 {showTreeCount && <span className="tree-count">{node.children.length}</span>}
               </>
-            )}
-          </div>
+      )}
+
+      {moveDialog && (
+        <MoveDialog
+          nodeId={moveDialog.nodeId}
+          nodeType={moveDialog.nodeType}
+          nodeName={moveDialog.nodeName}
+          notebooks={notebooks}
+          notes={notes}
+          onMove={(targetId) => {
+            if (moveDialog.nodeType === 'note') {
+              moveNote(moveDialog.nodeId, targetId)
+            } else {
+              moveNotebook(moveDialog.nodeId, targetId)
+            }
+            setMoveDialog(null)
+          }}
+          onClose={() => setMoveDialog(null)}
+        />
+      )}
+    </div>
           {isDragOver && <div style={dropLineStyle} />}
           {isExpanded && node.children.map(child => renderNode(child, depth + 1))}
         </div>
-      )
-    }
+  )
+}
+
+function MoveNoteIcon({ format, size, color }: { format: string; size: number; color: string }) {
+  switch (format) {
+    case 'markdown': return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 6 L5 18" /><path d="M5 6 L12 14" /><path d="M12 14 L19 6" /><path d="M19 6 L19 18" />
+      </svg>)
+    case 'code': return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 6 L2 12 L8 18" /><path d="M16 6 L22 12 L16 18" /><path d="M15 4 L9 20" />
+      </svg>)
+    case 'richtext': return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 6 L20 6" /><path d="M12 6 L12 19" />
+      </svg>)
+    case 'html': return <Globe size={size} color={color} />
+    case 'url': return <Link2 size={size} color={color} />
+    case 'file': return <Paperclip size={size} color={color} />
+    default: return <FileText size={size} color={color} />
+  }
+}
 
     // 绗旇鑺傜偣
     const noteFormat = notes.find(n => n.id === node.id)?.format
@@ -757,6 +805,16 @@ export function Sidebar() {
           <div style={{ height: 6 }} />
 
           <MenuItem icon={<Edit3 size={14} />} label="重命名" onClick={() => handleRename(contextMenu.node)} />
+
+          <MenuItem
+            icon={<ArrowRightLeft size={14} />}
+            label="移动"
+            onClick={() => {
+              const node = contextMenu.node
+              setContextMenu(null)
+              setMoveDialog({ nodeId: node.id, nodeType: node.type, nodeName: node.name })
+            }}
+          />
 
           {/* 更换图标：仅笔记本节点显示 */}
           {contextMenu.node.type === 'notebook' && (
@@ -1232,5 +1290,127 @@ function RenameInput(props: {
       onDoubleClick={(e) => e.stopPropagation()}
       style={{ flex: 1, padding: '2px 4px', fontSize: 13, minWidth: 0 }}
     />
+  )
+}
+
+/** 移动对话框：显示完整树状图，选择目标位置 */
+function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onClose }: {
+  nodeId: string
+  nodeType: 'notebook' | 'note'
+  nodeName: string
+  notebooks: Notebook[]
+  notes: Note[]
+  onMove: (targetId: string) => void
+  onClose: () => void
+}) {
+  const [selected, setSelected] = useState<string | null>(null)
+  const tree = useMemo(() => buildNoteTree(notebooks, notes), [notebooks, notes])
+
+  // 收集要排除的节点（自身 + 子节点，防止循环）
+  const excludeIds = useMemo(() => {
+    const ids = new Set<string>([nodeId])
+    const stack = [nodeId]
+    while (stack.length > 0) {
+      const id = stack.pop()!
+      for (const n of notes) {
+        if ((n.parentId === id || n.notebookId === id) && !ids.has(n.id)) {
+          ids.add(n.id)
+          stack.push(n.id)
+        }
+      }
+      for (const nb of notebooks) {
+        if (nb.parentId === id && !ids.has(nb.id)) {
+          ids.add(nb.id)
+          stack.push(nb.id)
+        }
+      }
+    }
+    return ids
+  }, [nodeId, notes, notebooks])
+
+  // 笔记本移动只能选笔记本，笔记移动两者都可
+  const canSelect = (n: NoteTreeNode) => {
+    if (nodeType === 'notebook' && n.type !== 'notebook') return false
+    return true
+  }
+
+  const renderTree = (nodes: NoteTreeNode[], depth = 0): React.ReactNode[] => {
+    const result: React.ReactNode[] = []
+    for (const node of nodes) {
+      if (excludeIds.has(node.id)) continue
+      if (!canSelect(node)) {
+        result.push(...renderTree(node.children, depth + 1))
+        continue
+      }
+      const isFolder = node.type === 'notebook'
+      const noteFormat = notes.find(n => n.id === node.id)?.format || 'markdown'
+      const formatColors: Record<string, string> = { markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6', code: '#4a90e2', url: '#0ea5e9', file: '#16a34a' }
+      const fc = formatColors[noteFormat] || 'var(--text-secondary)'
+      result.push(
+        <div
+          key={node.id}
+          onClick={() => setSelected(node.id)}
+          style={{
+            padding: '5px 10px', paddingLeft: 12 + depth * 16, cursor: 'pointer',
+            borderRadius: 4, fontSize: 13, color: 'var(--text-primary)',
+            background: selected === node.id ? 'var(--accent-bg)' : 'transparent',
+            display: 'flex', alignItems: 'center', gap: 6
+          }}
+        >
+          {isFolder ? <Folder size={13} color="var(--text-secondary)" /> : <MoveNoteIcon format={noteFormat} size={13} color={fc} />}
+          {node.name}
+        </div>
+      )
+      result.push(...renderTree(node.children, depth + 1))
+    }
+    return result
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.22)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', zIndex: 2000
+    }} onClick={onClose}>
+      <div style={{
+        background: 'var(--bg-primary)', borderRadius: 8, padding: 16, width: 380,
+        maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+      }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>
+          移动{nodeType === 'note' ? '笔记' : '笔记本'} "{nodeName}" 到
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', marginBottom: 12, minHeight: 120 }}>
+          <div
+            onClick={() => setSelected(null)}
+            style={{
+              padding: '5px 10px', cursor: 'pointer', borderRadius: 4, fontSize: 13,
+              color: 'var(--text-primary)', background: selected === null ? 'var(--accent-bg)' : 'transparent',
+              display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4
+            }}
+          >
+            <Folder size={13} color="var(--text-secondary)" />
+            根目录
+          </div>
+          {renderTree(tree)}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{ padding: '6px 14px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', fontSize: 13, cursor: 'pointer' }}>取消</button>
+          <button
+            onClick={() => {
+              if (selected !== null) onMove(selected)
+            }}
+            disabled={selected === null}
+            style={{
+              padding: '6px 14px', borderRadius: 4, border: 'none',
+              background: selected !== null ? 'var(--accent-color)' : 'var(--bg-hover)',
+              color: selected !== null ? '#fff' : 'var(--text-tertiary)',
+              fontSize: 13, cursor: selected !== null ? 'pointer' : 'not-allowed'
+            }}
+          >
+            移动
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

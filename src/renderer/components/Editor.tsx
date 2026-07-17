@@ -177,6 +177,20 @@ export function Editor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 监听 AI 面板替换内容事件
+  useEffect(() => {
+    const onReplace = (e: Event) => {
+      const text = (e as CustomEvent).detail as string
+      if (currentNote?.format === 'richtext') {
+        richtextEditorRef.current?.setHTML(text)
+      } else {
+        setContent(text)
+      }
+    }
+    window.addEventListener('inkslate:ai-replace', onReplace)
+    return () => window.removeEventListener('inkslate:ai-replace', onReplace)
+  }, [currentNote?.format])
+
   const handleSave = async () => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
@@ -229,10 +243,7 @@ export function Editor() {
 
   // ============ 表格弹窗 ============
   const [tableDlg, setTableDlg] = useState({ open: false, rows: 3, cols: 3 })
-  // AI 对话框
-  const [aiOpen, setAiOpen] = useState(false)
-  // 按笔记 ID 维度存储对话历史
-  const [aiConvs, setAiConvs] = useState<Record<string, Array<{ role: 'user' | 'assistant'; content: string }>>>({})
+  // AI 对话框（弹框模式已移除，仅保留侧栏面板在 Layout 中）
 
   const confirmMarkdownTable = useCallback(() => {
     const rows = Math.max(2, Math.min(20, tableDlg.rows))
@@ -388,11 +399,11 @@ export function Editor() {
             <History size={16} />
           </button>
         )}
-        {/* AI 写作 */}
+        {/* AI 写作 — 侧栏面板 */}
         {currentNote && !['url', 'file'].includes(currentNote.format) && (
           <button
             className="panel-action-btn"
-            onClick={() => setAiOpen(true)}
+            onClick={() => window.dispatchEvent(new CustomEvent('inkslate:open-ai-panel'))}
             title="AI 写作"
           >
             <Bot size={16} />
@@ -427,32 +438,6 @@ export function Editor() {
           >
             {settings?.editorDark === true ? <Sun size={16} /> : <Moon size={16} />}
           </button>
-      )}
-      {aiOpen && createPortal(
-        <AIDialog
-          noteId={currentNote?.id ?? ''}
-          noteTitle={currentNote?.title ?? ''}
-          noteContent={content}
-          noteFormat={currentNote?.format ?? 'markdown'}
-          history={currentNote?.id ? (aiConvs[currentNote.id] || []) : []}
-          onHistoryChange={(h) => {
-            if (currentNote?.id) setAiConvs(prev => ({ ...prev, [currentNote.id]: h }))
-          }}
-          onClose={() => setAiOpen(false)}
-          onInsert={(text) => {
-            codeEditorRef.current?.insertText(text, '', '', undefined)
-            setAiOpen(false)
-          }}
-          onReplace={(text) => {
-            if (currentNote?.format === 'richtext') {
-              richtextEditorRef.current?.setHTML(text)
-            } else {
-              setContent(text)
-            }
-            setAiOpen(false)
-          }}
-        />,
-        document.body
       )}
     </div>
 
@@ -1365,7 +1350,8 @@ function MermaidMenu({ onInsert }: { onInsert: (type: string) => void }) {
   )
 }
 
-function AIDialog({ noteId, noteTitle, noteContent, noteFormat, history, onHistoryChange, onClose, onInsert, onReplace }: {
+export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteFormat, history, onHistoryChange, onClose, onReplace }: {
+  mode?: 'modal' | 'panel'
   noteId: string
   noteTitle: string
   noteContent: string
@@ -1373,7 +1359,6 @@ function AIDialog({ noteId, noteTitle, noteContent, noteFormat, history, onHisto
   history: Array<{ role: 'user' | 'assistant'; content: string }>
   onHistoryChange: (h: Array<{ role: 'user' | 'assistant'; content: string }>) => void
   onClose: () => void
-  onInsert: (text: string) => void
   onReplace: (text: string) => void
 }) {
   const [prompt, setPrompt] = useState('')
@@ -1421,7 +1406,10 @@ function AIDialog({ noteId, noteTitle, noteContent, noteFormat, history, onHisto
       }
       const messages = [systemMsg, ...newHistory.map(m => ({ role: m.role, content: m.content }))]
       const res = await window.inkslateApi.ai.chat(messages)
-      onHistoryChange([...newHistory, { role: 'assistant', content: res || 'AI 未返回内容' }])
+      const content = res || 'AI 未返回内容'
+      onHistoryChange([...newHistory, { role: 'assistant', content }])
+      // 自动填充：AI 返回后直接写入笔记
+      onReplace(stripFence(content))
     } catch (e: any) {
       setError(e?.message || '请求失败')
     } finally {
@@ -1436,18 +1424,29 @@ function AIDialog({ noteId, noteTitle, noteContent, noteFormat, history, onHisto
     return text.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '')
   }
 
+  const isPanel = mode === 'panel'
+
   return (
-    <div className="search-dialog-overlay" onMouseDown={onClose}>
-      <div className="search-dialog" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ width: 750, maxHeight: '88vh', minHeight: '60vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div className="search-dialog-input-row" style={{ flexShrink: 0, justifyContent: 'space-between', padding: '8px 16px' }}>
+    <div
+      className={isPanel ? '' : 'search-dialog-overlay'}
+      onMouseDown={isPanel ? undefined : onClose}
+      style={isPanel ? { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: 'var(--bg-primary)' } : undefined}
+    >
+      <div className={isPanel ? '' : 'search-dialog'} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={isPanel ? { display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 } : { width: 750, maxHeight: '88vh', minHeight: '60vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flexShrink: 0, justifyContent: 'space-between', padding: '8px 12px', display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-color)' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
             <Bot size={16} style={{ color: 'var(--accent-color)' }} />AI 写作
           </span>
-          {history.length > 0 && (
-            <button onClick={() => { onHistoryChange([]); setError('') }} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
-              清空对话
+          <div style={{ display: 'flex', gap: 4 }}>
+            {history.length > 0 && (
+              <button onClick={() => { onHistoryChange([]); setError('') }} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
+                清空对话
+              </button>
+            )}
+            <button onClick={onClose} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
+              ✕
             </button>
-          )}
+          </div>
         </div>
 
         <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: '8px 16px' }}>
@@ -1515,20 +1514,8 @@ function AIDialog({ noteId, noteTitle, noteContent, noteFormat, history, onHisto
             {loading ? '...' : '发送'}
           </button>
         </div>
-
-        {lastAssistant && (
-          <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
-            <button onClick={() => onInsert(stripFence(lastAssistant!))} style={aiBtnStyle('var(--accent-color)')}>
-              插入到光标位置
-            </button>
-            <button onClick={() => onReplace(stripFence(lastAssistant!))} style={aiBtnStyle('#22c55e')}>
-              替换全部内容
-            </button>
-            <div style={{ flex: 1 }} />
-            <button onClick={onClose} style={{ ...aiBtnStyle('transparent'), color: 'var(--text-primary)' }}>关闭</button>
-          </div>
-        )}
       </div>
+      {isPanel ? null : <div className="search-dialog-overlay" />}
     </div>
   )
 }

@@ -53,6 +53,10 @@ interface AppState {
   reorderNotes: (notebookId: string, orderedIds: string[]) => Promise<void>
   /** 拖动排序：parentId 下，orderedIds 是新顺序；parentId=null 表示顶级 */
   reorderNotebooks: (parentId: string | null, orderedIds: string[]) => Promise<void>
+  /** 移动笔记到新笔记本 */
+  moveNote: (id: string, newNotebookId: string) => Promise<void>
+  /** 移动笔记本到新父笔记本 */
+  moveNotebook: (id: string, newParentId: string | null) => Promise<void>
 
   // ============ 回收站 ============
   deletedNotes: Note[]
@@ -332,7 +336,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectNotebook: (id) => {
-    set({ selectedNotebookId: id })
+    set({ selectedNotebookId: id, selectedNoteId: null })
   },
 
   // ============ 多标签页 ============
@@ -554,6 +558,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       const rest = state.notebooks.filter(n => n.parentId !== parentId)
       return { notebooks: [...rest, ...reordered] }
     })
+    await get().refreshSyncStatus()
+  },
+
+  moveNote: async (id, newNotebookId) => {
+    await window.inkslateApi.notes.move(id, newNotebookId)
+    await get().loadNotes()
+    await get().refreshSyncStatus()
+  },
+
+  moveNotebook: async (id, newParentId) => {
+    await window.inkslateApi.notebooks.move(id, newParentId)
+    await get().loadNotebooks()
     await get().refreshSyncStatus()
   },
 
