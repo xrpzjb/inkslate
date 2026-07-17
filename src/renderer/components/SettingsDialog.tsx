@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, Settings as SettingsIcon, Type, Keyboard, Info, Bot } from 'lucide-react'
 import { useAppStore } from '../store/app'
+import { toast } from './Toast'
 
 /** 全局字体选项 */
 export const FONT_OPTIONS: { value: string; label: string; stack: string; mono?: boolean; bold?: boolean }[] = [
@@ -73,6 +74,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     glm:        { label: '智谱 GLM',                url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4-flash' },
     moonshot:   { label: '月之暗面 (Kimi)',         url: 'https://api.moonshot.cn/v1/chat/completions',           model: 'moonshot-v1-8k' },
     openai:     { label: 'OpenAI',                  url: 'https://api.openai.com/v1/chat/completions',            model: 'gpt-4o-mini' },
+    opencode:   { label: 'OpenCode Go',              url: 'https://opencode.ai/zen/go/v1/chat/completions',       model: 'deepseek-v4-flash' },
     custom:     { label: '自定义 (OpenAI 兼容)',    url: '',                                                     model: '' },
   }
   const aiModels: Record<string, string[]> = {
@@ -81,7 +83,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     glm:      ['glm-4-flash', 'glm-4-plus', 'glm-4-air', 'glm-4-long'],
     moonshot: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
     openai:   ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
+    opencode: ['grok-4.5', 'glm-5.2', 'glm-5.1', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'deepseek-v4-pro', 'deepseek-v4-flash', 'mimo-v2.5', 'mimo-v2.5-pro', 'minimax-m3', 'minimax-m2.7', 'minimax-m2.5', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus'],
   }
+  // Anthropic 格式的模型（需要不同的 API 端点）
+  const anthropicModels = new Set(['minimax-m3', 'minimax-m2.7', 'minimax-m2.5', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus'])
   const [aiProvider, setAiProvider] = useState(settings?.ai?.provider ?? 'deepseek')
   const [aiUrl, setAiUrl] = useState(settings?.ai?.apiUrl ?? aiPresets['deepseek'].url)
   const [aiModel, setAiModel] = useState(settings?.ai?.model ?? aiPresets['deepseek'].model)
@@ -223,17 +228,24 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               style={aiInputStyle}
             />
             <div style={{ marginBottom: 8 }}>
-              <input
+              <select
                 value={aiModel}
-                onChange={(e) => setAiModel(e.target.value)}
+                onChange={(e) => {
+                  const m = e.target.value
+                  setAiModel(m)
+                  if (aiProvider === 'opencode') {
+                    const base = 'https://opencode.ai/zen/go/v1'
+                    setAiUrl(anthropicModels.has(m) ? `${base}/messages` : `${base}/chat/completions`)
+                  }
+                }}
                 onBlur={saveAiConfig}
-                placeholder="模型名称或自定义输入"
-                list="ai-model-list"
-                style={aiInputStyle}
-              />
-              <datalist id="ai-model-list">
-                {(aiModels[aiProvider] || []).map(m => <option key={m} value={m} />)}
-              </datalist>
+                className="settings-font-select"
+              >
+                {(aiModels[aiProvider] || aiModel ? [...new Set([...((aiModels[aiProvider] || [])), aiModel])] : []).map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>如需其他模型，切到自定义提供商手动输入</div>
             </div>
             <input
               value={aiKey}
@@ -244,7 +256,23 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               autoComplete="off"
               style={aiInputStyle}
             />
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>支持 DeepSeek / 通义千问 / GLM / Kimi 等国内大模型</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+              <button
+                onClick={async () => {
+                  if (!aiUrl || !aiKey) return
+                  try {
+                    const res = await window.inkslateApi.ai.chat([{ role: 'user', content: 'hi' }])
+                    toast.success(res ? '连接成功' : '连接成功（无返回）')
+                  } catch (e: any) {
+                    toast.error('连接失败: ' + (e?.message || '未知'))
+                  }
+                }}
+                style={{ padding: '6px 14px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, cursor: 'pointer' }}
+              >
+                测试连接
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>支持 DeepSeek / 通义千问 / GLM / Kimi 等国内大模型</span>
+            </div>
           </div>
 
           {/* 快捷键入口 */}
@@ -260,7 +288,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <div className="shortcuts-footer">
-          作者：heimin · 本项目全程使用 minimax m3 开发
+          作者：heimin
         </div>
       </div>
       <style>{`

@@ -1388,28 +1388,33 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
 
       const systemMsg = {
         role: 'system',
-        content: `你是 Inkslate 的 AI 方案助手。你拥有 scan_dir、read_file、grep_dir 三个工具，可以访问用户的本地文件系统。
+        content: `你是 Inkslate 的 AI 笔记编辑助手。你拥有 scan_dir、read_file、grep_dir 三个工具。
 
-高效工作流：
-1. 先用 scan_dir 了解目录结构
-2. 用 grep_dir 批量搜索，一次获取所有匹配行
-3. 仅在需要详细信息时才用 read_file 读取单个文件
-4. 在单条回复中尽量批量调用工具
+核心规则：
+- 你必须输出完整的笔记最终内容（保留所有原文，在用户指定的位置插入/修改）
+- 不要只输出新增部分——否则原文会丢失
+- 如果用户说"在xxx下面插入图片"，你需要在原文对应位置插入图片，然后输出完整笔记
+- 如果用户说"生成一张图放到笔记顶部"，输出图片后接着输出原文全部内容
 
-输出规则：
-- ${formatHint}
-- 不要输出"数据很全面"、"我将更新到笔记中"等闲聊
-- 不要说你"无法访问本地文件系统"——你有工具
-- 不要要求用户自己执行命令
+图片：你可以生成图片，用 Markdown 格式 ![](URL) 输出。
 
-当前笔记：${noteTitle ? `"${noteTitle}"` : '(未命名)'}${noteContent ? `\n现有内容：\`\`\`\n${noteContent.slice(0, 2000)}${noteContent.length > 2000 ? '\n...(省略)' : ''}\n\`\`\`` : ''}`
-      }
+${formatHint}
+不要闲聊，不要输出"数据很全面"等客套话。
+
+当前笔记标题：${noteTitle || '(未命名)'}
+当前笔记内容（这是原文，你必须保留并在此基础上修改）：
+\`\`\`
+${noteContent}
+\`\`\``}
       const messages = [systemMsg, ...newHistory.map(m => ({ role: m.role, content: m.content }))]
       const res = await window.inkslateApi.ai.chat(messages)
       const content = res || 'AI 未返回内容'
       onHistoryChange([...newHistory, { role: 'assistant', content }])
-      // 自动填充：AI 返回后直接写入笔记
-      onReplace(stripFence(content))
+      // 仅当回复中有真实图片（URL 以图片扩展名结尾）才自动填入，避免虚假 URL 覆盖笔记
+      const hasRealImage = /!\[.*\]\(https?:\/\/[^\s)]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s)]*)?\)/i.test(content)
+      if (hasRealImage) {
+        onReplace(stripFence(content))
+      }
     } catch (e: any) {
       setError(e?.message || '请求失败')
     } finally {
@@ -1446,8 +1451,14 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
             <button onClick={onClose} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
               ✕
             </button>
-          </div>
         </div>
+        {lastAssistant && (
+          <div style={{ display: 'flex', gap: 8, padding: '6px 12px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
+            <button onClick={() => onReplace(stripFence(lastAssistant!))} style={aiBtnStyle('var(--accent-color)')}>填入笔记</button>
+            <div style={{ flex: 1 }} />
+          </div>
+        )}
+      </div>
 
         <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: '8px 16px' }}>
           {history.length === 0 && !loading && (

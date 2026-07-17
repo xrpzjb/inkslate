@@ -548,11 +548,46 @@ ${payload?.html ?? ''}
       const arg2 = m[3]
       if (name === 'grep_dir') {
         results.push({ name, args: { path: arg1, pattern: arg2 || '.' } })
+      } else if (name === 'generate_image') {
+        results.push({ name, args: { prompt: arg1 } })
       } else {
         results.push({ name, args: name === 'scan_dir' ? { path: arg1 } : { path: arg1 } })
       }
     }
     return results
+  }
+
+  const processAiImages = async (text: string): Promise<string> => {
+    const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)|(https?:\/\/[^\s"'<>]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"'<>]*)?)/gi
+    let result = text
+    const matches: Array<{ full: string; alt: string; url: string }> = []
+    let m
+    while ((m = imgRegex.exec(text)) !== null) {
+      const url = m[2] || m[3]
+      if (url.startsWith('http')) {
+        matches.push({ full: m[0], alt: m[1] || 'image', url })
+      }
+    }
+    if (matches.length === 0) return text
+
+    // 存到 notes 目录（Git 跟踪），而不是 files 目录
+    const notesDir = path.join(path.dirname(getFilesDir()), 'notes', 'ai-images')
+    fs.mkdirSync(notesDir, { recursive: true })
+
+    for (const match of matches) {
+      try {
+        const resp = await fetch(match.url)
+        if (!resp.ok) continue
+        const buffer = Buffer.from(await resp.arrayBuffer())
+        const ext = match.url.split('.').pop()?.split('?')[0] || 'png'
+        const filename = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+        const filepath = path.join(notesDir, filename)
+        fs.writeFileSync(filepath, buffer)
+        // 用相对路径，Git 同步时其他环境也能加载
+        result = result.replace(match.full, `![${match.alt}](${filename})`)
+      } catch { /* skip failed images */ }
+    }
+    return result
   }
 
   ipcMain.handle(IPC_CHANNELS.AI_CHAT, async (_, messages: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string }>): Promise<string | null> => {
@@ -564,22 +599,44 @@ ${payload?.html ?? ''}
 
     try {
       let currentMessages = [...messages]
+      const isAnthropic = ai.apiUrl.includes('/messages')
 
       for (let round = 0; round < 100; round++) {
-        const resp = await fetch(ai.apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${ai.apiKey}`
-          },
-          body: JSON.stringify({
-            model: ai.model || 'deepseek-v4-flash',
-            messages: currentMessages,
-            tools: aiTools,
-            tool_choice: 'auto',
-            stream: false
+        let resp: Response
+        if (isAnthropic) {
+          // Anthropic 格式：system 单独传，messages 不含 system 角色
+          const systemMsg = currentMessages.find(m => m.role === 'system')
+          const chatMessages = currentMessages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }))
+          resp = await fetch(ai.apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'anthropic-version': '2023-06-01',
+              'x-api-key': ai.apiKey
+            },
+            body: JSON.stringify({
+              model: ai.model || 'deepseek-v4-flash',
+              max_tokens: 8192,
+              system: systemMsg?.content || '',
+              messages: chatMessages
+            })
           })
-        })
+        } else {
+          resp = await fetch(ai.apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${ai.apiKey}`
+            },
+            body: JSON.stringify({
+              model: ai.model || 'deepseek-v4-flash',
+              messages: currentMessages,
+              tools: aiTools,
+              tool_choice: 'auto',
+              stream: false
+            })
+          })
+        }
 
         if (!resp.ok) {
           const err = await resp.text().catch(() => resp.statusText)
@@ -587,6 +644,31 @@ ${payload?.html ?? ''}
         }
 
         const data = await resp.json() as any
+
+        if (isAnthropic) {
+          // Anthropic 响应：可能包含 text + image content blocks
+          const blocks = data?.content || []
+          let text = ''
+          for (const block of blocks) {
+            if (block.type === 'text') text += block.text
+            else if (block.type === 'image' && block.source?.data) {
+              // base64 图片直接写到本地
+              try {
+                const filesDir = getFilesDir()
+                const imgDir = path.join(filesDir, 'ai-images')
+                fs.mkdirSync(imgDir, { recursive: true })
+                const ext = block.source?.media_type?.split('/')[1] || 'png'
+                const filename = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+                const filepath = path.join(imgDir, filename)
+                fs.writeFileSync(filepath, Buffer.from(block.source.data, 'base64'))
+                text += `![image](${filepath.replace(/\\/g, '/')})\n`
+              } catch {}
+            }
+          }
+          if (!text) return null
+          return await processAiImages(text)
+        }
+
         const choice = data?.choices?.[0]
         const msg = choice?.message
 
@@ -622,7 +704,7 @@ ${payload?.html ?? ''}
           continue
         }
 
-        return msg.content ?? null
+        return await processAiImages(msg.content ?? '')
       }
 
       return '(AI 工具调用轮次超限)'
