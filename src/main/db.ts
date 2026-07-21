@@ -3,6 +3,7 @@ import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { Notebook, Note, AppSettings } from '../shared/types'
+import { isEncryptedContent, decryptWithCachedKey, encryptNoteContent, decryptNoteContent, hasCachedKey, getCachedKey, cacheKey, removeCachedKey } from './crypto'
 
 // 类型已经在函数内部使用，下面是接口占位
 export type { Notebook, Note, AppSettings }
@@ -149,6 +150,15 @@ export async function initDatabase(): Promise<void> {
   if (!hasSortOrderNotebooks) {
     db.exec(`ALTER TABLE notebooks ADD COLUMN sort_order INTEGER`)
     db.exec(`UPDATE notebooks SET sort_order = created_at WHERE sort_order IS NULL`)
+  }
+  const hasPasswordProtected = nbColumns.some(c => c.name === 'password_protected')
+  if (!hasPasswordProtected) {
+    db.exec(`ALTER TABLE notebooks ADD COLUMN password_protected INTEGER DEFAULT 0`)
+  }
+  // notes 表：加密标记
+  const hasIsEncrypted = columns.some(c => c.name === 'is_encrypted')
+  if (!hasIsEncrypted) {
+    db.exec(`ALTER TABLE notes ADD COLUMN is_encrypted INTEGER DEFAULT 0`)
   }
 
   // 设置表
@@ -555,10 +565,10 @@ function rowToNote(row: any, content: string = ''): Note {
     path: row.path,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    icon: row.icon,
     isDeleted: !!row.is_deleted,
-    deletedAt: row.deleted_at ?? undefined,
-    sortOrder: row.sort_order ?? row.created_at
+    icon: row.icon ?? undefined,
+    sortOrder: row.sort_order ?? undefined,
+    isEncrypted: row.is_encrypted === 1 || isEncryptedContent(content)
   }
 }
 
@@ -701,7 +711,13 @@ const dbMethods = {
         getDatabase().prepare('UPDATE notes SET path = ? WHERE id = ?').run(fixedPath, row.id)
       } catch {}
     }
-    return rowToNote(row, content)
+    const note = rowToNote(row, content)
+    // 尝试用缓存 key 解密
+    if (note.isEncrypted && hasCachedKey(row.notebook_id)) {
+      const decrypted = decryptWithCachedKey(content, row.notebook_id)
+      if (decrypted !== null) note.content = decrypted
+    }
+    return note
   },
 
   createNote(title: string, notebookId: string, parentId: string | null, icon?: string, format: Note['format'] = 'markdown', language?: string, url?: string): Note {
@@ -1304,6 +1320,77 @@ const dbMethods = {
       }
     })
     tx()
+  },
+
+  /** 检查笔记本是否受密码保护 */
+  isNotebookProtected(notebookId: string): boolean {
+    const row = getDatabase().prepare('SELECT password_protected FROM notebooks WHERE id = ?').get(notebookId) as any
+    if (row?.password_protected) return true
+    // 兜底：检查笔记是否已加密
+    const count = getDatabase().prepare('SELECT COUNT(*) as c FROM notes WHERE notebook_id = ? AND is_encrypted = 1 AND is_deleted = 0').get(notebookId) as any
+    return (count?.c ?? 0) > 0
+  },
+
+  /** 给笔记本设置密码：加密所有笔记内容 */
+  setNotebookPassword(notebookId: string, password: string): void {
+    const d = getDatabase()
+    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all() as any[]
+    for (const row of notes) {
+      const { content } = resolveNoteContent(row)
+      if (!content || isEncryptedContent(content)) continue
+      const encrypted = encryptNoteContent(content, password)
+      // 写入加密内容
+      if (row.path && fs.existsSync(row.path) && row.format !== 'url' && row.format !== 'file') {
+        fs.writeFileSync(row.path, encrypted, 'utf-8')
+      }
+      d.prepare('UPDATE notes SET content = ?, is_encrypted = 1 WHERE id = ?').run(encrypted, row.id)
+    }
+    d.prepare('UPDATE notebooks SET password_protected = 1 WHERE id = ?').run(notebookId)
+    // 缓存 key
+    const firstNote = d.prepare('SELECT content FROM notes WHERE notebook_id = ? AND is_encrypted = 1 AND is_deleted = 0 LIMIT 1').get(notebookId) as any
+    if (firstNote?.content) {
+      const obj = JSON.parse(firstNote.content)
+      cacheKey(notebookId, password, obj.salt)
+    }
+  },
+
+  /** 移除笔记本密码：解密所有笔记内容 */
+  removeNotebookPassword(notebookId: string, password: string): boolean {
+    const d = getDatabase()
+    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all() as any[]
+    for (const row of notes) {
+      const { content } = resolveNoteContent(row)
+      if (!content || !isEncryptedContent(content)) continue
+      const decrypted = decryptNoteContent(content, password)
+      if (decrypted === null) return false
+      if (row.path && fs.existsSync(row.path) && row.format !== 'url' && row.format !== 'file') {
+        fs.writeFileSync(row.path, decrypted, 'utf-8')
+      }
+      d.prepare('UPDATE notes SET content = ?, is_encrypted = 0 WHERE id = ?').run(decrypted, row.id)
+    }
+    d.prepare('UPDATE notebooks SET password_protected = 0 WHERE id = ?').run(notebookId)
+    removeCachedKey(notebookId)
+    return true
+  },
+
+  /** 验证密码并缓存 key（供查看笔记时解密用） */
+  unlockNotebook(notebookId: string, password: string): boolean {
+    const row = getDatabase().prepare('SELECT content FROM notes WHERE notebook_id = ? AND is_encrypted = 1 AND is_deleted = 0 LIMIT 1').get(notebookId) as any
+    if (!row?.content) return false
+    try {
+      const obj = JSON.parse(row.content)
+      if (!obj.salt) return false
+      cacheKey(notebookId, password, obj.salt)
+      // 验证：尝试解密
+      const test = decryptNoteContent(row.content, password)
+      if (test === null) {
+        removeCachedKey(notebookId)
+        return false
+      }
+      return true
+    } catch {
+      return false
+    }
   }
 }
 

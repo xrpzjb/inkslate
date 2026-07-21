@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useLayoutEffect, forwardRef, 
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { appThemes } from '../themes'
-import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2 } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2, Lock, Unlock, AlertCircle } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
 import { toast } from './Toast'
@@ -340,6 +340,33 @@ export function Editor() {
 
   const fontSize = settings?.fontSize ?? 14
 
+  // 加密笔记检测
+  const [unlockPassword, setUnlockPassword] = useState('')
+  const [unlockError, setUnlockError] = useState<string | null>(null)
+  const [unlockBusy, setUnlockBusy] = useState(false)
+  const needsUnlock = currentNote?.isEncrypted && currentNote.content?.includes('"v":1,"salt"')
+
+  const handleUnlock = async () => {
+    if (!currentNote || !unlockPassword) return
+    setUnlockBusy(true)
+    setUnlockError(null)
+    try {
+      const r = await window.inkslateApi.notebookPassword.unlock(currentNote.notebookId, unlockPassword)
+      if (r.ok) {
+        // 重新获取解密后的笔记内容
+        const note = await window.inkslateApi.notes.get(currentNote.id)
+        if (note) useAppStore.setState({ currentNote: note })
+        setUnlockPassword('')
+      } else {
+        setUnlockError(r.message || '密码错误')
+      }
+    } catch (e: any) {
+      setUnlockError(e?.message || '解锁失败')
+    } finally {
+      setUnlockBusy(false)
+    }
+  }
+
   if (!currentNote) {
     return (
       <div style={{
@@ -359,8 +386,34 @@ export function Editor() {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }} data-editor-dark={settings?.editorDark === true ? 'true' : undefined}>
-            <div style={{
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }} data-editor-dark={settings?.editorDark === true ? 'true' : undefined}>
+      {needsUnlock && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32, background: 'var(--bg-primary)', zIndex: 10 }}>
+          <Lock size={48} opacity={0.3} />
+          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>此笔记受密码保护</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>请输入笔记本密码以查看内容</div>
+          <div style={{ display: 'flex', gap: 8, width: 280 }}>
+            <input
+              type="password"
+              value={unlockPassword}
+              onChange={(e) => setUnlockPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+              placeholder="输入密码"
+              style={{ flex: 1, padding: '8px 12px', fontSize: 13, border: '1px solid var(--border-color)', borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', outline: 'none' }}
+              autoFocus
+            />
+            <button onClick={handleUnlock} disabled={unlockBusy || !unlockPassword} style={{ padding: '8px 16px', fontSize: 13, borderRadius: 6, border: 'none', background: unlockBusy ? 'var(--bg-hover)' : 'var(--accent-color)', color: '#fff', cursor: unlockBusy ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {unlockBusy ? <Loader2 size={14} className="spin" /> : <Unlock size={14} />} 解锁
+            </button>
+          </div>
+          {unlockError && (
+            <div style={{ fontSize: 12, color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <AlertCircle size={12} /> {unlockError}
+            </div>
+          )}
+        </div>
+      )}
+      <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: 4,

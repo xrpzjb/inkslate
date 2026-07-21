@@ -132,6 +132,16 @@ const api = {
   getWorkDir: (): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_WORKDIR),
 
+  /** 笔记本密码 */
+  notebookPassword: {
+    set: (notebookId: string, password: string): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_SET_PASSWORD, notebookId, password),
+    remove: (notebookId: string, password: string): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_REMOVE_PASSWORD, notebookId, password),
+    unlock: (notebookId: string, password: string): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_UNLOCK, notebookId, password)
+  },
+
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET),
     update: (settings: Partial<AppSettings>): Promise<AppSettings> =>

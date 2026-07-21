@@ -6,7 +6,64 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   padding: 4px;
   z-index: 9999;
-  width: 420px;
+  width: 520px;
+}
+
+/* ============ 搜索栏 ============ */
+.notebook-icon-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 6px 6px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-tertiary);
+}
+
+.notebook-icon-picker-search:focus-within {
+  border-color: var(--accent-color);
+}
+
+.notebook-icon-picker-search input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-primary);
+  padding: 0;
+  font-family: inherit;
+}
+
+.notebook-icon-picker-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.notebook-icon-picker-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.notebook-icon-picker-search-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.notebook-icon-picker-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 20px;
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 
 .notebook-icon-picker-header {
@@ -34,6 +91,39 @@
 .notebook-icon-picker-close:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* ============ Fill 切换 ============ */
+.notebook-icon-picker-fill-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.notebook-icon-picker-fill-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background 100ms, color 100ms, border-color 100ms;
+}
+
+.notebook-icon-picker-fill-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.notebook-icon-picker-fill-btn.active {
+  background: var(--accent-bg);
+  color: var(--accent-color);
+  border-color: var(--accent-color);
 }
 
 /* ============ 分类标签栏 ============ */
@@ -104,11 +194,12 @@
 /* ============ 图标网格 ============ */
 .notebook-icon-picker-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
-  max-height: 300px;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  height: 280px;
   overflow-y: auto;
-  padding: 4px 8px;
+  overflow-x: hidden;
+  padding: 8px;
 }
 
 .notebook-icon-picker-item {
@@ -119,10 +210,17 @@
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-primary);
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   padding: 0;
   transition: background 100ms, color 100ms, border-color 100ms;
+}
+
+.notebook-icon-picker-item > span,
+.notebook-icon-picker-item > svg {
+  font-size: 32px;
+  width: 32px;
+  height: 32px;
 }
 
 .notebook-icon-picker-item:hover {

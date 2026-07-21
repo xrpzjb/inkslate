@@ -4,29 +4,34 @@ import { NoteTreeNode, Note, Notebook } from '@shared/types'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
-  FileDown, FileCode, Globe, Link2, Paperclip, Palette, History, ArrowRightLeft
+  FileDown, FileCode, Globe, Link2, Paperclip, Palette, History, ArrowRightLeft,
+  Lock, Unlock, Clock
 } from 'lucide-react'
-import * as LucideIcons from 'lucide-react'
-import * as PhosphorIcons from '@phosphor-icons/react'
+import { MatIcon } from './MatIcon'
+import { IonIcon } from './IonIcon'
 import { toast } from './Toast'
 import { confirm } from './ConfirmDialog'
 import { IconPicker } from './IconPicker'
+import { PasswordDialog } from './PasswordDialog'
 
-/** 笔记本图标：把 DB 里存的图标名（字符串）查表渲染成 lucide / phosphor 组件。
+/** 笔记本图标：从 DB 图标名渲染 MatIcon / IonIcon 组件。
+ *  - mat:icon_name (轮廓) 或 mat:icon_name:fill (填充)
+ *  - io:icon-name (Ionicons)
  *  - 没设图标 → 展开用 FolderOpen，折叠用 Folder
- *  - 设了图标但找不到对应组件 → 兜底用 Folder
- *  - 以 ph: 开头的图标名从 Phosphor Icons 查找，支持实心填充图标
  */
 function renderNotebookIcon(iconName: string | null | undefined, isExpanded: boolean) {
   if (!iconName) {
     return isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />
   }
-  if (iconName.startsWith('ph:')) {
-    const Icon = (PhosphorIcons as any)[iconName.slice(3)]
-    if (Icon) return <Icon size={14} weight="fill" />
+  if (iconName.startsWith('io:')) {
+    return <IonIcon name={iconName.slice(3)} size={14} />
   }
-  const Icon = (LucideIcons as any)[iconName]
-  if (Icon) return <Icon size={14} />
+  if (iconName.startsWith('mat:')) {
+    const rest = iconName.slice(4)
+    const filled = rest.endsWith(':fill')
+    const name = filled ? rest.slice(0, -5) : rest
+    return <MatIcon name={name} size={14} filled={filled} />
+  }
   return isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />
 }
 
@@ -174,7 +179,7 @@ export function Sidebar() {
     return () => document.removeEventListener('mousedown', onDown, true)
   }, [contextMenu])
   // 笔记本图标选择器：null 时不显示，否则 { notebookId, position }
-  const [iconPicker, setIconPicker] = useState<{ notebookId: string; currentIcon: string | null; position: { top: number; left: number } } | null>(null)
+  const [iconPicker, setIconPicker] = useState<{ notebookId: string; currentIcon: string | null } | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; type: 'notebook' | 'note'; value: string } | null>(null)
   // 新建网址笔记：自定义 modal（Electron renderer 不支持 window.prompt）
   const [urlDialog, setUrlDialog] = useState<{
@@ -188,6 +193,12 @@ export function Sidebar() {
     nodeId: string
     nodeType: 'notebook' | 'note'
     nodeName: string
+  } | null>(null)
+  // 密码弹框
+  const [passwordDialog, setPasswordDialog] = useState<{
+    notebookId: string
+    notebookName: string
+    mode: 'set' | 'remove' | 'unlock'
   } | null>(null)
 
   useEffect(() => {
@@ -537,6 +548,13 @@ export function Sidebar() {
     }
   }
 
+  const showGitHistory = (node: NoteTreeNode): boolean => {
+    if (node.type !== 'note') return false
+    const note = notes.find(n => n.id === node.id)
+    if (!note) return false
+    return !['url', 'file'].includes(note.format) && !!(useAppStore.getState().settings?.gitSync?.configured)
+  }
+
   const renderNode = (node: NoteTreeNode, depth: number = 0) => {
     const isExpanded = expanded.has(node.id)
     const isSelected = selectedNoteId === node.id || selectedNotebookId === node.id
@@ -790,21 +808,38 @@ export function Sidebar() {
               />
 
               {contextMenu.node.type === 'notebook' && (
-                <MenuItem
-                  icon={<Palette size={14} />}
-                  label="更换图标..."
-                  onClick={(e) => {
-                    const anchor = e.currentTarget as HTMLElement
-                    const rect = anchor.getBoundingClientRect()
-                    const nb = contextMenu.node!
-                    setContextMenu(null)
-                    setIconPicker({
-                      notebookId: nb.id,
-                      currentIcon: nb.icon ?? null,
-                      position: { top: rect.top, left: rect.right + 6 }
-                    })
-                  }}
-                />
+                <>
+                  <MenuItem
+                    icon={<Palette size={14} />}
+                    label="更换图标..."
+                    onClick={() => {
+                      const nb = contextMenu.node!
+                      setContextMenu(null)
+                      setIconPicker({
+                        notebookId: nb.id,
+                        currentIcon: nb.icon ?? null,
+                      })
+                    }}
+                  />
+                  <MenuItem
+                    icon={<Lock size={14} />}
+                    label="设置密码"
+                    onClick={() => {
+                      const node = contextMenu.node!
+                      setContextMenu(null)
+                      setPasswordDialog({ notebookId: node.id, notebookName: node.name, mode: 'set' })
+                    }}
+                  />
+                  <MenuItem
+                    icon={<Unlock size={14} />}
+                    label="移除密码"
+                    onClick={() => {
+                      const node = contextMenu.node!
+                      setContextMenu(null)
+                      setPasswordDialog({ notebookId: node.id, notebookName: node.name, mode: 'remove' })
+                    }}
+                  />
+                </>
               )}
 
               {contextMenu.node.type === 'note' && (
@@ -843,7 +878,6 @@ export function Sidebar() {
         <IconPicker
           notebookId={iconPicker.notebookId}
           currentIcon={iconPicker.currentIcon}
-          position={iconPicker.position}
           onClose={() => setIconPicker(null)}
         />
       )}
@@ -1029,6 +1063,23 @@ export function Sidebar() {
             </div>
           </div>
         </div>
+      )}
+
+      {passwordDialog && (
+        <PasswordDialog
+          mode={passwordDialog.mode}
+          notebookName={passwordDialog.notebookName}
+          onSubmit={async (password) => {
+            if (passwordDialog.mode === 'set') {
+              return await window.inkslateApi.notebookPassword.set(passwordDialog.notebookId, password)
+            } else if (passwordDialog.mode === 'remove') {
+              return await window.inkslateApi.notebookPassword.remove(passwordDialog.notebookId, password)
+            } else {
+              return await window.inkslateApi.notebookPassword.unlock(passwordDialog.notebookId, password)
+            }
+          }}
+          onClose={() => setPasswordDialog(null)}
+        />
       )}
     </div>
   )

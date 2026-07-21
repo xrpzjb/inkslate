@@ -14,16 +14,11 @@ export interface Note {
   title: string
   content: string
   format: NoteFormat
-  language?: CodeLanguage // 代码笔记用的语言
-  /** 网址笔记的 URL（format === 'url' 时必填） */
+  language?: CodeLanguage
   url?: string
-  /** 文件笔记：原始文件名（含扩展名，如 "报告.docx"） */
   fileName?: string
-  /** 文件笔记：app data 里的绝对路径 */
   filePath?: string
-  /** 文件笔记：扩展名（小写无点，如 "pdf"） */
   fileExt?: string
-  /** 文件笔记：文件字节数 */
   fileSize?: number
   notebookId: string
   parentId: string | null
@@ -31,11 +26,10 @@ export interface Note {
   createdAt: number
   updatedAt: number
   isDeleted: boolean
-  /** 删除时间戳（毫秒），仅在 isDeleted=true 时有意义 */
   deletedAt?: number
   icon?: string
-  /** 用户手动拖动排序的稳定顺序（毫秒时间戳或自定义数字） */
   sortOrder?: number
+  isEncrypted?: boolean
 }
 
 export interface Notebook {
@@ -258,6 +252,10 @@ export const IPC_CHANNELS = {
   GIT_LOG: 'git:log',
   GIT_SHOW_FILE: 'git:show-file',
   GIT_GET_WORKDIR: 'git:get-workdir',
+  // 笔记加密
+  NOTEBOOK_SET_PASSWORD: 'notebook:set-password',
+  NOTEBOOK_REMOVE_PASSWORD: 'notebook:remove-password',
+  NOTEBOOK_UNLOCK: 'notebook:unlock',
   // AI
   AI_CHAT: 'ai:chat',
   AI_CONFIGURE: 'ai:configure'

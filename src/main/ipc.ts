@@ -5,6 +5,7 @@ import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult } from '..
 import { dbApi, getFilesDir, slugify, getUniqueFileName } from './db'
 import { OssManager } from './oss/manager'
 import { GitManager } from './git/manager'
+import { encryptWithCachedKey, hasCachedKey } from './crypto'
 
 let ProxyAgent: any = undefined
 try {
@@ -55,6 +56,37 @@ export function setupIpcHandlers(): void {
     gitMgr.exportMetadata()
   })
 
+  // ============ 笔记本密码 ============
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_SET_PASSWORD, async (_, notebookId: string, password: string): Promise<{ ok: boolean; message: string }> => {
+    try {
+      dbApi.setNotebookPassword(notebookId, password)
+      gitMgr.exportMetadata()
+      return { ok: true, message: '密码设置成功' }
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? '设置密码失败' }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_REMOVE_PASSWORD, async (_, notebookId: string, password: string): Promise<{ ok: boolean; message: string }> => {
+    try {
+      const success = dbApi.removeNotebookPassword(notebookId, password)
+      if (!success) return { ok: false, message: '密码错误，无法移除' }
+      gitMgr.exportMetadata()
+      return { ok: true, message: '密码已移除' }
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? '移除密码失败' }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_UNLOCK, async (_, notebookId: string, password: string): Promise<{ ok: boolean; message: string }> => {
+    try {
+      const success = dbApi.unlockNotebook(notebookId, password)
+      return success ? { ok: true, message: '验证成功' } : { ok: false, message: '密码错误' }
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? '验证失败' }
+    }
+  })
+
   // ============ 回收站 - 笔记本 ============
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_LIST_DELETED, async (): Promise<Notebook[]> => {
     return dbApi.listDeletedNotebooks()
@@ -82,11 +114,27 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.NOTE_CREATE, async (_, title: string, notebookId: string, parentId: string | null, icon?: string, format: 'markdown' | 'html' | 'richtext' | 'code' | 'url' = 'markdown', language?: string, url?: string): Promise<Note> => {
     const result = dbApi.createNote(title, notebookId, parentId, icon, format, language, url)
+    // 如果笔记本受密码保护且有缓存 key，自动加密新笔记
+    if (result && hasCachedKey(notebookId)) {
+      const encrypted = encryptWithCachedKey(result.content, notebookId)
+      if (encrypted) {
+        dbApi.updateNote(result.id, { content: encrypted } as any)
+        dbApi.getNote(result.id)!.content = encrypted // force re-read
+      }
+    }
     gitMgr.exportMetadata()
-    return result
+    return dbApi.getNote(result.id)!
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_UPDATE, async (_, id: string, updates: Partial<Note>): Promise<Note> => {
+    // 如果内容被更新且笔记本受保护，加密内容
+    if (updates.content !== undefined) {
+      const note = dbApi.getNote(id)
+      if (note && hasCachedKey(note.notebookId)) {
+        const encrypted = encryptWithCachedKey(updates.content, note.notebookId)
+        if (encrypted) updates.content = encrypted
+      }
+    }
     const result = dbApi.updateNote(id, updates)
     if (updates.content !== undefined) {
       const exists = fs.existsSync(result.path)
