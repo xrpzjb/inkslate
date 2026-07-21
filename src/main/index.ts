@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, session } from 'electron'
 import path from 'node:path'
 import { setupIpcHandlers } from './ipc'
 import { buildMenuData, handleMenuClick, installAppMenu, setMenuThemeId } from './menu'
-import { initDatabase, closeDatabase, dbApi } from './db'
+import { initDatabase, closeDatabase, dbApi, repairNotePaths } from './db'
 import { OssManager } from './oss/manager'
 
 // Electron 30+ webSecurity 行为变更：单设 webPreferences.webSecurity: false 不再
@@ -39,10 +39,11 @@ function createMainWindow(): void {
   const loadMode = process.env.MDTEXT_LOAD
   if (loadMode === 'dev' || (loadMode !== 'file' && isDev)) {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+  // 始终打开开发者工具（调试用，后续可关闭）
+  mainWindow.webContents.openDevTools({ mode: 'detach' })
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
@@ -61,6 +62,9 @@ function createMainWindow(): void {
 async function bootstrap(): Promise<void> {
   // 初始化本地数据库
   await initDatabase()
+
+  // 启动时修复因移动/删除笔记本导致的路径错乱
+  try { repairNotePaths() } catch (e) { console.error('[db] repairNotePaths failed:', e) }
 
   OssManager.getInstance()
 

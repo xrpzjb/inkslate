@@ -37,8 +37,8 @@ interface AppState {
   loadNotes: () => Promise<void>
   selectNote: (id: string | null) => Promise<void>
   selectNotebook: (id: string | null) => void
-  createNotebook: (name: string, parentId: string | null, icon?: string) => Promise<void>
-  createNote: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: Note['format'], language?: Note['language'], url?: string) => Promise<void>
+  createNotebook: (name: string, parentId: string | null, icon?: string) => Promise<Notebook>
+  createNote: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: Note['format'], language?: Note['language'], url?: string) => Promise<Note>
   /** 仅更新内存里的 currentNote，不写库。供编辑器输入时即时同步给 Preview。 */
   updateCurrentNoteDraft: (updates: Partial<Note>) => void
   /** 写库持久化（防抖调用）。从 main process 拿回最新值刷新 currentNote。 */
@@ -196,6 +196,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     // 忽略过时响应（当前序列号已不是本次请求的 seq）
     if (get()._selectNoteSeq !== seq) return
     set({ currentNote: note })
+    // 同时更新 notes 缓存列表里这一条的 content，避免后续切回时用旧缓存覆盖
+    set((state) => ({
+      notes: state.notes.map((n) => (n.id === note.id ? note : n))
+    }))
     // 多标签页：维护 openTabs + activeTabId
     //  - 笔记已在 openTabs 里：仅切激活（不重复追加），且不改变布局
     //  - 笔记不在：追加到末尾 + 激活，并初始化布局
@@ -403,9 +407,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createNotebook: async (name, parentId, icon) => {
-    await window.inkslateApi.notebooks.create(name, parentId, icon)
+    const nb = await window.inkslateApi.notebooks.create(name, parentId, icon)
     await get().loadNotebooks()
     await get().refreshSyncStatus()
+    return nb
   },
   createNote: async (title, notebookId, parentId, icon, format, language, url) => {
     const note = await window.inkslateApi.notes.create(title, notebookId, parentId, icon, format, language, url)
@@ -427,6 +432,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
     }
     await get().refreshSyncStatus()
+    return note
   },
   updateNote: async (id, updates) => {
     get().setSaveStatus({ saving: true })

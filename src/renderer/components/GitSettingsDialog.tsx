@@ -77,12 +77,25 @@ export function GitSettingsDialog({ onClose }: { onClose: () => void }) {
       setResult({ ok: false, message: '请先填写仓库 URL' })
       return
     }
+    // 检查本地是否有真实数据（非默认空"我的笔记"）
+    const { hasRealData } = await window.inkslateApi.git.cloneCheck()
+    if (hasRealData) {
+      const confirmed = confirm('克隆将用远端仓库覆盖本地所有数据，本地未同步的笔记将丢失。\n确定要继续吗？')
+      if (!confirmed) return
+    }
     setBusy(true)
     setResult(null)
     try {
       const r = await window.inkslateApi.git.clone(repoUrl.trim())
       setResult(r)
-      if (r.ok) await useAppStore.getState().loadSettings()
+      if (r.ok) {
+        await useAppStore.getState().loadSettings()
+        // 刷新树状图：clone 后 DB 已被远端数据替换，需要重新加载笔记本和笔记
+        await Promise.all([
+          useAppStore.getState().loadNotebooks(),
+          useAppStore.getState().loadNotes()
+        ])
+      }
     } catch (e: any) {
       setResult({ ok: false, message: e?.message ?? '克隆失败' })
     } finally {

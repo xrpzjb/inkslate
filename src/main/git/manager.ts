@@ -5,7 +5,7 @@ import * as git from 'isomorphic-git'
 // @ts-ignore - isomorphic-git/http/node 无类型声明
 import http from 'isomorphic-git/http/node'
 import { AppSettings, Note } from '../../shared/types'
-import { dbApi, getNotesDir, getNotebookPath, getNotebookFilePath, slugify, getUniqueFileName } from '../db'
+import { dbApi, getNotesDir, getNotebookPath, getNotebookFilePath, slugify, getUniqueFileName, findFileRecursively } from '../db'
 
 /**
  * 在目录中查找匹配 slug 的文件（用于 git pull 后修复被损坏的 DB 路径）
@@ -198,6 +198,15 @@ export class GitManager {
       onAuth: this.auth
     })
     this.markInitialized()
+    // clone 后全量替换本地 SQLite（clone 语义就是用远端覆盖本地，不做合并）
+    try {
+      const recon = this.replaceFromMetadata()
+      if (recon.notebooksApplied || recon.notesApplied) {
+        console.log(`[git] clone: replaced ${recon.notebooksApplied} notebooks, ${recon.notesApplied} notes from metadata`)
+      }
+    } catch (e) {
+      console.error('[git] clone: replaceFromMetadata failed (non-fatal):', e)
+    }
   }
 
   /** 确保 remote origin 存在且指向配置的 repoUrl */
@@ -278,6 +287,7 @@ export class GitManager {
     try { fs.mkdirSync(inkslateDir, { recursive: true }) } catch {}
 
     const notebooks = dbApi.listActiveNotebooks()
+    console.log(`[git] exportMetadata: writing ${notebooks.length} notebooks:`, notebooks.map(n => ({ id: n.id, name: n.name, parentId: n.parentId })))
     fs.writeFileSync(
       path.join(inkslateDir, 'notebooks.json'),
       JSON.stringify({
@@ -329,11 +339,15 @@ export class GitManager {
    * Pull 完成后从 .inkslate/notebooks.json + notes.json 重建本地 SQLite
    * 让另一台机器（或者误删本地 DB 后）能从 git 历史恢复完整树
    *
-   * 行为：
+   * 行为（增量合并，绝不清空本地数据）：
    *  - 文件不存在 → 不动（老版本 git 仓库没有这俩文件 → 当 legacy 处理）
-   *  - 文件存在 → REPLACE 本地活跃记录（is_deleted=0）
+   *  - 文件存在 → 仅 INSERT/UPDATE 远端有的记录，本地独有的记录保留不动
    *  - 笔记的 `path` / `file_path` 优先用元数据中保存的原始值，仅当文件在磁盘上不存在时
    *    才按 notebook_id + title + format 重新计算（防止同一台机器上 pull 后文件名错乱）
+   *  - content 字段：优先保留本地已有 content，避免清空 url/richtext 等无文件笔记内容
+   *
+   * ⚠️ 此函数只在 pull 真正拉取到新 commit 时才被调用（见 pull()），
+   *    且只做增量合并，不会 DELETE 本地数据，因此不会造成数据丢失。
    */
   reconcileFromMetadata(): { notebooksApplied: number; notesApplied: number } {
     const dir = this.getWorkDir()
@@ -372,8 +386,9 @@ export class GitManager {
       return { notebooksApplied: 0, notesApplied: 0 }
     }
 
-    // 1. 替换 notebooks 表
-    dbApi.replaceNotebooks(notebooks.map((nb: any) => ({
+    // 1. 增量合并 notebooks 表（绝不 DELETE 本地数据）
+    //    mergeNotebooks 返回远端 id → 本地 id 的重定向映射（同名去重时用）
+    const notebookRemap = dbApi.mergeNotebooks(notebooks.map((nb: any) => ({
       id: nb.id,
       name: nb.name,
       parentId: nb.parent_id ?? null,
@@ -382,6 +397,8 @@ export class GitManager {
       updatedAt: nb.updated_at,
       sortOrder: nb.sort_order
     })))
+    console.log(`[git] reconcile: merged ${notebooks.length} remote notebooks, remap:`, JSON.stringify(notebookRemap))
+    console.log(`[git] reconcile: local notebook count after merge: ${dbApi.listActiveNotebooks().length}`)
 
     // 2. 替换 notes 表
     //
@@ -400,8 +417,10 @@ export class GitManager {
     } catch {}
 
     const finalNotes = notes.map((n: any) => {
+      // 如果 notebook 被同名去重，把笔记的 notebook_id 重定向到本地 id
+      const effectiveNotebookId = notebookRemap[n.notebook_id] ?? n.notebook_id
       const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : 'md'
-      const nbDir = getNotebookPath(n.notebook_id)
+      const nbDir = getNotebookPath(effectiveNotebookId)
 
       // === 笔记内容文件路径 ===
       const existing = existingNotePaths.get(n.id)
@@ -420,6 +439,15 @@ export class GitManager {
         try {
           const slug = slugify(n.title)
           const found = findFileBySlug(nbDir, slug, ext)
+          if (found) notePath = found
+        } catch {}
+      }
+      // ③.5 递归搜索：用文件名在整个 notebook 目录乃至 notes 目录搜索
+      if (!notePath) {
+        try {
+          const fileName = n.path ? path.basename(n.path) : `${slugify(n.title)}.${ext}`
+          let found = findFileRecursively(nbDir, fileName)
+          if (!found) found = findFileRecursively(getNotesDir(), fileName)
           if (found) notePath = found
         } catch {}
       }
@@ -448,7 +476,7 @@ export class GitManager {
         // ③ 扫描目录
         if (!filePath) {
           try {
-            const fp = getNotebookFilePath(n.notebook_id)
+            const fp = getNotebookFilePath(effectiveNotebookId)
             const fileSlug = slugify(n.file_name.replace(/\.[^.]+$/, ''))
             const fileExt = n.file_ext || 'bin'
             const found = findFileBySlug(fp, fileSlug, fileExt)
@@ -456,6 +484,135 @@ export class GitManager {
           } catch {}
         }
         // ④ getUniqueFileName 兜底
+        if (!filePath) {
+          try {
+            const fp = getNotebookFilePath(effectiveNotebookId)
+            const fileExt = n.file_ext || 'bin'
+            const fileSlug = slugify(n.file_name.replace(/\.[^.]+$/, ''))
+            const uniqueFile = getUniqueFileName(fileSlug, fileExt, fp)
+            filePath = path.join(fp, uniqueFile)
+          } catch {}
+        }
+      }
+      return {
+        id: n.id,
+        title: n.title,
+        notebookId: effectiveNotebookId,
+        parentId: n.parent_id,
+        path: notePath,
+        format: n.format,
+        language: n.language,
+        url: n.url,
+        fileName: n.file_name,
+        filePath,
+        fileExt: n.file_ext,
+        fileSize: n.file_size,
+        icon: n.icon,
+        createdAt: n.created_at,
+        updatedAt: n.updated_at,
+        sortOrder: n.sort_order
+      }
+    })
+    dbApi.mergeNotes(finalNotes)
+    console.log(`[git] reconcile: merged ${finalNotes.length} remote notes, local note count after: ${dbApi.listActiveNotes().length}`)
+
+    return { notebooksApplied: notebooks.length, notesApplied: notes.length }
+  }
+
+  /**
+   * 全量替换本地 SQLite（clone 用）
+   * 与 reconcileFromMetadata 的区别：直接 DELETE 本地活跃记录再 INSERT，
+   * 不做增量合并。clone 的语义就是用远端覆盖本地，不需要保留本地数据。
+   *
+   * 路径策略同 reconcileFromMetadata（见上）。
+   */
+  replaceFromMetadata(): { notebooksApplied: number; notesApplied: number } {
+    const dir = this.getWorkDir()
+    const inkslateDir = path.join(dir, '.inkslate')
+    const nbFile = path.join(inkslateDir, 'notebooks.json')
+    const noteFile = path.join(inkslateDir, 'notes.json')
+    if (!fs.existsSync(nbFile) || !fs.existsSync(noteFile)) {
+      return { notebooksApplied: 0, notesApplied: 0 }
+    }
+
+    let nbData: any
+    let noteData: any
+    try {
+      nbData = JSON.parse(fs.readFileSync(nbFile, 'utf-8'))
+      noteData = JSON.parse(fs.readFileSync(noteFile, 'utf-8'))
+    } catch (e) {
+      console.error('[git] replaceFromMetadata: failed to parse JSON', e)
+      return { notebooksApplied: 0, notesApplied: 0 }
+    }
+
+    const notebooks = Array.isArray(nbData.notebooks) ? nbData.notebooks : []
+    const notes = Array.isArray(noteData.notes) ? noteData.notes : []
+
+    // 1. 全量替换 notebooks 表
+    dbApi.replaceNotebooks(notebooks.map((nb: any) => ({
+      id: nb.id,
+      name: nb.name,
+      parentId: nb.parent_id ?? null,
+      icon: nb.icon,
+      createdAt: nb.created_at,
+      updatedAt: nb.updated_at,
+      sortOrder: nb.sort_order
+    })))
+
+    // 2. 全量替换 notes 表（路径策略同 reconcileFromMetadata）
+    const existingNotePaths = new Map<string, { path: string | null; filePath: string | null }>()
+    try {
+      for (const en of dbApi.listActiveNotes()) {
+        existingNotePaths.set(en.id, { path: en.path ?? null, filePath: en.filePath ?? null })
+      }
+    } catch {}
+
+    const finalNotes = notes.map((n: any) => {
+      const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : 'md'
+      const nbDir = getNotebookPath(n.notebook_id)
+      const existing = existingNotePaths.get(n.id)
+      let notePath: string | null = null
+
+      if (existing?.path && fs.existsSync(existing.path)) {
+        notePath = existing.path
+      }
+      if (!notePath && n.path && fs.existsSync(n.path)) {
+        notePath = n.path
+      }
+      if (!notePath) {
+        try {
+          const slug = slugify(n.title)
+          const found = findFileBySlug(nbDir, slug, ext)
+          if (found) notePath = found
+        } catch {}
+      }
+      if (!notePath) {
+        try {
+          const slug = slugify(n.title)
+          const unique = getUniqueFileName(slug, ext, nbDir)
+          notePath = path.join(nbDir, unique)
+        } catch (e) {
+          console.error('[git] replaceFromMetadata: failed to compute path for', n.id, e)
+        }
+      }
+
+      let filePath: string | null = null
+      if (n.format === 'file' && n.file_name) {
+        if (existing?.filePath && fs.existsSync(existing.filePath)) {
+          filePath = existing.filePath
+        }
+        if (!filePath && n.file_path && fs.existsSync(n.file_path)) {
+          filePath = n.file_path
+        }
+        if (!filePath) {
+          try {
+            const fp = getNotebookFilePath(n.notebook_id)
+            const fileSlug = slugify(n.file_name.replace(/\.[^.]+$/, ''))
+            const fileExt = n.file_ext || 'bin'
+            const found = findFileBySlug(fp, fileSlug, fileExt)
+            if (found) filePath = found
+          } catch {}
+        }
         if (!filePath) {
           try {
             const fp = getNotebookFilePath(n.notebook_id)
@@ -487,6 +644,7 @@ export class GitManager {
     })
     dbApi.replaceNotes(finalNotes)
 
+    console.log(`[git] replaceFromMetadata: replaced ${notebooks.length} notebooks, ${finalNotes.length} notes`)
     return { notebooksApplied: notebooks.length, notesApplied: notes.length }
   }
 
@@ -521,12 +679,16 @@ export class GitManager {
   }
 
   /**
-   * 一键同步：commit → pull → push
+   * 一键同步：pull → commit → push
    *
    * 为什么这个顺序：
-   *   1. 先 commit 本地变更（如果有）—— 这样工作区是干净的，pull 时不会撞工作区
-   *   2. pull 取回远端的新 commit —— 现在 git 是 source of truth，需要先把别人写的拉下来
-   *   3. push 把本地 commit（自己的 + 拉取合并的）推上去
+   *   1. 先 pull 远端变更（新机器/重装后先从 git 恢复元数据），且只在 pull 拿到新 commit 时才
+   *      增量合并本地 SQLite（绝不清空本地数据）
+   *   2. 再 commit 本地变更（如果有）—— exportMetadata 把本地元数据写入工作区
+   *   3. 最后 push 把本地 commit 推上去
+   *
+   * ⚠️ 关键防护：commit 在 pull 之后，避免空数据库的 exportMetadata 把远端元数据覆盖成空；
+   *    且 reconcile 只在 updated 时触发、且只做增量合并，杜绝"本地空 → 覆盖远端 → 远端丢失"的循环。
    *
    * 错误处理：任一步失败立刻返回，不继续后续步骤。返回结构化 result 让 UI 区分阶段。
    *
@@ -565,7 +727,11 @@ export class GitManager {
       return { ok: false, message: sshHint, phases, phase: 'commit' }
     }
 
-    // Step 1: commit 本地变更（如果有）
+    // Step 1: pull 远端变更（新机器拉取后重建 SQLite）
+    const pullResult = await this.pull()
+
+    // Step 2: commit 本地变更（如果有）
+    // pull 必须在 commit 之前，否则空数据库的 exportMetadata 会覆盖远端元数据
     try {
       const oid = await this.commitAll(`sync: ${new Date().toLocaleString('zh-CN')}`)
       phases.commit = oid ? 'ok' : 'skipped'
@@ -573,14 +739,12 @@ export class GitManager {
       phases.commit = 'failed'
       return { ok: false, message: e?.message ?? 'commit 失败', phases, phase: 'commit' }
     }
-
-    // Step 2: pull（即使本地没 commit 也要 pull；其他设备的 commit 也要拉过来）
-    const pullResult = await this.pull()
     if (!pullResult.ok) {
       phases.pull = 'failed'
       return { ok: false, message: '拉取失败：' + pullResult.message, phases, phase: 'pull' }
     }
-    phases.pull = pullResult.updated ? 'ok' : 'up-to-date'
+    // pull 阶段标记为 'ok' 的条件：获取了新 commit，或者 reconcile 重建了数据
+    phases.pull = (pullResult.updated || pullResult.reconciled) ? 'ok' : 'up-to-date'
 
     // Step 3: push（commit 或 pull 后通常都有新 commit 需要推上去）
     const pushResult = await this.push()
@@ -608,12 +772,12 @@ export class GitManager {
   }
 
   /** pull = fetch + merge（fastForward 优先，保持线性历史） */
-  async pull(): Promise<{ ok: boolean; message: string; updated: boolean }> {
-    if (!this.isConfigured()) return { ok: false, message: 'Git 未配置', updated: false }
-    if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化', updated: false }
-    if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写', updated: false }
+  async pull(): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean }> {
+    if (!this.isConfigured()) return { ok: false, message: 'Git 未配置', updated: false, reconciled: false }
+    if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化', updated: false, reconciled: false }
+    if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写', updated: false, reconciled: false }
     const sshHint = this.detectSshUrl(this.config!.repoUrl)
-    if (sshHint) return { ok: false, message: sshHint, updated: false }
+    if (sshHint) return { ok: false, message: sshHint, updated: false, reconciled: false }
     const dir = this.getWorkDir()
     const branch = this.config?.branch || 'main'
     try {
@@ -635,20 +799,33 @@ export class GitManager {
       // 无变更时返回 []
       const updated = Array.isArray(result) && result.length > 0
 
-      // 拉取后用 .inkslate/{notebooks,notes}.json 重建本地 SQLite
-      // —— 这样新机器/重装/误删 DB 后能从 git 历史恢复完整树
-      try {
-        const recon = this.reconcileFromMetadata()
-        if (recon.notebooksApplied || recon.notesApplied) {
-          console.log(`[git] reconciled ${recon.notebooksApplied} notebooks, ${recon.notesApplied} notes from metadata`)
+      // ⚠️ 关键护栏：只有在 pull 真正拉取到了新的 commit（updated === true）时，
+      // 才根据远端元数据重建/合并本地 SQLite。
+      //
+      // 原因：远端元数据（.inkslate/*.json）可能是本地之前 exportMetadata 写出的、
+      // 不完整甚至为空的内容（例如首次配置 git 时，本地空仓库被 push 上去）。
+      // 如果无条件 reconcile，会把远端那份"残缺/空"的元数据当作真相覆盖本地，
+      // 导致本地笔记被清空、随后又被 push 回远端 → 远程数据丢失的恶性循环。
+      //
+      // 只有当 fetch 拿到了别人写的真实 commit，才信任远端元数据并合并。
+      let reconciled = false
+      if (updated) {
+        try {
+          const recon = this.reconcileFromMetadata()
+          if (recon.notebooksApplied || recon.notesApplied) {
+            console.log(`[git] reconciled ${recon.notebooksApplied} notebooks, ${recon.notesApplied} notes from metadata`)
+            reconciled = true
+          }
+        } catch (e) {
+          console.error('[git] reconcile failed (non-fatal):', e)
         }
-      } catch (e) {
-        console.error('[git] reconcile failed (non-fatal):', e)
+      } else {
+        console.log('[git] pull: no new commits, skipping reconcile to avoid overwriting local data')
       }
 
-      return { ok: true, message: updated ? '拉取成功（有更新）' : '已是最新', updated }
+      return { ok: true, message: updated ? '拉取成功（有更新）' : '已是最新', updated, reconciled }
     } catch (e: any) {
-      return { ok: false, message: e?.message ?? 'pull 失败', updated: false }
+      return { ok: false, message: e?.message ?? 'pull 失败', updated: false, reconciled: false }
     }
   }
 

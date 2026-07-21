@@ -6,7 +6,7 @@ import {
   Palette,
   PanelLeftClose, PanelLeftOpen,
   Check, Upload, Download, Settings,
-  AlertCircle, RefreshCw
+  AlertCircle, RefreshCw, FolderPlus
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { THEME_LABELS } from '../../shared/themeLabels'
@@ -215,6 +215,14 @@ export function IconSidebar() {
     | { kind: 'sep' }
     | { kind: 'item'; id: string; label: string; hint?: string; onClick: () => void }
   > = [
+    {
+      kind: 'item', id: 'new-notebook', label: '新建笔记本',
+      onClick: () => {
+        setPopover(null)
+        clickMenu('new-notebook')
+      }
+    },
+    { kind: 'sep' },
     {
       kind: 'item', id: 'new-url', label: '网址笔记',
       onClick: () => {

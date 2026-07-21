@@ -91,6 +91,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [aiUrl, setAiUrl] = useState(settings?.ai?.apiUrl ?? aiPresets['deepseek'].url)
   const [aiModel, setAiModel] = useState(settings?.ai?.model ?? aiPresets['deepseek'].model)
   const [aiKey, setAiKey] = useState(settings?.ai?.apiKey ?? '')
+  const [aiProxyUrl, setAiProxyUrl] = useState(settings?.ai?.proxyUrl ?? '')
 
   const persist = (patch: Record<string, unknown>) => {
     const cur = useAppStore.getState().settings
@@ -146,7 +147,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   }
 
   const saveAiConfig = () => {
-    const ai = { provider: aiProvider, apiUrl: aiUrl, model: aiModel, apiKey: aiKey, configured: !!(aiUrl && aiKey) } as any
+    const ai = { provider: aiProvider, apiUrl: aiUrl, model: aiModel, apiKey: aiKey, proxyUrl: aiProxyUrl, configured: !!(aiUrl && aiKey) } as any
     persist({ ai })
     window.inkslateApi.ai.configure(ai).catch(() => {})
   }
@@ -256,7 +257,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               autoComplete="off"
               style={aiInputStyle}
             />
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+            <input
+              value={aiProxyUrl}
+              onChange={(e) => setAiProxyUrl(e.target.value)}
+              onBlur={saveAiConfig}
+              placeholder="代理地址（可选，如 http://127.0.0.1:7890）"
+              autoComplete="off"
+              style={aiInputStyle}
+            />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: -4 }}>
               <button
                 onClick={async () => {
                   if (!aiUrl || !aiKey) return

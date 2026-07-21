@@ -116,6 +116,11 @@ export async function initDatabase(): Promise<void> {
   if (!hasUrlNotes) {
     db.exec(`ALTER TABLE notes ADD COLUMN url TEXT`)
   }
+  // content：存储 url/richtext 等无独立文件笔记的内容，md/html/code 也保留副本兜底
+  const hasContent = columns.some(c => c.name === 'content')
+  if (!hasContent) {
+    db.exec(`ALTER TABLE notes ADD COLUMN content TEXT`)
+  }
   // 文件笔记：file_path / file_name / file_size / file_ext
   const hasFilePath = columns.some(c => c.name === 'file_path')
   if (!hasFilePath) {
@@ -676,14 +681,13 @@ const dbMethods = {
       ? d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC').all(notebookId)
       : d.prepare('SELECT * FROM notes WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC').all()
     return rows.map((row: any) => {
-      let content = ''
-      try {
-        if (row.format !== 'file' && row.format !== 'url' && row.format !== 'richtext' && row.path) {
-          if (fs.existsSync(row.path)) {
-            content = fs.readFileSync(row.path, 'utf-8')
-          }
-        }
-      } catch {}
+      const { content, fixedPath } = resolveNoteContent(row)
+      if (fixedPath && fixedPath !== row.path) {
+        // 异步修复 path，不阻塞读取
+        try {
+          d.prepare('UPDATE notes SET path = ? WHERE id = ?').run(fixedPath, row.id)
+        } catch {}
+      }
       return rowToNote(row, content)
     })
   },
@@ -691,13 +695,11 @@ const dbMethods = {
   getNote(id: string): Note | null {
     const row = getDatabase().prepare('SELECT * FROM notes WHERE id = ?').get(id) as any
     if (!row) return null
-    let content = ''
-    try {
-      if (fs.existsSync(row.path)) {
-        content = fs.readFileSync(row.path, 'utf-8')
-      }
-    } catch (e) {
-      console.error('read note failed:', e)
+    const { content, fixedPath } = resolveNoteContent(row)
+    if (fixedPath && fixedPath !== row.path) {
+      try {
+        getDatabase().prepare('UPDATE notes SET path = ? WHERE id = ?').run(fixedPath, row.id)
+      } catch {}
     }
     return rowToNote(row, content)
   },
@@ -841,8 +843,47 @@ const dbMethods = {
     getDatabase().prepare('UPDATE notes SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id)
   },
 
-  moveNote(id: string, newParentId: string | null): void {
-    getDatabase().prepare('UPDATE notes SET parent_id = ?, updated_at = ? WHERE id = ?').run(newParentId, Date.now(), id)
+  moveNote(id: string, newNotebookId: string | null): void {
+    const d = getDatabase()
+    const row = d.prepare('SELECT * FROM notes WHERE id = ?').get(id) as any
+    if (!row) return
+    if (newNotebookId === row.notebook_id) return  // 无变化
+
+    // 计算新笔记本目录
+    const newDir = newNotebookId ? getNotebookPath(newNotebookId) : getNotesDir()
+
+    // 移动内容文件（md/html/code 等）
+    let newPath: string | null = row.path
+    if (row.path && fs.existsSync(row.path) && newNotebookId) {
+      const fileName = path.basename(row.path)
+      newPath = path.join(newDir, fileName)
+      try {
+        fs.mkdirSync(newDir, { recursive: true })
+        fs.renameSync(row.path, newPath)
+      } catch (e) {
+        console.error('[db] moveNote file move failed:', row.path, '->', newPath, e)
+        newPath = row.path  // 移动失败保留原路径
+      }
+    }
+
+    // 移动 file 笔记的源文件
+    let newFilePath: string | null = row.file_path
+    if (row.file_path && fs.existsSync(row.file_path) && newNotebookId) {
+      const fileName = path.basename(row.file_path)
+      const newFilesDir = getNotebookFilePath(newNotebookId)
+      newFilePath = path.join(newFilesDir, fileName)
+      try {
+        fs.mkdirSync(newFilesDir, { recursive: true })
+        fs.renameSync(row.file_path, newFilePath)
+      } catch (e) {
+        console.error('[db] moveNote source file move failed:', row.file_path, '->', newFilePath, e)
+        newFilePath = row.file_path
+      }
+    }
+
+    // 更新 DB：切换 notebook、清空 parent、更新路径
+    d.prepare('UPDATE notes SET notebook_id = ?, parent_id = ?, path = ?, file_path = ?, updated_at = ? WHERE id = ?')
+      .run(newNotebookId, null, newPath, newFilePath, Date.now(), id)
   },
 
   searchNotes(keyword: string): Note[] {
@@ -1100,16 +1141,164 @@ const dbMethods = {
   }>): void {
     const d = getDatabase()
     const tx = d.transaction(() => {
+      // 保留现有 content，避免 reconcile 清空 url/richtext 等无文件笔记的内容
+      const contentMap = new Map<string, string>()
+      for (const row of d.prepare('SELECT id, content FROM notes WHERE is_deleted = 0').all() as any[]) {
+        contentMap.set(row.id, row.content || '')
+      }
       d.prepare('DELETE FROM notes WHERE is_deleted = 0').run()
       const stmt = d.prepare(`
-        INSERT INTO notes (id, title, notebook_id, parent_id, path, format, language, url, file_path, file_name, file_size, file_ext, created_at, updated_at, icon, is_deleted, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        INSERT INTO notes (id, title, notebook_id, parent_id, path, format, language, url, file_path, file_name, file_size, file_ext, content, created_at, updated_at, icon, is_deleted, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
       `)
       for (const n of notes) {
         stmt.run(
           n.id, n.title, n.notebookId, n.parentId, n.path ?? null,
           n.format, n.language ?? null, n.url ?? null,
           n.filePath ?? null, n.fileName ?? null, n.fileSize ?? null, n.fileExt ?? null,
+          contentMap.get(n.id) ?? '',
+          n.createdAt, n.updatedAt, n.icon ?? null, n.sortOrder ?? n.createdAt
+        )
+      }
+    })
+    tx()
+  },
+
+  /**
+   * 增量合并 notebooks（Git 拉取后 reconcile 用）
+   * 与 replaceNotebooks 的区别：只 INSERT / UPDATE，绝不 DELETE 本地已有的活跃记录。
+   * 这样即使远端元数据不完整，也不会把本地独有的笔记本清空。
+   * 远端有、本地没有 → 插入；远端有、本地也有（按 id）→ 更新远端字段；
+   * 本地有、远端没有 → 保留不动。
+   *
+   * ⚠️ 同名去重：如果远端笔记本的名字与本地某个笔记本相同（但 id 不同），
+   * 则更新本地笔记本的字段（保留本地 id），避免 clone 后出现两个"我的笔记"。
+   */
+  mergeNotebooks(notebooks: Array<{
+    id: string
+    name: string
+    parentId: string | null
+    icon?: string | null
+    createdAt: number
+    updatedAt: number
+    sortOrder?: number
+  }>): Record<string, string> {
+    const d = getDatabase()
+    const remap: Record<string, string> = {}
+    const tx = d.transaction(() => {
+      // 建立本地 name → id 映射，用于同名去重
+      const localByName = new Map<string, string>()
+      for (const row of d.prepare('SELECT id, name FROM notebooks WHERE is_deleted = 0').all() as any[]) {
+        localByName.set(row.name, row.id)
+      }
+      const upsert = d.prepare(`
+        INSERT INTO notebooks (id, name, parent_id, created_at, updated_at, icon, is_deleted, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          parent_id = excluded.parent_id,
+          updated_at = excluded.updated_at,
+          icon = excluded.icon,
+          sort_order = excluded.sort_order,
+          is_deleted = 0
+      `)
+      for (const nb of notebooks) {
+        // 同名去重：如果本地已有同名笔记本（不同 id），更新本地记录而非插入新记录
+        const localId = localByName.get(nb.name)
+        if (localId && localId !== nb.id) {
+          d.prepare(`
+            UPDATE notebooks SET name = ?, parent_id = ?, updated_at = ?, icon = ?, sort_order = ?, is_deleted = 0
+            WHERE id = ?
+          `).run(nb.name, nb.parentId, nb.updatedAt, nb.icon ?? null, nb.sortOrder ?? nb.createdAt, localId)
+          // 记录重定向：远端 id → 本地 id，供调用方 remap 笔记的 notebook_id
+          remap[nb.id] = localId
+        } else {
+          // 插入前检查 parent_id 是否需要重定向（父笔记本被同名去重合并了）
+          const effectiveParentId = nb.parentId ? (remap[nb.parentId] ?? nb.parentId) : null
+          upsert.run(
+            nb.id, nb.name, effectiveParentId, nb.createdAt, nb.updatedAt,
+            nb.icon ?? null, nb.sortOrder ?? nb.createdAt
+          )
+        }
+      }
+      // 第二轮：更新所有引用已重定向 parent_id 的笔记本（包括已 upsert 的）
+      for (const [oldId, newId] of Object.entries(remap)) {
+        d.prepare('UPDATE notebooks SET parent_id = ? WHERE parent_id = ? AND is_deleted = 0').run(newId, oldId)
+      }
+    })
+    tx()
+    return remap
+  },
+
+  /**
+   * 增量合并 notes（Git 拉取后 reconcile 用）
+   * 与 replaceNotes 的区别：只 INSERT / UPDATE，绝不 DELETE 本地已有的活跃记录。
+   * - content 字段：优先用本地已有的 content（避免清空 url/richtext 等无文件笔记内容），
+   *   仅当本地不存在该笔记时才使用远端/兜底值。
+   * - path / file_path：优先保留本地已有的真实存在的路径，其次才用远端值。
+   */
+  mergeNotes(notes: Array<{
+    id: string
+    title: string
+    notebookId: string
+    parentId: string | null
+    path?: string
+    format: Note['format']
+    language?: string | null
+    url?: string | null
+    fileName?: string | null
+    filePath?: string | null
+    fileExt?: string | null
+    fileSize?: number | null
+    icon?: string | null
+    createdAt: number
+    updatedAt: number
+    sortOrder?: number
+  }>): void {
+    const d = getDatabase()
+    const tx = d.transaction(() => {
+      // 本地现有 content / path，用于保留本地独有的数据与真实文件
+      const localMap = new Map<string, { content: string; path: string | null; filePath: string | null }>()
+      for (const row of d.prepare('SELECT id, content, path, file_path FROM notes WHERE is_deleted = 0').all() as any[]) {
+        localMap.set(row.id, { content: row.content || '', path: row.path ?? null, filePath: row.file_path ?? null })
+      }
+      const stmt = d.prepare(`
+        INSERT INTO notes (id, title, notebook_id, parent_id, path, format, language, url, file_path, file_name, file_size, file_ext, content, created_at, updated_at, icon, is_deleted, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          notebook_id = excluded.notebook_id,
+          parent_id = excluded.parent_id,
+          format = excluded.format,
+          language = excluded.language,
+          url = excluded.url,
+          file_name = excluded.file_name,
+          file_size = excluded.file_size,
+          file_ext = excluded.file_ext,
+          icon = excluded.icon,
+          updated_at = excluded.updated_at,
+          sort_order = excluded.sort_order,
+          is_deleted = 0,
+          path = CASE
+            WHEN excluded.path IS NOT NULL AND excluded.path != '' THEN excluded.path
+            ELSE notes.path
+          END,
+          file_path = CASE
+            WHEN excluded.file_path IS NOT NULL AND excluded.file_path != '' THEN excluded.file_path
+            ELSE notes.file_path
+          END,
+          content = CASE
+            WHEN excluded.content IS NOT NULL AND excluded.content != '' THEN excluded.content
+            ELSE notes.content
+          END
+      `)
+      for (const n of notes) {
+        const local = localMap.get(n.id)
+        stmt.run(
+          n.id, n.title, n.notebookId, n.parentId, n.path ?? null,
+          n.format, n.language ?? null, n.url ?? null,
+          n.filePath ?? null, n.fileName ?? null, n.fileSize ?? null, n.fileExt ?? null,
+          local?.content || '',
           n.createdAt, n.updatedAt, n.icon ?? null, n.sortOrder ?? n.createdAt
         )
       }
@@ -1120,6 +1309,97 @@ const dbMethods = {
 
 // 把方法挂到 db 对象上方便调用
 export const dbApi = dbMethods
+
+/** 在 dir 下递归搜索匹配 fileName 的文件，返回第一个匹配的路径 */
+export function findFileRecursively(dir: string, fileName: string): string | null {
+  if (!fs.existsSync(dir)) return null
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name)
+    if (entry.isFile() && entry.name === fileName) {
+      return full
+    }
+    if (entry.isDirectory()) {
+      const found = findFileRecursively(full, fileName)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+/**
+ * 读取笔记内容，同时修复失效的 path。
+ * 返回 { content, fixedPath }，其中 fixedPath 为实际找到的文件路径（如有）。
+ */
+function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
+  let content = ''
+  let fixedPath: string | undefined
+
+  // 有独立文件的格式（md/html/code）
+  if (row.format !== 'file' && row.format !== 'url' && row.format !== 'richtext' && row.path) {
+    if (fs.existsSync(row.path)) {
+      try { content = fs.readFileSync(row.path, 'utf-8') } catch {}
+    }
+    // path 失效：尝试在当前 notebook 目录甚至全局搜索
+    if (!content) {
+      const ext = row.format === 'html' ? 'html' : row.format === 'code' ? 'code' : 'md'
+      const fileName = path.basename(row.path) || `${slugify(row.title)}.${ext}`
+      const nbDir = getNotebookPath(row.notebook_id)
+      let found = findFileRecursively(nbDir, fileName)
+      if (!found) {
+        found = findFileRecursively(getNotesDir(), fileName)
+      }
+      if (found) {
+        try { content = fs.readFileSync(found, 'utf-8') } catch {}
+        if (content) fixedPath = found
+      }
+    }
+  }
+
+  // 文件读取失败（或没有文件）时回退到 SQLite 中的 content
+  if (!content && row.content) {
+    content = row.content
+  }
+  return { content, fixedPath }
+}
+
+/**
+ * 修复笔记路径：启动时扫描，如果 DB 中的 path 对应的文件不存在，
+ * 则在对应 notebook 目录下递归搜索匹配的文件并更新 path。
+ * 用于处理笔记本移动/删除后路径错乱的情况。
+ */
+export function repairNotePaths(): void {
+  const d = getDatabase()
+  const notes = d.prepare('SELECT id, title, notebook_id, format, path FROM notes WHERE is_deleted = 0').all() as any[]
+  let fixed = 0
+  for (const note of notes) {
+    if (note.format === 'file' || note.format === 'url') continue
+    if (note.path && fs.existsSync(note.path)) continue
+
+    const ext = note.format === 'html' ? 'html' : note.format === 'code' ? 'code' : 'md'
+    const fileName = note.path ? path.basename(note.path) : `${slugify(note.title)}.${ext}`
+
+    // 1. 在当前 notebook 目录下搜索
+    const nbDir = getNotebookPath(note.notebook_id)
+    let found = findFileRecursively(nbDir, fileName)
+
+    // 2. 如果找不到，在整个 notes 目录下全局搜索
+    if (!found) {
+      found = findFileRecursively(getNotesDir(), fileName)
+    }
+
+    if (found) {
+      d.prepare('UPDATE notes SET path = ? WHERE id = ?').run(found, note.id)
+      console.log('[db] repairNotePaths: fixed path for', note.title, '->', found)
+      fixed++
+    } else {
+      console.warn('[db] repairNotePaths: file not found for', note.title, 'in', nbDir, 'or', getNotesDir())
+    }
+  }
+  if (fixed > 0) {
+    console.log(`[db] repairNotePaths: fixed ${fixed} note paths`)
+  }
+}
 
 /**
  * 通用重排工具：把 [tableName] 中 [scopeColumn] = [scopeValue] 的记录按 [orderedIds] 重排。

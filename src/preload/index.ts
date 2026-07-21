@@ -78,11 +78,14 @@ const api = {
     /** clone 远端仓库 */
     clone: (url: string): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_CLONE, url),
+    /** clone 前检查本地是否有真实数据 */
+    cloneCheck: (): Promise<{ hasRealData: boolean }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_CLONE_CHECK),
     /** push（可选 autoCommit 先提交未保存变更） */
     push: (autoCommit?: boolean): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, autoCommit ?? true),
     /** pull = fetch + merge */
-    pull: (): Promise<{ ok: boolean; message: string; updated: boolean }> =>
+    pull: (): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL),
     /**
      * 一键同步：commit → pull → push

@@ -274,10 +274,10 @@ export default function App() {
               setSyncStatus({ state: 'error', message: '拉取失败', detail: errMsg })
               toast.error('拉取失败：' + errMsg)
             } else {
-              if (r.updated) {
+              // pull 阶段获取了新 commit 或 reconcile 重建了数据 → 刷新 UI
+              if (r.updated || r.reconciled) {
                 setSyncStatus({ state: 'success', message: '已更新', lastSyncAt: Date.now() })
                 toast.success('已从远端更新')
-                // 有更新：重新加载笔记（reconcile 已在主进程做完）
                 await useAppStore.getState().loadNotebooks()
                 await useAppStore.getState().loadNotes()
                 await refreshSyncStatus()

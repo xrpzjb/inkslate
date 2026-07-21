@@ -152,6 +152,8 @@ export interface AppSettings {
     apiKey: string
     /** 是否已配置 */
     configured: boolean
+    /** 代理地址（可选，如 http://127.0.0.1:7890） */
+    proxyUrl: string
   }
 }
 
@@ -252,6 +254,7 @@ export const IPC_CHANNELS = {
   GIT_IS_CONFIGURED: 'git:is-configured',
   GIT_INIT: 'git:init',
   GIT_CLONE: 'git:clone',
+  GIT_CLONE_CHECK: 'git:clone-check',
   GIT_LOG: 'git:log',
   GIT_SHOW_FILE: 'git:show-file',
   GIT_GET_WORKDIR: 'git:get-workdir',

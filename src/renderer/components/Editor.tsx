@@ -102,11 +102,25 @@ export function Editor() {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
     if (currentNote.title !== title && currentNote.title !== undefined) {
-      // 区分"外部修改"和"自己刚保存完"两种情况：
-      // 自己保存后 store 里的 title 跟本地 title 一样，guard 在这里不触发
       setTitle(currentNote.title)
     }
   }, [currentNote?.title])
+
+  // 当前 content 同步：selectNote 异步 fetch 返回后 currentNote.content 更新，
+  // 但 Editor 本地 content 还是之前的缓存旧值，需要刷过来。
+  // 用 contentTimerRef 做 guard —— 有活跃防抖 timer 说明用户正在输入，不覆盖
+  useEffect(() => {
+    if (!currentNote) return
+    if (currentNote.id !== editingNoteIdRef.current) return
+    if (currentNote.content === content) return
+    if (currentNote.content == null) return
+    if (!currentNote.content) {
+      // 外部加载的笔记内容是空字符串 → 允许覆盖本地残留内容
+      if (!content) return
+    }
+    if (contentTimerRef.current) return // 用户正在输入，不覆盖
+    setContent(currentNote.content)
+  }, [currentNote?.content])
 
   // 即时同步草稿到 store（不进库），让 Preview 实时看到最新内容
   // 仅响应用户编辑（content / title 变化），不随 currentNote 对象变动触发，
@@ -138,7 +152,7 @@ export function Editor() {
     }
   }, [title, currentNote?.id])
 
-  // 正文：2s 防抖写库（大文本，频繁写库不划算）
+  // 正文：5s 防抖写库（大文本，频繁写库不划算）
   useEffect(() => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
@@ -149,7 +163,7 @@ export function Editor() {
       if (currentNote.id !== editingNoteIdRef.current) return
       // 只传 content，避免覆盖 title
       updateNote(currentNote.id, { content }).catch(() => { /* 错误已在 updateNote 内部处理 */ })
-    }, 2000)
+    }, 5000)
     return () => {
       if (contentTimerRef.current) clearTimeout(contentTimerRef.current)
     }
@@ -419,6 +433,16 @@ export function Editor() {
             <Wand2 size={16} />
           </button>
         )}
+        {/* 美化 HTML */}
+        {currentNote && currentNote.format === 'html' && (
+          <button
+            className="panel-action-btn"
+            onClick={handleFormatCode}
+            title="美化 HTML"
+          >
+            <Wand2 size={16} />
+          </button>
+        )}
         {/* 保存：仅对非文件/非网址笔记显示（与 History 同步） */}
         {currentNote && !['url', 'file'].includes(currentNote.format) && (
           <button
@@ -441,7 +465,7 @@ export function Editor() {
       )}
     </div>
 
-            {(currentNote.format === 'markdown' || currentNote.format === 'html') && (
+            {currentNote.format === 'markdown' && (
         <div style={{
           display: 'flex',
           gap: 2,
@@ -491,9 +515,67 @@ export function Editor() {
           <MermaidMenu onInsert={insertMermaid} />
         </div>
       )}
+      {currentNote.format === 'html' && (
+        <div style={{
+          display: 'flex',
+          gap: 2,
+          padding: '4px 8px',
+          backgroundColor: settings?.editorDark ? '#1e1e1e' : 'var(--bg-primary)',
+          flexShrink: 0,
+          marginLeft: -1,
+          marginRight: -1,
+          flexWrap: 'wrap',
+          position: 'relative',
+          zIndex: 1,
+          boxShadow: shadowDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)'
+        }}>
+          <ToolbarBtn icon={<Bold size={14} />} title="粗体 (Ctrl+B)" onClick={() => insertText('<b>', '</b>', 'text')} />
+          <ToolbarBtn icon={<Italic size={14} />} title="斜体 (Ctrl+I)" onClick={() => insertText('<i>', '</i>', 'text')} />
+          <ToolbarBtn icon={<Underline size={14} />} title="下划线" onClick={() => insertText('<u>', '</u>', 'text')} />
+          <ToolbarBtn icon={<Strikethrough size={14} />} title="删除线" onClick={() => insertText('<del>', '</del>', 'text')} />
+          <ToolbarBtn icon={<Highlighter size={14} />} title="高亮" onClick={() => insertText('<mark>', '</mark>', 'text')} />
+          <Divider />
+          <ToolbarBtn icon={<Heading1 size={14} />} title="一级标题" onClick={() => insertText('\n<h1>', '</h1>\n', 'text')} />
+          <ToolbarBtn icon={<Heading2 size={14} />} title="二级标题" onClick={() => insertText('\n<h2>', '</h2>\n', 'text')} />
+          <ToolbarBtn icon={<Heading3 size={14} />} title="三级标题" onClick={() => insertText('\n<h3>', '</h3>\n', 'text')} />
+          <ToolbarBtn icon={<Heading4 size={14} />} title="四级标题" onClick={() => insertText('\n<h4>', '</h4>\n', 'text')} />
+          <Divider />
+          <ToolbarBtn icon={<Link size={14} />} title="超链接" onClick={() => insertText('<a href="https://">', '</a>', 'text')} />
+          <ToolbarBtn icon={<Image size={14} />} title="图片" onClick={() => insertText('<img src="https://" alt="', '" />', 'text')} />
+          <ToolbarBtn icon={<Code size={14} />} title="行内代码" onClick={() => insertText('<code>', '</code>', 'code')} />
+          <ToolbarBtn icon={<Code2 size={14} />} title="代码块" onClick={() => {
+            const t = '\n<pre><code>\n\n</code></pre>\n'
+            insertText(t, '', '', t.indexOf('\n', 4) + 1)
+          }} />
+          <Divider />
+          <ToolbarBtn icon={<List size={14} />} title="无序列表" onClick={() => {
+            const t = '\n<ul>\n  <li></li>\n</ul>\n'
+            insertText(t, '', '', t.indexOf('<li>') + 4)
+          }} />
+          <ToolbarBtn icon={<ListOrdered size={14} />} title="有序列表" onClick={() => {
+            const t = '\n<ol>\n  <li></li>\n</ol>\n'
+            insertText(t, '', '', t.indexOf('<li>') + 4)
+          }} />
+          <ToolbarBtn icon={<ListChecks size={14} />} title="复选框" onClick={() => insertText('<input type="checkbox"> ', '', '')} />
+          <ToolbarBtn icon={<Quote size={14} />} title="引用块" onClick={() => insertText('<blockquote>', '</blockquote>', 'text')} />
+          <ToolbarBtn icon={<Minus size={14} />} title="分割线" onClick={() => insertText('\n<hr>\n', '', '')} />
+          <ToolbarBtn icon={<ListTodo size={14} />} title="换行" onClick={() => insertText('<br>\n', '', '')} />
+          <Divider />
+          <ToolbarBtn icon={<Table size={14} />} title="插入表格" onClick={() => {
+            const t = '\n<table>\n  <tr><th></th></tr>\n  <tr><td></td></tr>\n</table>\n'
+            insertText(t, '', '', t.indexOf('<th>') + 4)
+          }} />
+          <Divider />
+          <ToolbarBtn icon={<Sigma size={14} />} title="行内公式" onClick={() => insertText('<span class="katex">', '</span>', 'E=mc^2')} />
+          <ToolbarBtn icon={<SquareSigma size={14} />} title="公式块" onClick={() => {
+            const t = '\n<div class="katex-block">\nE = mc^2\n</div>\n'
+            insertText(t, '', '', t.indexOf('E ='))
+          }} />
+        </div>
+      )}
 
       {/* 表格弹窗（Markdown 模式） */}
-      {createPortal(
+      {currentNote.format === 'markdown' && createPortal(
         <ModalShell
           open={tableDlg.open}
           title="插入 Markdown 表格"
@@ -1350,6 +1432,76 @@ function MermaidMenu({ onInsert }: { onInsert: (type: string) => void }) {
   )
 }
 
+interface AiJsonResponse {
+  status: 'completed' | 'question' | 'working'
+  content: string
+  description: string
+}
+
+function extractJson(text: string): AiJsonResponse | null {
+  let raw = text
+  let prefix = ''
+  // 仅当 ``` 包裹整个响应时才剥离（避免匹配 content 内部的代码块）
+  const fence = raw.match(/^\s*```(?:json)?\s*([\s\S]*?)```\s*$/)
+  if (fence) { raw = fence[1]; prefix = text.replace(fence[0], '').trim() }
+  // 找第一个 { 前的文字作为前缀
+  const braceIdx = raw.indexOf('{')
+  if (braceIdx > 0) { prefix = raw.substring(0, braceIdx).trim(); raw = raw.substring(braceIdx) }
+  raw = raw.trim()
+
+  const tryParse = (jsonStr: string): AiJsonResponse | null => {
+    const attempt = (s: string): AiJsonResponse | null => {
+      try {
+        const p = JSON.parse(s)
+        if (p && typeof p.status === 'string' && ['completed', 'question', 'working'].includes(p.status)) {
+          const d = p.description || ''
+          return { status: p.status, content: p.content || '', description: (prefix && d) ? `${prefix}\n\n${d}` : (d || prefix) }
+        }
+      } catch {}
+      return null
+    }
+    // direct parse
+    let r = attempt(jsonStr)
+    if (r) return r
+    // repair: escape actual newlines/tabs inside JSON strings, retry
+    const repaired = jsonStr.replace(/"((?:[^"\\]|\\.)*)"/g, (full, inner) =>
+      '"' + inner.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') + '"')
+    r = attempt(repaired)
+    if (r) return r
+    return null
+  }
+
+  // strategy 1: parse raw directly
+  const r1 = tryParse(raw)
+  if (r1) return r1
+
+  // strategy 2: brace-counting to find exact JSON substring
+  let depth = 0, inStr = false, esc = false, start = -1
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (esc) { esc = false; continue }
+    if (ch === '\\') { esc = true; continue }
+    if (ch === '"') { inStr = !inStr; continue }
+    if (!inStr) {
+      if (ch === '{') { if (depth === 0) start = i; depth++ }
+      if (ch === '}') { depth--; if (depth === 0 && start >= 0) { const r = tryParse(raw.substring(start, i + 1)); if (r) return r } }
+    }
+  }
+
+  // strategy 3: regex fallback for individual fields
+  const s = (raw.match(/"status"\s*:\s*"(completed|question|working)"/i) || [])[1]
+  if (!s) return null
+  const dm = raw.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+  const desc = dm ? dm[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : ''
+  return { status: s as AiJsonResponse['status'], content: '', description: prefix ? `${prefix}\n\n${desc}` : desc }
+}
+
+const STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  completed: { label: '已完成', color: '#16a34a' },
+  question:  { label: '询问中', color: '#2563eb' },
+  working:   { label: '处理中', color: '#d97706' },
+}
+
 export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteFormat, history, onHistoryChange, onClose, onReplace }: {
   mode?: 'modal' | 'panel'
   noteId: string
@@ -1364,6 +1516,7 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [lastStatus, setLastStatus] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -1376,57 +1529,69 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
     setPrompt('')
     setLoading(true)
     setError('')
+    setLastStatus(null)
 
     const newHistory = [...history, { role: 'user' as const, content: userMsg }]
     onHistoryChange(newHistory)
 
     try {
-      const formatHint = noteFormat === 'html' ? '你必须输出纯 HTML 代码（不要用 ```html 包裹），直接输出正文，不要闲聊。'
-        : noteFormat === 'richtext' ? '你必须输出纯 HTML（不要用代码块包裹），包含表格、列表等直接用 <table><h1><ul> 等 HTML 标签，不要用 Markdown 语法。直接输出正文。'
-        : noteFormat === 'code' ? '你必须输出纯代码，不要用代码块包裹，只输出代码本身。'
-        : '使用 Markdown 格式输出，直接输出正文，不要闲聊。'
+      const formatHint = noteFormat === 'html' ? '注意：content 中的内容必须是纯 HTML（不要用 ```html 包裹）'
+        : noteFormat === 'richtext' ? '注意：content 中的内容必须是纯 HTML，包含表格、列表等直接用 <table><h1><ul> 等 HTML 标签'
+        : noteFormat === 'code' ? '注意：content 中的内容必须是纯代码'
+        : ''
 
       const systemMsg = {
         role: 'system',
-        content: `你是 Inkslate 的 AI 笔记编辑助手。你拥有 scan_dir、read_file、grep_dir 三个工具。
+        content: `你是 Inkslate 的 AI 笔记编辑助手。你有 scan_dir、read_file、grep_dir 三个工具。
 
-核心规则：
-- 你必须输出完整的笔记最终内容（保留所有原文，在用户指定的位置插入/修改）
-- 不要只输出新增部分——否则原文会丢失
-- 如果用户说"在xxx下面插入图片"，你需要在原文对应位置插入图片，然后输出完整笔记
-- 如果用户说"生成一张图放到笔记顶部"，输出图片后接着输出原文全部内容
+## 工作流程
+1. 先用工具获取信息（scan_dir / read_file / grep_dir）
+2. 工具调用完成后，最终回复必须是 JSON，不能有其他文字
 
-图片：你可以生成图片，用 Markdown 格式 ![](URL) 输出。
+## 最终 JSON 格式
+{"status":"completed|question|working","content":"...","description":"..."}
 
-${formatHint}
-不要闲聊，不要输出"数据很全面"等客套话。
+status 含义：
+- completed: 完成。content=完整笔记内容（保留原文）。description=完成总结。
+- question: 需要追问。content=""。description=你的问题。
+- working: 处理中。content=""。description=进度说明。
+
+示例：
+{"status":"completed","content":"# 标题\\n\\n正文内容","description":"已完成修改。"}
+{"status":"question","content":"","description":"请问你希望分析哪个模块？"}
+
+规则：
+- 工具调用阶段可自由使用函数调用，不受 JSON 限制
+- 最终回复第1个字符必须是 {，最后1个字符必须是 }
+- description 必填，写你想对用户说的话
+- status=completed 时 content 必填，包含完整的最终笔记
+- ${formatHint || ''}
 
 当前笔记标题：${noteTitle || '(未命名)'}
-当前笔记内容（这是原文，你必须保留并在此基础上修改）：
-\`\`\`
+当前笔记内容（原文）：
 ${noteContent}
-\`\`\``}
+`}
       const messages = [systemMsg, ...newHistory.map(m => ({ role: m.role, content: m.content }))]
       const res = await window.inkslateApi.ai.chat(messages)
-      const content = res || 'AI 未返回内容'
-      onHistoryChange([...newHistory, { role: 'assistant', content }])
-      // 仅当回复中有真实图片（URL 以图片扩展名结尾）才自动填入，避免虚假 URL 覆盖笔记
-      const hasRealImage = /!\[.*\]\(https?:\/\/[^\s)]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s)]*)?\)/i.test(content)
-      if (hasRealImage) {
-        onReplace(stripFence(content))
+      const raw = res || 'AI 未返回内容'
+
+      const parsed = extractJson(raw)
+      if (parsed) {
+        onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
+        setLastStatus(parsed.status)
+        if (parsed.status === 'completed' && parsed.content) {
+          onReplace(parsed.content)
+        }
+      } else {
+        onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
+        setLastStatus(null)
       }
     } catch (e: any) {
       setError(e?.message || '请求失败')
+      setLastStatus(null)
     } finally {
       setLoading(false)
     }
-  }
-
-  const lastAssistant = [...history].reverse().find(m => m.role === 'assistant')?.content
-
-  const stripFence = (text: string) => {
-    // 去掉开头 ```xxx\n 和结尾 \n```
-    return text.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '')
   }
 
   const isPanel = mode === 'panel'
@@ -1444,21 +1609,15 @@ ${noteContent}
           </span>
           <div style={{ display: 'flex', gap: 4 }}>
             {history.length > 0 && (
-              <button onClick={() => { onHistoryChange([]); setError('') }} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
+              <button onClick={() => { onHistoryChange([]); setError(''); setLastStatus(null) }} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
                 清空对话
               </button>
             )}
             <button onClick={onClose} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
               ✕
             </button>
-        </div>
-        {lastAssistant && (
-          <div style={{ display: 'flex', gap: 8, padding: '6px 12px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
-            <button onClick={() => onReplace(stripFence(lastAssistant!))} style={aiBtnStyle('var(--accent-color)')}>填入笔记</button>
-            <div style={{ flex: 1 }} />
           </div>
-        )}
-      </div>
+        </div>
 
         <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: '8px 16px' }}>
           {history.length === 0 && !loading && (
@@ -1466,31 +1625,57 @@ ${noteContent}
               输入提示词开始 AI 写作，多轮对话保留上下文
             </div>
           )}
-          {history.map((msg, i) => (
-            <div key={i} style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>
-                {msg.role === 'user' ? '你' : 'AI'}
+          {history.map((msg, i) => {
+            let displayContent = msg.content
+            let status: string | null = null
+            const parsed = msg.role === 'assistant' ? extractJson(msg.content) : null
+            if (parsed) {
+              displayContent = parsed.description || (parsed.status === 'completed' ? '已完成笔记更新' : '')
+              status = parsed.status
+            }
+            return (
+              <div key={i} style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2, display: 'flex', alignItems: 'center' }}>
+                  {msg.role === 'user' ? '你' : 'AI'}
+                  {status && (
+                    <span style={{ fontSize: 11, fontWeight: 600, color: STATUS_LABEL[status]?.color || 'var(--text-tertiary)', background: (STATUS_LABEL[status]?.color || '#888') + '18', padding: '1px 8px', borderRadius: 4, marginLeft: 6 }}>
+                      {STATUS_LABEL[status]?.label || status}
+                    </span>
+                  )}
+                </div>
+                <div style={{
+                  fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.7,
+                  whiteSpace: 'pre-wrap', padding: '8px 12px', borderRadius: 6,
+                  background: msg.role === 'user' ? 'var(--bg-secondary)' : 'var(--accent-bg)',
+                  border: msg.role === 'user' ? '1px solid var(--border-color)' : '1px solid transparent'
+                }}>
+                  {displayContent}
+                  {!parsed && msg.role === 'assistant' && (
+                    <div style={{ marginTop: 8 }}>
+                      <button onClick={() => onReplace(msg.content)} style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--accent-color)', color: '#fff', fontSize: 12, cursor: 'pointer' }}>
+                        填入笔记
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div style={{
-                fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.7,
-                whiteSpace: 'pre-wrap', padding: '8px 12px', borderRadius: 6,
-                background: msg.role === 'user' ? 'var(--bg-secondary)' : 'var(--accent-bg)',
-                border: msg.role === 'user' ? '1px solid var(--border-color)' : '1px solid transparent'
-              }}>
-                {msg.content}
-              </div>
-            </div>
-          ))}
+            )
+          })}
           {loading && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, color: 'var(--text-tertiary)', fontSize: 13 }}>
               <Loader2 size={16} style={{ animation: 'ai-spin 1s linear infinite' }} />
               思考中...
-              <style>{`@keyframes ai-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+              <style>{'@keyframes ai-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'}</style>
             </div>
           )}
           {error && (
             <div style={{ padding: '8px 12px', color: '#ef4444', fontSize: 13, borderRadius: 6, background: 'rgba(239,68,68,0.08)' }}>
               {error}
+            </div>
+          )}
+          {lastStatus === 'completed' && (
+            <div style={{ padding: '6px 12px', fontSize: 12, color: '#16a34a', textAlign: 'center', background: '#16a34a0c', borderRadius: 4, marginBottom: 4 }}>
+              笔记内容已自动更新
             </div>
           )}
         </div>
@@ -1504,7 +1689,7 @@ ${noteContent}
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
             }}
             placeholder="输入提示词，Enter 发送，Shift+Enter 换行"
-            rows={2}
+            rows={4}
             style={{
               flex: 1, border: 'none', background: 'transparent', color: 'var(--text-primary)',
               fontSize: 14, outline: 'none', resize: 'none', fontFamily: 'var(--font-family)',
@@ -1529,11 +1714,4 @@ ${noteContent}
       {isPanel ? null : <div className="search-dialog-overlay" />}
     </div>
   )
-}
-
-function aiBtnStyle(bg: string): React.CSSProperties {
-  return {
-    padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border-color)',
-    background: bg, color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 500
-  }
 }

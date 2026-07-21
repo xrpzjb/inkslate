@@ -6,31 +6,43 @@ import { dbApi, getFilesDir, slugify, getUniqueFileName } from './db'
 import { OssManager } from './oss/manager'
 import { GitManager } from './git/manager'
 
-export function setupIpcHandlers(): void {
+let ProxyAgent: any = undefined
+try {
+  ;({ ProxyAgent } = require('undici'))
+} catch {}
 
-  // ============ 绗旇锟?============
+export function setupIpcHandlers(): void {
+  const gitMgr = GitManager.getInstance()
+
+  // ============ 笔记本 ============
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_LIST, async (): Promise<Notebook[]> => {
     return dbApi.listNotebooks()
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_CREATE, async (_, name: string, parentId: string | null, icon?: string): Promise<Notebook> => {
-    return dbApi.createNotebook(name, parentId, icon)
+    const result = dbApi.createNotebook(name, parentId, icon)
+    gitMgr.exportMetadata()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_RENAME, async (_, id: string, newName: string): Promise<void> => {
-    return dbApi.renameNotebook(id, newName)
+    dbApi.renameNotebook(id, newName)
+    gitMgr.exportMetadata()
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_DELETE, async (_, id: string): Promise<void> => {
-    return dbApi.deleteNotebook(id)
+    dbApi.deleteNotebook(id)
+    gitMgr.exportMetadata()
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_MOVE, async (_, id: string, newParentId: string | null): Promise<void> => {
-    return dbApi.moveNotebook(id, newParentId)
+    dbApi.moveNotebook(id, newParentId)
+    gitMgr.exportMetadata()
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_REORDER, async (_, parentId: string | null, orderedIds: string[]): Promise<void> => {
-    return dbApi.reorderNotebooks(parentId, orderedIds)
+    dbApi.reorderNotebooks(parentId, orderedIds)
+    gitMgr.exportMetadata()
   })
 
   /** 通用更新笔记本（name / icon / parentId 任一） */
@@ -39,7 +51,8 @@ export function setupIpcHandlers(): void {
     icon?: string | null
     parentId?: string | null
   }): Promise<void> => {
-    return dbApi.updateNotebook(id, updates)
+    dbApi.updateNotebook(id, updates)
+    gitMgr.exportMetadata()
   })
 
   // ============ 回收站 - 笔记本 ============
@@ -48,11 +61,14 @@ export function setupIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_RESTORE, async (_, id: string): Promise<{ restoredNotebooks: string[] }> => {
-    return dbApi.restoreNotebook(id)
+    const result = dbApi.restoreNotebook(id)
+    gitMgr.exportMetadata()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_PURGE, async (_, id: string): Promise<void> => {
-    return dbApi.purgeNotebook(id)
+    dbApi.purgeNotebook(id)
+    gitMgr.exportMetadata()
   })
 
   // ============ 绗旇 ============
@@ -65,7 +81,9 @@ export function setupIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_CREATE, async (_, title: string, notebookId: string, parentId: string | null, icon?: string, format: 'markdown' | 'html' | 'richtext' | 'code' | 'url' = 'markdown', language?: string, url?: string): Promise<Note> => {
-    return dbApi.createNote(title, notebookId, parentId, icon, format, language, url)
+    const result = dbApi.createNote(title, notebookId, parentId, icon, format, language, url)
+    gitMgr.exportMetadata()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_UPDATE, async (_, id: string, updates: Partial<Note>): Promise<Note> => {
@@ -74,19 +92,23 @@ export function setupIpcHandlers(): void {
       const exists = fs.existsSync(result.path)
       console.log('[note:update] wrote content to', result.path, 'file exists:', exists)
     }
+    gitMgr.exportMetadata()
     return result
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_DELETE, async (_, id: string): Promise<void> => {
-    return dbApi.deleteNote(id)
+    dbApi.deleteNote(id)
+    gitMgr.exportMetadata()
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_MOVE, async (_, id: string, newParentId: string | null): Promise<void> => {
-    return dbApi.moveNote(id, newParentId)
+    dbApi.moveNote(id, newParentId)
+    gitMgr.exportMetadata()
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_REORDER, async (_, notebookId: string, orderedIds: string[]): Promise<void> => {
-    return dbApi.reorderNotes(notebookId, orderedIds)
+    dbApi.reorderNotes(notebookId, orderedIds)
+    gitMgr.exportMetadata()
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_SEARCH, async (_, keyword: string): Promise<Note[]> => {
@@ -99,11 +121,14 @@ export function setupIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_RESTORE, async (_, id: string): Promise<{ restoredNotebooks: string[] }> => {
-    return dbApi.restoreNote(id)
+    const result = dbApi.restoreNote(id)
+    gitMgr.exportMetadata()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_PURGE, async (_, id: string): Promise<void> => {
-    return dbApi.purgeNote(id)
+    dbApi.purgeNote(id)
+    gitMgr.exportMetadata()
   })
 
   // ============ 璁剧疆 ============
@@ -121,11 +146,15 @@ export function setupIpcHandlers(): void {
     if (!settings.recycleBin.autoCleanup || settings.recycleBin.retentionDays <= 0) {
       return { notes: 0, notebooks: 0 }
     }
-    return dbApi.purgeExpired(settings.recycleBin.retentionDays)
+    const result = dbApi.purgeExpired(settings.recycleBin.retentionDays)
+    gitMgr.exportMetadata()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.RECYCLE_BIN_EMPTY, async (): Promise<{ notes: number; notebooks: number }> => {
-    return dbApi.emptyRecycleBin()
+    const result = dbApi.emptyRecycleBin()
+    gitMgr.exportMetadata()
+    return result
   })
 
   // ============ OSS ============
@@ -279,6 +308,7 @@ ${payload?.html ?? ''}
     const fileName = baseName + path.extname(sourcePath)
     const fileSize = stat.size
     dbApi.setNoteFile(noteId, { filePath: destPath, fileName, fileSize, fileExt: ext })
+    gitMgr.exportMetadata()
     return { filePath: destPath, fileName, fileSize, fileExt: ext }
   })
 
@@ -308,6 +338,7 @@ ${payload?.html ?? ''}
     const fileName = path.basename(sourcePath)
     const fileSize = stat.size
     dbApi.updateNote(noteId, { filePath: destPath, fileName, fileSize, fileExt: ext })
+    gitMgr.exportMetadata()
     return { filePath: destPath, fileName, fileSize, fileExt: ext }
   })
 
@@ -338,7 +369,6 @@ ${payload?.html ?? ''}
   })
 
   // ============ Git 同步 ============
-  const gitMgr = GitManager.getInstance()
 
   /** 保存 Git 配置（URL/branch/author/username/password），密码用 safeStorage 加密 */
   ipcMain.handle(IPC_CHANNELS.GIT_CONFIGURE, async (_, payload: {
@@ -379,6 +409,14 @@ ${payload?.html ?? ''}
     }
   })
 
+  /** 检查本地是否有真实数据（非默认空"我的笔记"），供 clone 前确认用 */
+  ipcMain.handle(IPC_CHANNELS.GIT_CLONE_CHECK, async (): Promise<{ hasRealData: boolean }> => {
+    const nbCount = dbApi.listActiveNotebooks().length
+    const noteCount = dbApi.listActiveNotes().length
+    // 只有 1 个默认笔记本且 0 条笔记 → 无真实数据
+    return { hasRealData: !(nbCount <= 1 && noteCount === 0) }
+  })
+
   /** push 到远端 */
   ipcMain.handle(IPC_CHANNELS.GIT_PUSH, async (_, autoCommit: boolean = true): Promise<{ ok: boolean; message: string }> => {
     try {
@@ -397,7 +435,7 @@ ${payload?.html ?? ''}
   })
 
   /** pull = fetch + merge */
-  ipcMain.handle(IPC_CHANNELS.GIT_PULL, async (): Promise<{ ok: boolean; message: string; updated: boolean }> => {
+  ipcMain.handle(IPC_CHANNELS.GIT_PULL, async (): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean }> => {
     const r = await gitMgr.pull()
     if (r.ok) {
       const at = Date.now()
@@ -600,14 +638,23 @@ ${payload?.html ?? ''}
     try {
       let currentMessages = [...messages]
       const isAnthropic = ai.apiUrl.includes('/messages')
+      let dispatcher: any = undefined
+      if (ai.proxyUrl && ProxyAgent) {
+        try { dispatcher = new ProxyAgent({ uri: ai.proxyUrl }) } catch {}
+      }
+      const fetchOpts: Record<string, any> = { dispatcher }
 
       for (let round = 0; round < 100; round++) {
+        const ac = new AbortController()
+        const timer = setTimeout(() => ac.abort(), 180000)
         let resp: Response
+        try {
         if (isAnthropic) {
-          // Anthropic 格式：system 单独传，messages 不含 system 角色
           const systemMsg = currentMessages.find(m => m.role === 'system')
           const chatMessages = currentMessages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }))
           resp = await fetch(ai.apiUrl, {
+            ...fetchOpts,
+            signal: ac.signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -623,6 +670,8 @@ ${payload?.html ?? ''}
           })
         } else {
           resp = await fetch(ai.apiUrl, {
+            ...fetchOpts,
+            signal: ac.signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -705,11 +754,33 @@ ${payload?.html ?? ''}
         }
 
         return await processAiImages(msg.content ?? '')
+      } finally {
+        clearTimeout(timer)
+      }
       }
 
       return '(AI 工具调用轮次超限)'
     } catch (e: any) {
-      throw new Error(e?.message ?? 'AI 请求失败')
+      const msg = e?.message || ''
+      if (e?.name === 'AbortError' || msg.includes('aborted')) {
+        throw new Error('AI 请求超时（3分钟），请检查网络连接或尝试简化提示词')
+      }
+      if (msg.includes('ECONNRESET')) {
+        throw new Error('连接被服务器重置，请检查代理设置或网络稳定性')
+      }
+      if (msg.includes('ETIMEDOUT') || msg.includes('timeout')) {
+        throw new Error('请求超时，请检查网络连接或 API 地址')
+      }
+      if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
+        throw new Error('无法解析 API 域名，请确认 API 地址和网络连接')
+      }
+      if (msg.includes('ECONNREFUSED')) {
+        throw new Error('连接被拒绝，请检查 API 地址和代理端口')
+      }
+      if (msg.includes('CERT_') || msg.includes('certificate') || msg.includes('SSL')) {
+        throw new Error('SSL 证书验证失败，可能需要配置代理或忽略证书')
+      }
+      throw new Error(msg || 'AI 请求失败')
     }
   })
 

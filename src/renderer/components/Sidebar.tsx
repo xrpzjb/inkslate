@@ -160,7 +160,7 @@ export function Sidebar() {
       syncedFromStoreRef.current = true
     }
   }, [storedExpanded])
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: NoteTreeNode } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: NoteTreeNode | null } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -257,14 +257,30 @@ export function Sidebar() {
 
   const handleContextMenu = (e: React.MouseEvent, node: NoteTreeNode) => {
     e.preventDefault()
+    e.stopPropagation()
     setContextMenu({ x: e.clientX, y: e.clientY, node })
   }
 
   const closeContextMenu = () => setContextMenu(null)
 
+  const ensureNotebook = async (): Promise<string> => {
+    const nbs = storeNotebooksRef.current
+    if (nbs.length > 0) return nbs[0].id
+    const nb = await createNotebook('我的笔记', null)
+    return nb.id
+  }
+
+  const resolveTarget = (node: NoteTreeNode | null): { notebookId: string; parentId: string | null } => {
+    if (!node) return { notebookId: '', parentId: null }
+    if (node.type === 'notebook') return { notebookId: node.id, parentId: null }
+    const nbId = notes.find(n => n.id === node.id)?.notebookId ?? notebooks[0]?.id ?? ''
+    return { notebookId: nbId, parentId: node.id }
+  }
+
   const handleNewNotebook = async (parentId: string | null) => {
     closeContextMenu()
-    await createNotebook('新建笔记本', parentId)
+    const nb = await createNotebook('新建笔记本', parentId)
+    setRenaming({ id: nb.id, type: 'notebook', value: nb.name })
   }
 
   const handleRename = (node: NoteTreeNode) => {
@@ -576,55 +592,15 @@ export function Sidebar() {
                 <span className="tree-label">{node.name}</span>
                 {showTreeCount && <span className="tree-count">{node.children.length}</span>}
               </>
-      )}
-
-      {moveDialog && (
-        <MoveDialog
-          nodeId={moveDialog.nodeId}
-          nodeType={moveDialog.nodeType}
-          nodeName={moveDialog.nodeName}
-          notebooks={notebooks}
-          notes={notes}
-          onMove={(targetId) => {
-            if (moveDialog.nodeType === 'note') {
-              moveNote(moveDialog.nodeId, targetId)
-            } else {
-              moveNotebook(moveDialog.nodeId, targetId)
-            }
-            setMoveDialog(null)
-          }}
-          onClose={() => setMoveDialog(null)}
-        />
-      )}
-    </div>
+            )}
+          </div>
           {isDragOver && <div style={dropLineStyle} />}
           {isExpanded && node.children.map(child => renderNode(child, depth + 1))}
         </div>
-  )
-}
+      )
+    }
 
-function MoveNoteIcon({ format, size, color }: { format: string; size: number; color: string }) {
-  switch (format) {
-    case 'markdown': return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M5 6 L5 18" /><path d="M5 6 L12 14" /><path d="M12 14 L19 6" /><path d="M19 6 L19 18" />
-      </svg>)
-    case 'code': return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M8 6 L2 12 L8 18" /><path d="M16 6 L22 12 L16 18" /><path d="M15 4 L9 20" />
-      </svg>)
-    case 'richtext': return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 6 L20 6" /><path d="M12 6 L12 19" />
-      </svg>)
-    case 'html': return <Globe size={size} color={color} />
-    case 'url': return <Link2 size={size} color={color} />
-    case 'file': return <Paperclip size={size} color={color} />
-    default: return <FileText size={size} color={color} />
-  }
-}
-
-    // 绗旇鑺傜偣
+    // ===== 笔记节点 =====
     const noteFormat = notes.find(n => n.id === node.id)?.format
     const formatInfo = {
       markdown: { Icon: MarkdownIcon, color: '#7d8590', title: 'Markdown' },
@@ -709,12 +685,23 @@ function MoveNoteIcon({ format, size, color }: { format: string; size: number; c
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 0 4px 0' }} onClick={closeContextMenu}>
-        <div className="tree" style={{ padding: '0 0 4px 0', marginTop: -2 }}>
+        <div
+          className="tree"
+          style={{ padding: '0 0 4px 0', marginTop: -2, minHeight: '100%' }}
+          onContextMenu={(e) => {
+            // 右侧行级 handler 已 stopPropagation，到达此处的一定是空白区域
+            e.preventDefault()
+            setContextMenu({ x: e.clientX, y: e.clientY, node: null })
+          }}
+        >
           {tree.length === 0 ? (
-            <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+            <div
+              style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
               还没有笔记本
               <br />
-              <span style={{ fontSize: 11, opacity: 0.7 }}>右键或菜单"文件"→"新建"</span>
+              <span style={{ fontSize: 11, opacity: 0.7 }}>右键此处或菜单"文件"→"新建"</span>
             </div>
           ) : (
             tree.map(node => renderNode(node))
@@ -738,148 +725,116 @@ function MoveNoteIcon({ format, size, color }: { format: string; size: number; c
           }}
           onClick={(e) => e.stopPropagation()}
         >
-                    <SubMenuItem
+          <SubMenuItem
             icon={<FilePlus size={14} />}
             label="新建笔记"
             parentRef={contextMenuRef}
           >
-            <MenuItem icon={<Globe size={14} />} label="网址笔记" onClick={() => {
+            <MenuItem icon={<Globe size={14} />} label="网址笔记" onClick={async () => {
               closeContextMenu()
-              const node = contextMenu.node
-              const targetNotebookId = node.type === 'notebook'
-                ? node.id
-                : (notes.find(n => n.id === node.id)?.notebookId ?? notebooks[0]?.id ?? '')
-              const targetParentId = node.type === 'notebook' ? null : node.id
-              // Electron renderer 不支持 window.prompt，用自定义 modal
-              setUrlDialog({ notebookId: targetNotebookId, parentId: targetParentId, name: '', value: 'https://' })
+              const target = resolveTarget(contextMenu.node)
+              const nbId = target.notebookId || await ensureNotebook()
+              setUrlDialog({ notebookId: nbId, parentId: target.parentId, name: '', value: 'https://' })
             }} />
             <MenuItem icon={<Paperclip size={14} />} label="文件笔记" onClick={handleCreateFileNote} />
-            <MenuItem icon={<FileText size={14} />} label="Markdown 笔记" onClick={() => {
+            <MenuItem icon={<FileText size={14} />} label="Markdown 笔记" onClick={async () => {
               closeContextMenu()
-              const node = contextMenu.node
-              if (node.type === 'notebook') {
-                createNote('未命名笔记', node.id, null, undefined, 'markdown')
-              } else {
-                // 笔记下创建 → 作为子笔记嵌入
-                const noteData = notes.find(n => n.id === node.id)
-                createNote('未命名笔记', noteData?.notebookId ?? notebooks[0]?.id ?? '', node.id, undefined, 'markdown')
-              }
+              const target = resolveTarget(contextMenu.node)
+              const nbId = target.notebookId || await ensureNotebook()
+              const note = await createNote('未命名笔记', nbId, target.parentId, undefined, 'markdown')
+              setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
-            <MenuItem icon={<FileCode2 size={14} />} label="HTML 笔记" onClick={() => {
+            <MenuItem icon={<FileCode2 size={14} />} label="HTML 笔记" onClick={async () => {
               closeContextMenu()
-              const node = contextMenu.node
-              if (node.type === 'notebook') {
-                createNote('未命名 HTML', node.id, null, undefined, 'html')
-              } else {
-                const noteData = notes.find(n => n.id === node.id)
-                createNote('未命名 HTML', noteData?.notebookId ?? notebooks[0]?.id ?? '', node.id, undefined, 'html')
-              }
+              const target = resolveTarget(contextMenu.node)
+              const nbId = target.notebookId || await ensureNotebook()
+              const note = await createNote('未命名 HTML', nbId, target.parentId, undefined, 'html')
+              setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
-            <MenuItem icon={<FileType2 size={14} />} label="富文本笔记" onClick={() => {
+            <MenuItem icon={<FileType2 size={14} />} label="富文本笔记" onClick={async () => {
               closeContextMenu()
-              const node = contextMenu.node
-              if (node.type === 'notebook') {
-                createNote('未命名富文本', node.id, null, undefined, 'richtext')
-              } else {
-                const noteData = notes.find(n => n.id === node.id)
-                createNote('未命名富文本', noteData?.notebookId ?? notebooks[0]?.id ?? '', node.id, undefined, 'richtext')
-              }
+              const target = resolveTarget(contextMenu.node)
+              const nbId = target.notebookId || await ensureNotebook()
+              const note = await createNote('未命名富文本', nbId, target.parentId, undefined, 'richtext')
+              setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
             <SubMenuItem icon={<CodeIcon size={14} />} label="代码笔记" parentRef={contextMenuRef}>
               {(['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'cpp', 'csharp', 'html', 'css', 'json', 'sql', 'shell', 'plaintext'] as const).map(lang => (
-                <MenuItem key={lang} icon={<FileCode2 size={14} />} label={lang} onClick={() => {
+                <MenuItem key={lang} icon={<FileCode2 size={14} />} label={lang} onClick={async () => {
                   closeContextMenu()
-                  const node = contextMenu.node
-                  const targetNotebookId = node.type === 'notebook'
-                    ? node.id
-                    : (notes.find(n => n.id === node.id)?.notebookId ?? notebooks[0]?.id ?? '')
-                  const targetParentId = node.type === 'note' ? node.id : null
-                  createNote(`${lang} 代码片段`, targetNotebookId, targetParentId, undefined, 'code', lang)
+                  const target = resolveTarget(contextMenu.node)
+                  const nbId = target.notebookId || await ensureNotebook()
+                  const note = await createNote(`${lang} 代码片段`, nbId, target.parentId, undefined, 'code', lang)
+                  setRenaming({ id: note.id, type: 'note', value: note.title })
                 }} />
               ))}
             </SubMenuItem>
           </SubMenuItem>
 
-                    <MenuItem icon={<FolderPlus size={14} />} label="新建子笔记本" onClick={() => handleNewNotebook(contextMenu.node.id)} />
-
-          <div style={{ height: 6 }} />
-
-          <MenuItem icon={<Edit3 size={14} />} label="重命名" onClick={() => handleRename(contextMenu.node)} />
-
-          <MenuItem
-            icon={<ArrowRightLeft size={14} />}
-            label="移动"
-            onClick={() => {
-              const node = contextMenu.node
-              setContextMenu(null)
-              setMoveDialog({ nodeId: node.id, nodeType: node.type, nodeName: node.name })
-            }}
-          />
-
-          {/* 更换图标：仅笔记本节点显示 */}
-          {contextMenu.node.type === 'notebook' && (
-            <MenuItem
-              icon={<Palette size={14} />}
-              label="更换图标..."
-              onClick={(e) => {
-                const anchor = e.currentTarget as HTMLElement
-                // 在 DOM 移除前读取位置
-                const rect = anchor.getBoundingClientRect()
-                const nb = contextMenu.node
-                setContextMenu(null)
-                setIconPicker({
-                  notebookId: nb.id,
-                  currentIcon: nb.icon ?? null,
-                  position: { top: rect.top, left: rect.right + 6 }
-                })
-              }}
-            />
-          )}
-
-          {/* 导出仅对笔记有效；右键笔记本时不显示 */}
-          {contextMenu.node.type === 'note' && (
+          {contextMenu.node ? (
             <>
-              <div style={{ height: 6 }} />
-              <MenuItem
-                icon={<FileCode size={14} />}
-                label="导出为 HTML..."
-                onClick={() => handleExportHtml(contextMenu.node.id)}
-              />
-              <MenuItem
-                icon={<FileDown size={14} />}
-                label="导出为 PDF..."
-                onClick={() => handleExportPdf(contextMenu.node.id)}
-              />
-            </>
-          )}
+              <MenuItem icon={<FolderPlus size={14} />} label="新建子笔记本" onClick={() => handleNewNotebook(contextMenu.node!.id)} />
 
-          {/* Git 历史快照：仅对非文件/非网址笔记显示 */}
-          {(() => {
-            const note = useAppStore.getState().notes.find(n => n.id === contextMenu.node.id)
-            return contextMenu.node.type === 'note' && note && !['url', 'file'].includes(note.format)
-          })() && (
-            <>
               <div style={{ height: 6 }} />
+
+              <MenuItem icon={<Edit3 size={14} />} label="重命名" onClick={() => handleRename(contextMenu.node!)} />
+
               <MenuItem
-                icon={<History size={14} />}
-                label="Git 历史快照"
+                icon={<ArrowRightLeft size={14} />}
+                label="移动"
                 onClick={() => {
-                  const nodeId = contextMenu.node.id
-                  closeContextMenu()
-                  if (selectNoteTimer.current) clearTimeout(selectNoteTimer.current)
-                  selectNoteTimer.current = setTimeout(() => {
-                    selectNoteTimer.current = null
-                    useAppStore.getState().selectNote(nodeId)
-                    setTimeout(() => window.dispatchEvent(new CustomEvent('inkslate:open-history')), 50)
-                  }, 80)
+                  const node = contextMenu.node!
+                  setContextMenu(null)
+                  setMoveDialog({ nodeId: node.id, nodeType: node.type, nodeName: node.name })
                 }}
               />
+
+              {contextMenu.node.type === 'notebook' && (
+                <MenuItem
+                  icon={<Palette size={14} />}
+                  label="更换图标..."
+                  onClick={(e) => {
+                    const anchor = e.currentTarget as HTMLElement
+                    const rect = anchor.getBoundingClientRect()
+                    const nb = contextMenu.node!
+                    setContextMenu(null)
+                    setIconPicker({
+                      notebookId: nb.id,
+                      currentIcon: nb.icon ?? null,
+                      position: { top: rect.top, left: rect.right + 6 }
+                    })
+                  }}
+                />
+              )}
+
+              {contextMenu.node.type === 'note' && (
+                <>
+                  <div style={{ height: 6 }} />
+                  <MenuItem icon={<FileCode size={14} />} label="导出为 HTML..." onClick={() => handleExportHtml(contextMenu.node!.id)} />
+                  <MenuItem icon={<FileDown size={14} />} label="导出为 PDF..." onClick={() => handleExportPdf(contextMenu.node!.id)} />
+
+                  <div style={{ height: 6 }} />
+                  {showGitHistory(contextMenu.node) && (
+                    <MenuItem
+                      icon={<Clock size={14} />}
+                      label="Git 历史快照"
+                      onClick={() => {
+                        const nodeId = contextMenu.node!.id
+                        const nodeType = contextMenu.node!.type
+                        setContextMenu(null)
+                        setGitHistory({ noteId: nodeType === 'note' ? nodeId : undefined, notebookId: nodeType === 'notebook' ? nodeId : undefined })
+                      }}
+                    />
+                  )}
+                </>
+              )}
+
+              <div style={{ height: 6 }} />
+              <MenuItem icon={<Trash2 size={14} />} label="删除" onClick={() => handleDelete(contextMenu.node!)} danger />
             </>
+          ) : (
+            <MenuItem icon={<FolderPlus size={14} />} label="新建笔记本" onClick={() => handleNewNotebook(null)} />
           )}
-
-          <div style={{ height: 6 }} />
-
-          <MenuItem icon={<Trash2 size={14} />} label="删除" onClick={() => handleDelete(contextMenu.node)} danger />
         </div>
       )}
 
@@ -890,6 +845,26 @@ function MoveNoteIcon({ format, size, color }: { format: string; size: number; c
           currentIcon={iconPicker.currentIcon}
           position={iconPicker.position}
           onClose={() => setIconPicker(null)}
+        />
+      )}
+
+      {/* 移动对话框：放到组件顶层，避免每个树节点都渲染一份 */}
+      {moveDialog && (
+        <MoveDialog
+          nodeId={moveDialog.nodeId}
+          nodeType={moveDialog.nodeType}
+          nodeName={moveDialog.nodeName}
+          notebooks={notebooks}
+          notes={notes}
+          onMove={(targetId) => {
+            if (moveDialog.nodeType === 'note') {
+              moveNote(moveDialog.nodeId, targetId)
+            } else {
+              moveNotebook(moveDialog.nodeId, targetId)
+            }
+            setMoveDialog(null)
+          }}
+          onClose={() => setMoveDialog(null)}
         />
       )}
 
@@ -1057,6 +1032,27 @@ function MoveNoteIcon({ format, size, color }: { format: string; size: number; c
       )}
     </div>
   )
+}
+
+function MoveNoteIcon({ format, size, color }: { format: string; size: number; color: string }) {
+  switch (format) {
+    case 'markdown': return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 6 L5 18" /><path d="M5 6 L12 14" /><path d="M12 14 L19 6" /><path d="M19 6 L19 18" />
+      </svg>)
+    case 'code': return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 6 L2 12 L8 18" /><path d="M16 6 L22 12 L16 18" /><path d="M15 4 L9 20" />
+      </svg>)
+    case 'richtext': return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 6 L20 6" /><path d="M12 6 L12 19" />
+      </svg>)
+    case 'html': return <Globe size={size} color={color} />
+    case 'url': return <Link2 size={size} color={color} />
+    case 'file': return <Paperclip size={size} color={color} />
+    default: return <FileText size={size} color={color} />
+  }
 }
 
 function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: (e: React.MouseEvent<HTMLDivElement>) => void; danger?: boolean }) {
@@ -1337,13 +1333,15 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
   const renderTree = (nodes: NoteTreeNode[], depth = 0): React.ReactNode[] => {
     const result: React.ReactNode[] = []
     for (const node of nodes) {
+      if (!node || !node.id) continue
       if (excludeIds.has(node.id)) continue
       if (!canSelect(node)) {
         result.push(...renderTree(node.children, depth + 1))
         continue
       }
       const isFolder = node.type === 'notebook'
-      const noteFormat = notes.find(n => n.id === node.id)?.format || 'markdown'
+      const note = notes.find(n => n.id === node.id)
+      const noteFormat = note?.format || 'markdown'
       const formatColors: Record<string, string> = { markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6', code: '#4a90e2', url: '#0ea5e9', file: '#16a34a' }
       const fc = formatColors[noteFormat] || 'var(--text-secondary)'
       result.push(
@@ -1358,7 +1356,7 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
           }}
         >
           {isFolder ? <Folder size={13} color="var(--text-secondary)" /> : <MoveNoteIcon format={noteFormat} size={13} color={fc} />}
-          {node.name}
+          {node.name || '(未命名)'}
         </div>
       )
       result.push(...renderTree(node.children, depth + 1))
@@ -1377,7 +1375,7 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
         boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
       }} onClick={(e) => e.stopPropagation()}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>
-          移动{nodeType === 'note' ? '笔记' : '笔记本'} "{nodeName}" 到
+          移动{nodeType === 'note' ? '笔记' : '笔记本'} "{nodeName || '(未命名)'}" 到
         </div>
         <div style={{ flex: 1, overflowY: 'auto', marginBottom: 12, minHeight: 120 }}>
           <div

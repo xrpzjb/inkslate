@@ -352,7 +352,7 @@ export function Layout() {
               if (!prevSidebarVisible.current) toggleSidebar()
             }}
             onReplace={(text) => {
-              window.dispatchEvent(new CustomEvent('inkslate:ai-replace', { detail: text }))
+              useAppStore.getState().updateCurrentNoteDraft({ content: text })
             }}
           />
         ) : sidebarVisible ? <Sidebar /> : null}

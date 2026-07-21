@@ -447,7 +447,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       const text = view.state.doc.toString()
       if (!text.trim()) return { ok: true }
 
-      const lang = (language ?? '').toLowerCase()
+      const lang = (language ?? (format === 'html' ? 'html' : '')).toLowerCase()
       try {
         let formatted: string = ''
         let used = ''
@@ -636,6 +636,16 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       effects: fontSizeCompartment.current.reconfigure(fontSizeExtension)
     })
   }, [fontSize])
+
+  // 外部 value 变化时同步到 CodeMirror（如 AI 替换内容）
+  useEffect(() => {
+    if (!viewRef.current) return
+    const cur = viewRef.current.state.doc.toString()
+    if (cur === value) return
+    viewRef.current.dispatch({
+      changes: { from: 0, to: cur.length, insert: value }
+    })
+  }, [value])
 
   // 监听 --font-mono、--editor-font-weight、--editor-font CSS 变量变化，
   // 直接 inject style tag 到 document.head（绕开 CodeMirror compartment 优先级问题）
