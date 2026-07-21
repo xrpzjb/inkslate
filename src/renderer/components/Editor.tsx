@@ -1234,7 +1234,7 @@ function ToolbarBtn({ icon, title, onClick }: { icon: React.ReactNode; title: st
 }
 
 function Divider() {
-  return <div style={{ width: 1, height: 16, background: 'var(--border-color)', margin: '0 4px' }} />
+  return <div style={{ width: 1, height: 18, background: 'var(--border-color)', margin: '0 4px', alignSelf: 'center' }} />
 }
 
 // ==================== 富文本弹窗通用组件 ====================

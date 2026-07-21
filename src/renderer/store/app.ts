@@ -736,7 +736,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // idle / pending / connected → 用 pendingFiles 决定标签
       const next: SyncStatus = {
         state: pendingFiles > 0 ? 'pending' : 'idle',
-        message: pendingFiles > 0 ? `待同步 ${pendingFiles} 项` : '就绪',
+        message: pendingFiles > 0 ? '待同步' : '就绪',
         pendingFiles,
         lastSyncAt
       }

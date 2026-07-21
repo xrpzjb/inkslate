@@ -50,9 +50,9 @@ function pickSyncVisual(s: { state: string; pendingFiles?: number }): SyncVisual
 }
 
 /** 把状态翻成给用户看的中文短句（紧凑版，给 StatusBar 用） */
-function syncLabelCompact(v: SyncVisual, pendingFiles?: number): string {
+function syncLabelCompact(v: SyncVisual): string {
   switch (v) {
-    case 'pending': return pendingFiles ? `待同步 ${pendingFiles} 项` : '待同步'
+    case 'pending': return '待同步'
     case 'syncing': return '同步中…'
     case 'success': return '已同步'
     case 'error': return '同步失败'
@@ -85,7 +85,7 @@ export function StatusBar() {
   const langPopoverRef = useRef<HTMLDivElement>(null)
 
   const visual = pickSyncVisual(syncStatus)
-  const label = syncLabelCompact(visual, syncStatus.pendingFiles)
+  const label = syncLabelCompact(visual)
 
   // success 状态自动回退（2.5s）
   useEffect(() => {
@@ -95,7 +95,7 @@ export function StatusBar() {
       useAppStore.getState().setSyncStatus({
         ...syncStatus,
         state: pending ? 'pending' : 'idle',
-        message: pending ? `待同步 ${syncStatus.pendingFiles} 项` : '就绪'
+        message: pending ? '待同步' : '就绪'
       })
     }, 2500)
     return () => clearTimeout(t)
@@ -330,15 +330,13 @@ export function StatusBar() {
           <span>{label}</span>
           {visual !== 'unconfigured' && syncStatus.pendingFiles && visual !== 'syncing' && visual !== 'success' ? (
             <span style={{
+              display: 'inline-block',
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
               background: '#f59e0b',
-              color: '#fff',
-              borderRadius: 8,
-              padding: '0 5px',
-              fontSize: 10,
-              lineHeight: '14px',
-              minWidth: 14,
-              textAlign: 'center'
-            }}>{syncStatus.pendingFiles > 99 ? '99+' : syncStatus.pendingFiles}</span>
+              marginLeft: 2
+            }} />
           ) : null}
         </span>
         {/* Git 同步入口按钮 */}

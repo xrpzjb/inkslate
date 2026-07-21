@@ -172,7 +172,7 @@ export function IconSidebar() {
       useAppStore.getState().setSyncStatus({
         ...syncStatus,
         state: pending ? 'pending' : 'idle',
-        message: pending ? `待同步 ${syncStatus.pendingFiles} 项` : '就绪'
+        message: pending ? '待同步' : '就绪'
       })
     }, 2500)
     return () => clearTimeout(t)
@@ -316,7 +316,7 @@ export function IconSidebar() {
 
   // ===== 同步状态可视化 =====
   const visual = pickSyncVisual(syncStatus)
-  const syncTip = `同步：${syncLabel(visual)}${syncStatus.pendingFiles ? ` (${syncStatus.pendingFiles} 项)` : ''}`
+  const syncTip = `同步：${syncLabel(visual)}`
 
   return (
     <>
@@ -359,11 +359,7 @@ export function IconSidebar() {
           title={syncTip}
         >
           <SyncIcon visual={visual} />
-          {visual === 'pending' && syncStatus.pendingFiles ? (
-            <span className="icon-sidebar-badge">
-              {syncStatus.pendingFiles > 99 ? '99+' : syncStatus.pendingFiles}
-            </span>
-          ) : null}
+{/* 暂不显示具体待同步项数，仅靠图标颜色区分状态 */}
           {visual === 'error' ? (
             <span className="icon-sidebar-dot icon-sidebar-dot-error" />
           ) : null}
@@ -450,11 +446,7 @@ export function IconSidebar() {
           <div className={`icon-sidebar-sync-summary sync-state-${visual}`}>
             <SyncIcon visual={visual} size={14} />
             <span className="icon-sidebar-sync-summary-label">{syncLabel(visual)}</span>
-            {syncStatus.pendingFiles ? (
-              <span className="icon-sidebar-sync-summary-pending">
-                · 待同步 {syncStatus.pendingFiles} 项
-              </span>
-            ) : null}
+{/* 暂不显示具体待同步项数 */}
           </div>
           {syncStatus.lastSyncAt ? (
             <div className="icon-sidebar-sync-meta">

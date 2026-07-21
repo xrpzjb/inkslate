@@ -292,7 +292,6 @@ export class GitManager {
       path.join(inkslateDir, 'notebooks.json'),
       JSON.stringify({
         version: 1,
-        exported_at: Date.now(),
         notebooks: notebooks.map(nb => ({
           id: nb.id,
           name: nb.name,
@@ -311,7 +310,6 @@ export class GitManager {
       path.join(inkslateDir, 'notes.json'),
       JSON.stringify({
         version: 1,
-        exported_at: Date.now(),
         notes: notes.map(n => ({
           id: n.id,
           title: n.title,
