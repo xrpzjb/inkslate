@@ -57,7 +57,7 @@ function richTextJsonToHtml(jsonStr: string): string {
             if (m.type === 'bold') text = `<strong>${text}</strong>`
             if (m.type === 'italic') text = `<em>${text}</em>`
             if (m.type === 'underline') text = `<u>${text}</u>`
-            if (m.type === 'code') text = `<code>${text}</code>`
+            if (m.type === 'code') text = `<span class="rt-inline-code">${text}</span>`
             if (m.type === 'link') text = `<a href="${escape(m.attrs?.href || '#')}" target="_blank">${text}</a>`
           }
         }
@@ -71,6 +71,10 @@ function richTextJsonToHtml(jsonStr: string): string {
       if (node.type === 'bulletList') return `<ul>${(node.content || []).map(renderNode).join('')}</ul>`
       if (node.type === 'orderedList') return `<ol>${(node.content || []).map(renderNode).join('')}</ol>`
       if (node.type === 'listItem') return `<li>${(node.content || []).map(renderNode).join('')}</li>`
+      if (node.type === 'code_block') {
+        const text = (node.content || []).map((n: any) => n.text || '').join('')
+        return `<div class="rt-code-block">${escape(text)}</div>`
+      }
       if (node.type === 'blockquote') return `<blockquote>${(node.content || []).map(renderNode).join('')}</blockquote>`
       if (node.type === 'image') {
         const src = escape(node.attrs?.src || '')

@@ -909,7 +909,7 @@ export function Sidebar() {
           height: calc(var(--tree-font-size, 14px) + 16px);
           font-size: var(--tree-font-size, 14px);
           font-family: var(--tree-font, var(--font-family));
-          color: var(--text-primary);
+          color: #333;
           cursor: pointer;
           user-select: none;
           gap: 4px;

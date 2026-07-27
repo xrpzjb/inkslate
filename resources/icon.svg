@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5B7CFA"/>
+      <stop offset="100%" stop-color="#3A4FB8"/>
+    </linearGradient>
+    <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7B4FB8"/>
+      <stop offset="100%" stop-color="#4A2E8C"/>
+    </linearGradient>
+    <linearGradient id="bellyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F4D58D"/>
+      <stop offset="100%" stop-color="#E8B14A"/>
+    </linearGradient>
+    <linearGradient id="eyeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E8EAF6"/>
+    </linearGradient>
+    <radialGradient id="pupilGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1A1A2E"/>
+      <stop offset="100%" stop-color="#0F0F1E"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bgGrad)"/>
+
+  <!-- Ear tufts -->
+  <path d="M 130 170 Q 115 105 165 95 Q 185 130 180 175 Z" fill="url(#bodyGrad)"/>
+  <path d="M 382 170 Q 397 105 347 95 Q 327 130 332 175 Z" fill="url(#bodyGrad)"/>
+
+  <!-- Body -->
+  <ellipse cx="256" cy="295" rx="155" ry="170" fill="url(#bodyGrad)"/>
+
+  <!-- Belly patch -->
+  <ellipse cx="256" cy="335" rx="95" ry="115" fill="url(#bellyGrad)"/>
+
+  <!-- Wing left -->
+  <path d="M 130 290 Q 95 330 115 395 Q 145 405 165 380 Q 160 330 155 295 Z" fill="#3A2275" opacity="0.9"/>
+  <!-- Wing right -->
+  <path d="M 382 290 Q 417 330 397 395 Q 367 405 347 380 Q 352 330 357 295 Z" fill="#3A2275" opacity="0.9"/>
+
+  <!-- Eye sockets (outer dark) -->
+  <circle cx="195" cy="245" r="72" fill="#2A1858"/>
+  <circle cx="317" cy="245" r="72" fill="#2A1858"/>
+
+  <!-- Eyes (white) -->
+  <circle cx="195" cy="245" r="58" fill="url(#eyeGrad)"/>
+  <circle cx="317" cy="245" r="58" fill="url(#eyeGrad)"/>
+
+  <!-- Pupils -->
+  <circle cx="200" cy="252" r="28" fill="url(#pupilGrad)"/>
+  <circle cx="322" cy="252" r="28" fill="url(#pupilGrad)"/>
+
+  <!-- Eye highlights -->
+  <circle cx="208" cy="244" r="9" fill="#FFFFFF"/>
+  <circle cx="330" cy="244" r="9" fill="#FFFFFF"/>
+  <circle cx="190" cy="260" r="4" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="312" cy="260" r="4" fill="#FFFFFF" opacity="0.7"/>
+
+  <!-- Beak -->
+  <path d="M 256 285 L 232 315 Q 256 332 280 315 Z" fill="#F4A02D" stroke="#D87810" stroke-width="3" stroke-linejoin="round"/>
+
+  <!-- Small decorative feather dots on belly -->
+  <circle cx="256" cy="370" r="3" fill="#C68A1A" opacity="0.6"/>
+  <circle cx="240" cy="395" r="3" fill="#C68A1A" opacity="0.6"/>
+  <circle cx="272" cy="395" r="3" fill="#C68A1A" opacity="0.6"/>
+  <circle cx="256" cy="420" r="3" fill="#C68A1A" opacity="0.6"/>
+</svg>

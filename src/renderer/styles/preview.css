@@ -108,7 +108,8 @@
 .preview blockquote > :last-child { margin-bottom: 0; }
 
 /* 代码 */
-.preview code {
+.preview code,
+.preview .rt-inline-code {
   font-family: var(--font-mono);
   font-size: 0.9em;
   padding: 0.2em 0.4em;
@@ -117,7 +118,8 @@
   border-radius: 3px;
 }
 
-.preview pre {
+.preview pre,
+.preview .rt-code-block {
   margin: 0 0 16px;
   padding: 16px;
   overflow: auto;
@@ -125,13 +127,20 @@
   border-radius: 6px;
   font-size: 0.9em;
   line-height: 1.5;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: var(--code-text);
 }
 
-.preview pre code {
+.preview pre code,
+.preview .rt-code-block .rt-inline-code {
   padding: 0;
   background: transparent;
   border: 0;
   font-size: inherit;
+  color: inherit;
+  border-radius: 0;
 }
 
 /* 表格 */

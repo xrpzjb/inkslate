@@ -15,6 +15,7 @@ let mainWindow: BrowserWindow | null = null
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
 function createMainWindow(): void {
+  const iconPath = path.join(__dirname, '../../resources/icon.png')
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -24,6 +25,7 @@ function createMainWindow(): void {
     frame: true,
     backgroundColor: '#ffffff',
     title: '墨与石板',
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,

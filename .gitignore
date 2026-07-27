@@ -51,3 +51,8 @@ node_modules/*
 !*/build/*.xml
 
 .vscode
+
+release
+release_installer
+release_manual
+release_new

@@ -108,19 +108,26 @@ export function Editor() {
 
   // 当前 content 同步：selectNote 异步 fetch 返回后 currentNote.content 更新，
   // 但 Editor 本地 content 还是之前的缓存旧值，需要刷过来。
-  // 用 contentTimerRef 做 guard —— 有活跃防抖 timer 说明用户正在输入，不覆盖
+  // 加入 currentNote.id 依赖：在同一笔记内 currentNote 对象被替换（updateNote 后）
+  // 且 content 字符串相同时也能保持同步。
+  // contentTimerRef 只阻塞长度相似的编辑（防抖窗口内不打断用户打字），
+  // 内容是空字符串或差异很大时强制同步。
   useEffect(() => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
     if (currentNote.content === content) return
     if (currentNote.content == null) return
     if (!currentNote.content) {
-      // 外部加载的笔记内容是空字符串 → 允许覆盖本地残留内容
       if (!content) return
     }
-    if (contentTimerRef.current) return // 用户正在输入，不覆盖
+    // 有活跃防抖 timer 说明用户正在输入；
+    // 但如果 currentNote 的内容明显不同（长度差 >10），也强制同步
+    if (contentTimerRef.current) {
+      const lenDiff = Math.abs((currentNote.content ?? '').length - content.length)
+      if (lenDiff < 10) return
+    }
     setContent(currentNote.content)
-  }, [currentNote?.content])
+  }, [currentNote?.id, currentNote?.content])
 
   // 即时同步草稿到 store（不进库），让 Preview 实时看到最新内容
   // 仅响应用户编辑（content / title 变化），不随 currentNote 对象变动触发，
@@ -195,7 +202,18 @@ export function Editor() {
   useEffect(() => {
     const onReplace = (e: Event) => {
       const text = (e as CustomEvent).detail as string
-      if (currentNote?.format === 'richtext') {
+      const cn = currentNoteRef.current
+      if (!cn || cn.id !== editingNoteIdRef.current) return
+      // AI 替换内容时，必须清掉防抖 timer，否则之前输入的旧内容 timer 会覆盖 AI 内容
+      if (titleTimerRef.current) {
+        clearTimeout(titleTimerRef.current)
+        titleTimerRef.current = null
+      }
+      if (contentTimerRef.current) {
+        clearTimeout(contentTimerRef.current)
+        contentTimerRef.current = null
+      }
+      if (cn.format === 'richtext') {
         richtextEditorRef.current?.setHTML(text)
       } else {
         setContent(text)
@@ -203,7 +221,7 @@ export function Editor() {
     }
     window.addEventListener('inkslate:ai-replace', onReplace)
     return () => window.removeEventListener('inkslate:ai-replace', onReplace)
-  }, [currentNote?.format])
+  }, [])
 
   const handleSave = async () => {
     if (!currentNote) return
@@ -778,7 +796,7 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
               if (m.type === 'bold') text = `<strong>${text}</strong>`
               if (m.type === 'italic') text = `<em>${text}</em>`
               if (m.type === 'underline') text = `<u>${text}</u>`
-              if (m.type === 'code') text = `<code>${text}</code>`
+              if (m.type === 'code') text = `<span class="rt-inline-code">${text}</span>`
               if (m.type === 'link') text = `<a href="${escapeHtml(m.attrs?.href || '#')}" target="_blank" rel="noopener">${text}</a>`
             }
           }
@@ -805,6 +823,10 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
         }
         if (node.type === 'hardBreak') {
           return '<br>'
+        }
+        if (node.type === 'code_block') {
+          const text = (node.content || []).map((n: any) => n.text || '').join('')
+          return `<div class="rt-code-block">${escapeHtml(text)}</div>`
         }
         if (node.type === 'image') {
           const src = escapeHtml(node.attrs?.src || '')
@@ -839,6 +861,7 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
       }
       const el = node as HTMLElement
       const tag = el.tagName?.toLowerCase()
+      const className = el.className || ''
       if (tag === 'img') {
         return {
           type: 'image',
@@ -851,17 +874,28 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
       if (tag === 'br') {
         return { type: 'hardBreak' }
       }
+      // 优先用 className 识别自定义的 inline code / code block
+      if (className.includes('rt-inline-code') || tag === 'code') {
+        return { type: 'text', text: el.textContent || '', marks: [{ type: 'code' }] }
+      }
+      if (className.includes('rt-code-block') || tag === 'pre') {
+        return { type: 'code_block', content: [{ type: 'text', text: el.textContent || '' }] }
+      }
       const text = { type: 'text', text: el.textContent || '' }
       if (tag === 'strong' || tag === 'b') return { type: 'text', text: el.textContent || '', marks: [{ type: 'bold' }] }
       if (tag === 'em' || tag === 'i') return { type: 'text', text: el.textContent || '', marks: [{ type: 'italic' }] }
       if (tag === 'u') return { type: 'text', text: el.textContent || '', marks: [{ type: 'underline' }] }
-      if (tag === 'code') return { type: 'text', text: el.textContent || '', marks: [{ type: 'code' }] }
       if (tag === 'a') return { type: 'text', text: el.textContent || '', marks: [{ type: 'link', attrs: { href: el.getAttribute('href') || '#' } }] }
       return text
     }
 
     const parseBlock = (node: Element): any => {
       const tag = node.tagName?.toLowerCase()
+      const className = (node as HTMLElement).className || ''
+      // 优先识别自定义的 code block className
+      if (className.includes('rt-code-block') || tag === 'pre') {
+        return { type: 'code_block', content: [{ type: 'text', text: node.textContent || '' }] }
+      }
       if (tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4') {
         return { type: 'heading', attrs: { level: parseInt(tag[1]) }, content: [{ type: 'paragraph', content: [parseInline(node.firstChild || document.createTextNode(''))] }] }
       }
@@ -930,9 +964,41 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
     }
   }
 
+  // 在 code block 内按 Enter 时光标跳到后面的段落
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' || !editorRef.current) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const node = sel.anchorNode
+    if (!node) return
+    // 找到最近的祖先元素
+    let el: HTMLElement | null = node.nodeType === 1 ? (node as HTMLElement) : (node.parentElement as HTMLElement)
+    let codeBlock: HTMLElement | null = null
+    while (el) {
+      if (el.classList?.contains('rt-code-block')) { codeBlock = el; break }
+      el = el.parentElement
+    }
+    if (!codeBlock) return
+    // 光标在 code block 内：阻止默认行为，手动插入新段落
+    e.preventDefault()
+    const after = codeBlock.nextElementSibling as HTMLElement | null
+    if (after && after.tagName === 'P') {
+      // 已有段落，把光标移过去
+      const range = document.createRange()
+      range.setStart(after, 0)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    } else {
+      // 兜底：插入一个 <p><br></p>
+      document.execCommand('insertHTML', false, '<p><br></p>')
+    }
+    handleInput()
+  }
+
   const exec = (cmd: string, value?: string) => {
-    document.execCommand(cmd, false, value)
     editorRef.current?.focus()
+    document.execCommand(cmd, false, value)
     handleInput()
   }
 
@@ -1030,11 +1096,14 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
         <ToolbarBtn icon={<Image size={14} />} title="插入图片" onClick={() => setImageDlg({ open: true, url: '', alt: '', busy: false })} />
         <ToolbarBtn icon={<Code size={14} />} title="行内代码" onClick={() => {
           const sel = window.getSelection()?.toString() || '代码'
-          exec('insertHTML', `<code>${sel}</code>`)
+          exec('insertHTML', `<span class="rt-inline-code">${sel}</span>`)
+          // 在 inline code 后插入零宽字符，让光标离开 inline code
+          exec('insertHTML', '&#8203;')
         }} />
         <ToolbarBtn icon={<Code2 size={14} />} title="代码块" onClick={() => {
           const sel = window.getSelection()?.toString() || ''
-          exec('insertHTML', `<pre><code>${sel || '代码块'}</code></pre>`)
+          // 代码块单独占一行，前后用 <p><br></p> 隔开
+          exec('insertHTML', `<p><br></p><div class="rt-code-block">${sel || '代码块'}</div><p><br></p>`)
         }} />
         <ToolbarBtn icon={<Table size={14} />} title="插入表格" onClick={() => setTableDlg({ open: true, rows: 3, cols: 3 })} />
         <ToolbarBtn icon={<Minus size={14} />} title="分割线" onClick={() => exec('insertHTML', '<hr>')} />
@@ -1175,10 +1244,12 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
 
             <div
         ref={editorRef}
+        className="richtext-editor"
         contentEditable
         suppressContentEditableWarning
         onInput={handleInput}
         onBlur={handleInput}
+        onKeyDown={handleKeyDown}
         style={{
           flex: 1,
           padding: '8px 24px',
