@@ -228,11 +228,11 @@ export function setupIpcHandlers(): void {
   })
 
   // ============ 鏂囦欢瀵硅瘽锟?============
-  ipcMain.handle(IPC_CHANNELS.FILE_OPEN_DIALOG, async (_, options: Electron.OpenDialogOptions): Promise<string | null> => {
+  ipcMain.handle(IPC_CHANNELS.FILE_OPEN_DIALOG, async (_, options: Electron.OpenDialogOptions): Promise<string[]> => {
     const win = BrowserWindow.getFocusedWindow()
-    if (!win) return null
+    if (!win) return []
     const result = await dialog.showOpenDialog(win, options)
-    return result.canceled ? null : result.filePaths[0] ?? null
+    return result.canceled ? [] : result.filePaths
   })
 
   ipcMain.handle(IPC_CHANNELS.FILE_EXPORT, async (_, format: 'html' | 'md'): Promise<string | null> => {

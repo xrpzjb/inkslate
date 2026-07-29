@@ -452,10 +452,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         })
       }
-      // 局部更新 notes 列表里那一条，让侧边栏树状图同步最新的 title
-      // （避免 loadNotes 全量重拉导致列表闪烁）
+      // 局部更新 notes 列表里那一条，让侧边栏树状图和切回时的缓存占位使用最新数据
       set((state) => ({
-        notes: state.notes.map((n) => (n.id === id ? { ...n, title: updated.title, updatedAt: updated.updatedAt } : n))
+        notes: state.notes.map((n) => (n.id === id ? { ...n, title: updated.title, content: updated.content, url: updated.url, updatedAt: updated.updatedAt } : n))
       }))
       get().setSaveStatus({ saving: false, lastSaved: Date.now() })
       // 同步状态：内容/title 改了 → 磁盘文件被重写 → 视作"待同步"

@@ -160,7 +160,7 @@ export default function App() {
     window.addEventListener('inkslate:open-history', openHistory)
 
     const handleFileNote = async () => {
-      const sourcePath = await window.inkslateApi.file.openDialog({
+      const [sourcePath] = await window.inkslateApi.file.openDialog({
         title: '选择要导入的文件',
         properties: ['openFile']
       })

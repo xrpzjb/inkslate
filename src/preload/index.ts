@@ -166,8 +166,16 @@ const api = {
   },
 
   file: {
-    openDialog: (options: Electron.OpenDialogOptions): Promise<string | null> =>
+    openDialog: (options: Electron.OpenDialogOptions): Promise<string[]> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_OPEN_DIALOG, options),
+    readText: (filePath: string): Promise<string | null> => {
+      try {
+        const fs = require('node:fs') as typeof import('node:fs')
+        return Promise.resolve(fs.readFileSync(filePath, 'utf-8'))
+      } catch {
+        return Promise.resolve(null)
+      }
+    },
     export: (format: 'html' | 'md'): Promise<string | null> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT, format),
     exportPdf: (payload: { title: string; html: string }): Promise<boolean> =>

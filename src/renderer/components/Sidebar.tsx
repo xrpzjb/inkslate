@@ -5,7 +5,7 @@ import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
   FileDown, FileCode, Globe, Link2, Paperclip, Palette, History, ArrowRightLeft,
-  Lock, Unlock, Clock
+  Lock, Unlock, Clock, Upload
 } from 'lucide-react'
 import { MatIcon } from './MatIcon'
 import { IonIcon } from './IonIcon'
@@ -356,7 +356,7 @@ export function Sidebar() {
     const targetParentId = node.type === 'notebook' ? null : node.id
     if (!targetNotebookId) return
 
-    const sourcePath = await window.inkslateApi.file.openDialog({
+    const [sourcePath] = await window.inkslateApi.file.openDialog({
       title: '选择要导入的文件',
       properties: ['openFile']
     })
@@ -378,6 +378,65 @@ export function Sidebar() {
       await useAppStore.getState().selectNote(note.id)
     } catch (e) {
       toast.error('文件导入失败：' + (e as Error).message)
+    }
+  }
+
+  const handleImportFiles = async () => {
+    closeContextMenu()
+    const node = contextMenu?.node
+    if (!node) return
+    const target = resolveTarget(node)
+    if (!target.notebookId) {
+      toast.error('请先创建笔记本')
+      return
+    }
+
+    let paths: string[]
+    try {
+      paths = await window.inkslateApi.file.openDialog({
+        title: '选择要导入的 Markdown / HTML 文件',
+        filters: [{ name: 'Markdown / HTML', extensions: ['md', 'html', 'htm'] }],
+        properties: ['openFile', 'multiSelections']
+      })
+      if (!paths || paths.length === 0) return
+    } catch (e) {
+      console.error('打开文件对话框失败:', e)
+      toast.error('文件对话框打开失败，请重启应用后重试')
+      return
+    }
+
+    let imported = 0
+    for (const filePath of paths) {
+      try {
+        const content = await window.inkslateApi.file.readText(filePath)
+        if (!content || content.trim() === '') continue
+
+        const fileName = filePath.split(/[\\/]/).pop() || '未命名'
+        const ext = fileName.split('.').pop()?.toLowerCase()
+        const format: 'markdown' | 'html' = ext === 'html' || ext === 'htm' ? 'html' : 'markdown'
+
+        let title: string
+        if (format === 'markdown') {
+          const match = content.match(/^#\s+(.+)/m)
+          title = match ? match[1].trim() : fileName.replace(/\.(?:md|markdown)$/i, '')
+        } else {
+          const match = content.match(/<title>([\s\S]*?)<\/title>/i)
+          title = match ? match[1].trim() : fileName.replace(/\.html?$/i, '')
+        }
+
+        const note = await window.inkslateApi.notes.create(title, target.notebookId, target.parentId, undefined, format)
+        await window.inkslateApi.notes.update(note.id, { content } as Partial<Note>)
+        imported++
+      } catch (e) {
+        console.error('导入文件失败:', filePath, e)
+      }
+    }
+
+    await useAppStore.getState().loadNotes()
+    if (imported > 0) {
+      toast.success(`已导入 ${imported} 个文件`)
+    } else {
+      toast.error('没有文件被导入')
     }
   }
 
@@ -807,6 +866,9 @@ export function Sidebar() {
                 }}
               />
 
+              <div style={{ height: 6 }} />
+              <MenuItem icon={<Upload size={14} />} label="导入文件..." onClick={handleImportFiles} />
+
               {contextMenu.node.type === 'notebook' && (
                 <>
                   <MenuItem
@@ -909,7 +971,7 @@ export function Sidebar() {
           height: calc(var(--tree-font-size, 14px) + 16px);
           font-size: var(--tree-font-size, 14px);
           font-family: var(--tree-font, var(--font-family));
-          color: #333;
+          color: var(--text-primary);
           cursor: pointer;
           user-select: none;
           gap: 4px;

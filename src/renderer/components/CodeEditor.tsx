@@ -5,8 +5,21 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { html } from '@codemirror/lang-html'
 import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'
+import { shell } from '@codemirror/legacy-modes/mode/shell'
+import { go } from '@codemirror/legacy-modes/mode/go'
+import { cpp, csharp } from '@codemirror/legacy-modes/mode/clike'
+import { ruby } from '@codemirror/legacy-modes/mode/ruby'
+import { swift } from '@codemirror/legacy-modes/mode/swift'
+import { json } from '@codemirror/lang-json'
+import { sql } from '@codemirror/lang-sql'
+import { python } from '@codemirror/lang-python'
+import { java } from '@codemirror/lang-java'
+import { rust } from '@codemirror/lang-rust'
+import { php } from '@codemirror/lang-php'
+import { xml } from '@codemirror/lang-xml'
+import { yaml } from '@codemirror/lang-yaml'
 import { history, defaultKeymap, historyKeymap } from '@codemirror/commands'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { format as formatSql } from 'sql-formatter'
 // @ts-ignore - js-beautify 没有官方的 ESM 类型，但 default 导出是 CJS 互操作
@@ -514,12 +527,30 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
     const languageExtension = (() => {
       if (format === 'code') {
-        // 代码笔记：按语言选扩展（未支持的走 javascript 作为高亮 fallback，纯文本走无扩展）
-        if (language === 'javascript' || language === 'typescript') return javascript({ typescript: language === 'typescript' })
-        if (language === 'html') return html()
-        if (language === 'css') return css()
-        if (language === 'json') return javascript() // json 用 JS 模式粗略高亮
-        return []
+        const langMap: Record<string, Extension> = {
+          plaintext:            StreamLanguage.define(shell),
+          javascript:           javascript({ typescript: false }),
+          typescript:           javascript({ typescript: true }),
+          python:               python(),
+          java:                 java(),
+          go:                   StreamLanguage.define(go),
+          rust:                 rust(),
+          c:                    StreamLanguage.define(cpp),
+          cpp:                  StreamLanguage.define(cpp),
+          csharp:               StreamLanguage.define(csharp),
+          ruby:                 StreamLanguage.define(ruby),
+          php:                  php(),
+          html:                 html(),
+          css:                  css(),
+          json:                 json(),
+          xml:                  xml(),
+          yaml:                 yaml(),
+          markdown:             markdown({ base: markdownLanguage }),
+          shell:                StreamLanguage.define(shell),
+          sql:                  sql(),
+          swift:                StreamLanguage.define(swift),
+        }
+        return langMap[language ?? ''] ?? []
       }
       return format === 'html'
         ? html()

@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import mermaid from 'mermaid'
 import { useAppStore } from '../store/app'
-import { FileText, Maximize2, Loader2, ExternalLink } from 'lucide-react'
+import { FileText, Maximize2, Loader2, ExternalLink, Copy, Check } from 'lucide-react'
 import { attachHeadingIds } from '../utils/headings'
 import { md } from '../utils/markdown'
+import hljs from 'highlight.js'
 import { TableOfContents } from './TableOfContents'
 import { FilePreview } from './filePreview/FilePreview'
-import 'highlight.js/styles/github.css'
+import hljsLightCss from 'highlight.js/styles/atom-one-light.css?inline'
+import hljsDarkCss from 'highlight.js/styles/atom-one-dark.css?inline'
 import '../styles/preview.css'
 
 // mermaid 初始化（主题跟随全局主题，按需重新初始化以切换主题）
@@ -162,6 +164,21 @@ export function Preview() {
     return () => { cancelled = true }
   }, [currentNote?.content, currentNote?.format, settings?.theme])
 
+  // highlight.js 主题跟随应用主题切换
+  useEffect(() => {
+    const theme = settings?.theme ?? 'light'
+    const isDark = theme === 'dark' || theme === 'dracula' || theme === 'cyberpunk' || theme === 'forest'
+    const css = isDark ? hljsDarkCss : hljsLightCss
+    const styleId = 'hljs-theme'
+    let styleEl = document.getElementById(styleId) as HTMLStyleElement | null
+    if (!styleEl) {
+      styleEl = document.createElement('style')
+      styleEl.id = styleId
+      document.head.appendChild(styleEl)
+    }
+    styleEl.textContent = css
+  }, [settings?.theme])
+
   const html = useMemo(() => {
     if (!currentNote?.content) return ''
     if (currentNote.format === 'markdown') {
@@ -206,15 +223,37 @@ export function Preview() {
     )
   }
 
-  if (currentNote.format === 'richtext' || currentNote.format === 'code') {
+  if (currentNote.format === 'code') {
+    const lang = currentNote.language || 'plaintext'
+    const langMap: Record<string, string> = { 'shell': 'bash', 'sh': 'bash' }
+    const hljsLang = langMap[lang] || lang
+    let highlighted: string
+    if (hljsLang === 'plaintext' || !hljs.getLanguage(hljsLang)) {
+      highlighted = currentNote.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    } else {
+      try {
+        highlighted = hljs.highlight(currentNote.content, { language: hljsLang, ignoreIllegals: true }).value
+      } catch {
+        highlighted = currentNote.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      }
+    }
+    return (
+      <div className="preview code-note-preview">
+        <div className="code-preview-header">
+          <span className="code-preview-lang">{lang}</span>
+        </div>
+        <pre className="code-preview hljs"><code dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
+      </div>
+    )
+  }
+
+  if (currentNote.format === 'richtext') {
     return (
       <div className="preview">
         <div className="preview-empty">
           <FileText size={48} className="preview-empty-icon" />
-          <p>{currentNote.format === 'code' ? '代码笔记无需预览' : '富文本笔记无需预览'}</p>
-          <p style={{ fontSize: 12, opacity: 0.6 }}>
-            {currentNote.format === 'code' ? '语法高亮在编辑器中查看' : '在编辑器中直接编辑'}
-          </p>
+          <p>富文本笔记无需预览</p>
+          <p style={{ fontSize: 12, opacity: 0.6 }}>在编辑器中直接编辑</p>
         </div>
       </div>
     )

@@ -1,4 +1,21 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect, forwardRef, useImperativeHandle } from 'react'
+
+// ============ 草稿安全网：localStorage 备份 ============
+const DRAFT_NS = 'inkslate:draft:'
+const saveDraft = (noteId: string, title: string, content: string) => {
+  try { localStorage.setItem(DRAFT_NS + noteId, JSON.stringify({ title, content, t: Date.now() })) } catch {}
+}
+const getDraft = (noteId: string): { title: string; content: string; t: number } | null => {
+  try {
+    const raw = localStorage.getItem(DRAFT_NS + noteId)
+    if (!raw) return null
+    const d = JSON.parse(raw)
+    return d?.content && typeof d.content === 'string' ? d : null
+  } catch { return null }
+}
+const clearDraft = (noteId: string) => {
+  try { localStorage.removeItem(DRAFT_NS + noteId) } catch {}
+}
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { appThemes } from '../themes'
@@ -65,10 +82,20 @@ export function Editor() {
         }
       }
 
-      setContent(currentNote.content ?? '')
+      // 检查 localStorage 是否有未保存的草稿（安全网恢复）
+      const dbContent = currentNote.content ?? ''
+      const draft = getDraft(currentNote.id)
+      const hasDraft = draft && draft.content && draft.content !== dbContent && draft.t > (currentNote.updatedAt ?? 0)
+      const activeContent = hasDraft ? draft.content : dbContent
+
+      setContent(activeContent)
       setTitle(currentNote.title ?? '')
       editingNoteIdRef.current = currentNote.id
-      lastDraftRef.current = { id: currentNote.id, title: currentNote.title ?? '', content: currentNote.content ?? '' }
+      lastDraftRef.current = { id: currentNote.id, title: currentNote.title ?? '', content: activeContent }
+      if (hasDraft) {
+        clearDraft(currentNote.id)
+        toast.info('已恢复未保存的编辑内容')
+      }
     } else {
       // 切到无选中状态：也 flush 一次
       const last = lastDraftRef.current
@@ -121,11 +148,8 @@ export function Editor() {
       if (!content) return
     }
     // 有活跃防抖 timer 说明用户正在输入；
-    // 但如果 currentNote 的内容明显不同（长度差 >10），也强制同步
-    if (contentTimerRef.current) {
-      const lenDiff = Math.abs((currentNote.content ?? '').length - content.length)
-      if (lenDiff < 10) return
-    }
+    // 此时不覆盖本地编辑，避免 selectNote 异步 fetch 返回的旧内容冲掉用户正在写的内容
+    if (contentTimerRef.current) return
     setContent(currentNote.content)
   }, [currentNote?.id, currentNote?.content])
 
@@ -138,6 +162,12 @@ export function Editor() {
     if (currentNote.id !== editingNoteIdRef.current) return
     if (content === currentNote.content && title === currentNote.title) return
     updateCurrentNoteDraft({ content, title })
+  }, [content, title])
+
+  // 每次编辑即时备份到 localStorage（安全网：即使写库失败也能恢复）
+  useEffect(() => {
+    if (!currentNote || currentNote.id !== editingNoteIdRef.current) return
+    saveDraft(currentNote.id, title, content)
   }, [content, title])
 
   // 标题：立即写库（单行输入，成本低，用户期望即时反馈）
@@ -159,7 +189,7 @@ export function Editor() {
     }
   }, [title, currentNote?.id])
 
-  // 正文：5s 防抖写库（大文本，频繁写库不划算）
+  // 正文：2s 防抖写库
   useEffect(() => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
@@ -169,8 +199,9 @@ export function Editor() {
       // 二次 guard：timer 触发时再次确认还在编辑同一个 note
       if (currentNote.id !== editingNoteIdRef.current) return
       // 只传 content，避免覆盖 title
-      updateNote(currentNote.id, { content }).catch(() => { /* 错误已在 updateNote 内部处理 */ })
-    }, 5000)
+      const noteId = currentNote.id
+      updateNote(noteId, { content }).then(() => clearDraft(noteId)).catch(() => {})
+    }, 2000)
     return () => {
       if (contentTimerRef.current) clearTimeout(contentTimerRef.current)
     }
@@ -238,6 +269,7 @@ export function Editor() {
     setSaveStatus({ saving: true })
     try {
       await updateNote(currentNote.id, { content, title })
+      clearDraft(currentNote.id)
     } finally {
       setSaveStatus({ saving: false })
     }
@@ -259,6 +291,7 @@ export function Editor() {
     if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
     setSaveStatus({ saving: true })
     updateNote(cn.id, { content: contentRef.current, title: titleRef.current })
+      .then(() => clearDraft(cn.id))
       .finally(() => setSaveStatus({ saving: false }))
   }, [])
 
@@ -268,6 +301,15 @@ export function Editor() {
     window.addEventListener('inkslate:save-current', onSaveEvent)
     return () => window.removeEventListener('inkslate:save-current', onSaveEvent)
   }, [currentNote, content, title])
+
+  // 窗口失焦时强制保存（用户切到其他应用）
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) stableSave()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   const insertText = useCallback((before: string, after: string, placeholder: string, cursorOffset?: number) => {
     codeEditorRef.current?.insertText(before, after, placeholder, cursorOffset)
@@ -1018,7 +1060,7 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
   }
 
   const pickLocalImage = async () => {
-    const filePath = await window.inkslateApi.file.openDialog({
+    const [filePath] = await window.inkslateApi.file.openDialog({
       filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'] }],
       properties: ['openFile']
     })
@@ -1705,10 +1747,11 @@ ${noteContent}
         setLastStatus(parsed.status)
         if (parsed.status === 'completed' && parsed.content) {
           onReplace(parsed.content)
+        } else if (parsed.status === 'completed' && !parsed.content && parsed.description) {
+          onReplace(parsed.description)
         }
       } else {
         onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
-        setLastStatus(null)
       }
     } catch (e: any) {
       setError(e?.message || '请求失败')

@@ -38,7 +38,7 @@ export function FileFallback({ noteId, fileName, fileExt, fileSize, statusHint }
   }
 
   const handleReplace = async () => {
-    const sourcePath = await window.inkslateApi.file.openDialog({
+    const [sourcePath] = await window.inkslateApi.file.openDialog({
       title: '选择替换文件',
       properties: ['openFile']
     })
