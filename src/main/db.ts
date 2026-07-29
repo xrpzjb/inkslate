@@ -468,16 +468,18 @@ function renameNotebookDirOnDisk(oldRel: string, newRel: string): void {
   // note: notebookSlugPathFromChain 返回 / 分隔，DB 路径用 path.sep
   const oldPrefix = oldDir + path.sep
   const newPrefix = newDir + path.sep
+  const oldFilesPrefix = oldFilesDir + path.sep
+  const newFilesPrefix = newFilesDir + path.sep
   const d = getDatabase()
   const affected = d.prepare(
     `SELECT id, path, file_path FROM notes WHERE is_deleted = 0 AND (path LIKE ? OR file_path LIKE ?)`
-  ).all(`${oldPrefix}%`, `${oldPrefix}%`) as any[]
+  ).all(`${oldPrefix}%`, `${oldFilesPrefix}%`) as any[]
   for (const row of affected) {
     if (row.path && row.path.startsWith(oldPrefix)) {
       d.prepare('UPDATE notes SET path = ? WHERE id = ?').run(newPrefix + row.path.slice(oldPrefix.length), row.id)
     }
-    if (row.file_path && row.file_path.startsWith(oldPrefix)) {
-      d.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(newPrefix + row.file_path.slice(oldPrefix.length), row.id)
+    if (row.file_path && row.file_path.startsWith(oldFilesPrefix)) {
+      d.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(newFilesPrefix + row.file_path.slice(oldFilesPrefix.length), row.id)
     }
   }
 }
@@ -519,16 +521,18 @@ function moveNotebookDirOnDisk(notebookId: string, oldRel: string): void {
   // 更新 DB 中受影响笔记的 path 和 file_path
   const oldPrefix = oldDir + path.sep
   const newPrefix = newDir + path.sep
+  const oldFilesPrefix = oldFilesDir + path.sep
+  const newFilesPrefix = newFilesDir + path.sep
   const d = getDatabase()
   const affected = d.prepare(
     `SELECT id, path, file_path FROM notes WHERE is_deleted = 0 AND (path LIKE ? OR file_path LIKE ?)`
-  ).all(`${oldPrefix}%`, `${oldPrefix}%`) as any[]
+  ).all(`${oldPrefix}%`, `${oldFilesPrefix}%`) as any[]
   for (const row of affected) {
     if (row.path && row.path.startsWith(oldPrefix)) {
       d.prepare('UPDATE notes SET path = ? WHERE id = ?').run(newPrefix + row.path.slice(oldPrefix.length), row.id)
     }
-    if (row.file_path && row.file_path.startsWith(oldPrefix)) {
-      d.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(newPrefix + row.file_path.slice(oldPrefix.length), row.id)
+    if (row.file_path && row.file_path.startsWith(oldFilesPrefix)) {
+      d.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(newFilesPrefix + row.file_path.slice(oldFilesPrefix.length), row.id)
     }
   }
 }
@@ -1457,10 +1461,29 @@ function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
  */
 export function repairNotePaths(): void {
   const d = getDatabase()
-  const notes = d.prepare('SELECT id, title, notebook_id, format, path FROM notes WHERE is_deleted = 0').all() as any[]
+  const notes = d.prepare('SELECT id, title, notebook_id, format, path, file_path FROM notes WHERE is_deleted = 0').all() as any[]
   let fixed = 0
   for (const note of notes) {
-    if (note.format === 'file' || note.format === 'url') continue
+    if (note.format === 'url') continue
+
+    if (note.format === 'file') {
+      if (note.file_path && fs.existsSync(note.file_path)) continue
+      const fileName = note.file_path ? path.basename(note.file_path) : `${note.title || 'untitled'}.bin`
+      const nbDir = getNotebookFilePath(note.notebook_id)
+      let found = findFileRecursively(nbDir, fileName)
+      if (!found) {
+        found = findFileRecursively(getFilesDir(), fileName)
+      }
+      if (found) {
+        d.prepare('UPDATE notes SET file_path = ? WHERE id = ?').run(found, note.id)
+        console.log('[db] repairNotePaths: fixed file_path for', note.title, '->', found)
+        fixed++
+      } else {
+        console.warn('[db] repairNotePaths: file source not found for', note.title, 'in', nbDir, 'or', getFilesDir())
+      }
+      continue
+    }
+
     if (note.path && fs.existsSync(note.path)) continue
 
     const ext = note.format === 'html' ? 'html' : note.format === 'code' ? 'code' : 'md'

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
 import { useAppStore, buildNoteTree } from '../store/app'
 import { NoteTreeNode, Note, Notebook } from '@shared/types'
 import {
@@ -177,6 +177,18 @@ export function Sidebar() {
     }
     document.addEventListener('mousedown', onDown, true)
     return () => document.removeEventListener('mousedown', onDown, true)
+  }, [contextMenu])
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) return
+    const menu = contextMenuRef.current
+    const rect = menu.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight) {
+      menu.style.top = `${window.innerHeight - rect.height - 8}px`
+    }
+    if (rect.right > window.innerWidth) {
+      menu.style.left = `${window.innerWidth - rect.width - 8}px`
+    }
   }, [contextMenu])
   // 笔记本图标选择器：null 时不显示，否则 { notebookId, position }
   const [iconPicker, setIconPicker] = useState<{ notebookId: string; currentIcon: string | null } | null>(null)
@@ -1196,6 +1208,7 @@ function SubMenuItem({ icon, label, children, parentRef }: { icon: React.ReactNo
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
   const ref = useRef<HTMLDivElement>(null)
+  const subRef = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleEnter = () => {
@@ -1221,6 +1234,23 @@ function SubMenuItem({ icon, label, children, parentRef }: { icon: React.ReactNo
     }, 150)
   }
 
+  useLayoutEffect(() => {
+    if (!open || !subRef.current) return
+    const menu = subRef.current
+    const rect = menu.getBoundingClientRect()
+    let newLeft = pos.left
+    let newTop = pos.top
+    if (rect.bottom > window.innerHeight) {
+      newTop = Math.max(8, window.innerHeight - rect.height - 8)
+    }
+    if (rect.right > window.innerWidth) {
+      newLeft = Math.max(8, window.innerWidth - rect.width - 8)
+    }
+    if (newLeft !== pos.left || newTop !== pos.top) {
+      setPos({ left: newLeft, top: newTop })
+    }
+  }, [open, pos])
+
   return (
     <div
       ref={ref}
@@ -1243,6 +1273,7 @@ function SubMenuItem({ icon, label, children, parentRef }: { icon: React.ReactNo
       <ChevronRight size={12} color="var(--text-tertiary)" />
       {open && (
         <div
+          ref={subRef}
           onMouseEnter={() => {
             if (closeTimer.current) {
               clearTimeout(closeTimer.current)
