@@ -13,6 +13,7 @@ import { ToastContainer, toast } from './components/Toast'
 import { ConfirmDialogManager } from './components/ConfirmDialog'
 import { AlertDialogManager, alert } from './components/AlertDialog'
 import { UrlNoteDialog } from './components/UrlNoteDialog'
+import { FlashThoughtDialog } from './components/FlashThoughtDialog'
 import { HistoryPanel } from './components/gitHistory/HistoryPanel'
 import { useState } from 'react'
 
@@ -36,8 +37,10 @@ export default function App() {
   const [recycleBinSettingsOpen, setRecycleBinSettingsOpen] = useState(false)
   const [urlNoteDialogOpen, setUrlNoteDialogOpen] = useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
+  const [flashThoughtDialogOpen, setFlashThoughtDialogOpen] = useState(false)
 
   const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
+  const loadFlashThoughts = useAppStore(s => s.loadFlashThoughts)
   const setViewMode = useAppStore(s => s.setViewMode)
 
   // 应用主题（auto 走 CSS 媒体查询，其他主题动态注入 CSS 变量）
@@ -158,6 +161,9 @@ export default function App() {
 
     const openHistory = () => setHistoryPanelOpen(true)
     window.addEventListener('inkslate:open-history', openHistory)
+
+    const openFlashThoughtDialog = () => setFlashThoughtDialogOpen(true)
+    window.addEventListener('inkslate:new-flash-thought', openFlashThoughtDialog)
 
     const handleFileNote = async () => {
       const [sourcePath] = await window.inkslateApi.file.openDialog({
@@ -350,6 +356,10 @@ export default function App() {
           loadRecycleBin()
           setViewMode('recycle-bin')
           break
+        case 'open-flash-thoughts':
+          loadFlashThoughts()
+          setViewMode('flash-thoughts')
+          break
         case 'recycle-bin-settings':
           setRecycleBinSettingsOpen(true)
           break
@@ -431,6 +441,7 @@ export default function App() {
       window.removeEventListener('inkslate:new-url-note', openUrlDialog)
       window.removeEventListener('inkslate:new-file-note', handleFileNote)
       window.removeEventListener('inkslate:open-history', openHistory)
+      window.removeEventListener('inkslate:new-flash-thought', openFlashThoughtDialog)
       cleanup()
     }
   }, [])
@@ -524,6 +535,10 @@ export default function App() {
       )}
       {urlNoteDialogOpen && createPortal(
         <UrlNoteDialog onClose={() => setUrlNoteDialogOpen(false)} />,
+        document.body
+      )}
+      {flashThoughtDialogOpen && createPortal(
+        <FlashThoughtDialog onClose={() => setFlashThoughtDialogOpen(false)} />,
         document.body
       )}
       {historyPanelOpen && createPortal(

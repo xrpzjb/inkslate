@@ -205,6 +205,22 @@ export function setupIpcHandlers(): void {
     return result
   })
 
+  // ============ 闪念 ============
+  ipcMain.handle(IPC_CHANNELS.FLASH_THOUGHTS_LIST, async () => {
+    return dbApi.listFlashThoughts()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FLASH_THOUGHTS_CREATE, async (_, content: string) => {
+    const result = dbApi.createFlashThought(content)
+    gitMgr.exportMetadata()
+    return result
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FLASH_THOUGHTS_DELETE, async (_, id: string) => {
+    dbApi.deleteFlashThought(id)
+    gitMgr.exportMetadata()
+  })
+
   // ============ OSS ============
   ipcMain.handle(IPC_CHANNELS.OSS_CONFIGURE, async (_, config: AppSettings['oss']): Promise<void> => {
     const saved = await dbApi.updateSettings({ oss: config })
@@ -546,6 +562,20 @@ ${payload?.html ?? ''}
             path: { type: 'string', description: '要扫描的目录绝对路径，不传则扫描笔记根目录' }
           },
           required: []
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description: '读取指定文件的完整内容。用于查看代码文件、配置文件等具体内容',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: '要读取的文件绝对路径' }
+          },
+          required: ['path']
         }
       }
     },

@@ -331,6 +331,21 @@ export class GitManager {
       }, null, 2),
       'utf-8'
     )
+
+    const flashThoughts = dbApi.listFlashThoughts()
+    fs.writeFileSync(
+      path.join(inkslateDir, 'flash_thoughts.json'),
+      JSON.stringify({
+        version: 1,
+        flash_thoughts: flashThoughts.map(ft => ({
+          id: ft.id,
+          content: ft.content,
+          created_at: ft.createdAt,
+          updated_at: ft.updatedAt
+        }))
+      }, null, 2),
+      'utf-8'
+    )
   }
 
   /**
@@ -514,6 +529,26 @@ export class GitManager {
     dbApi.mergeNotes(finalNotes)
     console.log(`[git] reconcile: merged ${finalNotes.length} remote notes, local note count after: ${dbApi.listActiveNotes().length}`)
 
+    // 3. 闪念：增量合并（本地有远端无的保留，远端有本地无的新增，id 冲突用远端覆盖）
+    const ftFile = path.join(inkslateDir, 'flash_thoughts.json')
+    let flashThoughtsApplied = 0
+    if (fs.existsSync(ftFile)) {
+      try {
+        const ftData = JSON.parse(fs.readFileSync(ftFile, 'utf-8'))
+        const remoteFts = Array.isArray(ftData.flash_thoughts) ? ftData.flash_thoughts : []
+        const localIds = new Set(dbApi.listFlashThoughts().map(f => f.id))
+        for (const ft of remoteFts) {
+          if (!localIds.has(ft.id)) {
+            dbApi.createFlashThought(ft.content)
+            flashThoughtsApplied++
+          }
+        }
+      } catch (e) {
+        console.error('[git] reconcile: failed to parse flash_thoughts.json', e)
+      }
+    }
+    console.log(`[git] reconcile: merged ${flashThoughtsApplied} remote flash thoughts`)
+
     return { notebooksApplied: notebooks.length, notesApplied: notes.length }
   }
 
@@ -641,6 +676,23 @@ export class GitManager {
       }
     })
     dbApi.replaceNotes(finalNotes)
+
+    // 3. 闪念：全量替换
+    const ftFileReplace = path.join(inkslateDir, 'flash_thoughts.json')
+    if (fs.existsSync(ftFileReplace)) {
+      try {
+        const ftData = JSON.parse(fs.readFileSync(ftFileReplace, 'utf-8'))
+        const remoteFts = Array.isArray(ftData.flash_thoughts) ? ftData.flash_thoughts : []
+        for (const ft of dbApi.listFlashThoughts()) {
+          dbApi.deleteFlashThought(ft.id)
+        }
+        for (const ft of remoteFts) {
+          dbApi.createFlashThought(ft.content)
+        }
+      } catch (e) {
+        console.error('[git] replaceFromMetadata: failed to parse flash_thoughts.json', e)
+      }
+    }
 
     console.log(`[git] replaceFromMetadata: replaced ${notebooks.length} notebooks, ${finalNotes.length} notes`)
     return { notebooksApplied: notebooks.length, notesApplied: notes.length }

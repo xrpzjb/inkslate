@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { AppSettings, Note, Notebook, NoteTreeNode, SyncStatus } from '@shared/types'
+import { AppSettings, Note, Notebook, NoteTreeNode, SyncStatus, FlashThought } from '@shared/types'
 
 interface AppState {
   // 涓婚
@@ -70,6 +70,12 @@ interface AppState {
   purgeNotebook: (id: string) => Promise<void>
   emptyRecycleBin: () => Promise<{ notes: number; notebooks: number }>
 
+  // ============ 闪念 ============
+  flashThoughts: FlashThought[]
+  loadFlashThoughts: () => Promise<void>
+  createFlashThought: (content: string) => Promise<void>
+  deleteFlashThought: (id: string) => Promise<void>
+
   // 甯冨眬
   sidebarVisible: boolean
   previewVisible: boolean
@@ -80,9 +86,9 @@ interface AppState {
   togglePreview: () => void
   toggleEditor: () => void
 
-  // 主视图模式：'notes' 显示编辑器/预览，'recycle-bin' 显示回收站
-  viewMode: 'notes' | 'recycle-bin'
-  setViewMode: (mode: 'notes' | 'recycle-bin') => void
+  // 主视图模式：'notes' 显示编辑器/预览，'recycle-bin' 显示回收站，'flash-thoughts' 显示闪念
+  viewMode: 'notes' | 'recycle-bin' | 'flash-thoughts'
+  setViewMode: (mode: 'notes' | 'recycle-bin' | 'flash-thoughts') => void
 
   // 淇濆瓨鐘舵€?  saveStatus: { saving: boolean; lastSaved: number | null }
   saveStatus: { saving: boolean; lastSaved: number | null }
@@ -614,6 +620,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     const result = await window.inkslateApi.recycleBin.empty()
     await get().loadRecycleBin()
     return result
+  },
+
+  // ============ 闪念 ============
+  flashThoughts: [],
+  loadFlashThoughts: async () => {
+    const flashThoughts = await window.inkslateApi.flashThoughts.list()
+    set({ flashThoughts })
+  },
+  createFlashThought: async (content) => {
+    await window.inkslateApi.flashThoughts.create(content)
+    await get().loadFlashThoughts()
+    await get().refreshSyncStatus()
+  },
+  deleteFlashThought: async (id) => {
+    await window.inkslateApi.flashThoughts.delete(id)
+    await get().loadFlashThoughts()
+    await get().refreshSyncStatus()
   },
 
   sidebarVisible: true,

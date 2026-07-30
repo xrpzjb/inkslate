@@ -2,11 +2,11 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
-import { Notebook, Note, AppSettings } from '../shared/types'
+import { Notebook, Note, AppSettings, FlashThought } from '../shared/types'
 import { isEncryptedContent, decryptWithCachedKey, encryptNoteContent, decryptNoteContent, hasCachedKey, getCachedKey, cacheKey, removeCachedKey } from './crypto'
 
 // 类型已经在函数内部使用，下面是接口占位
-export type { Notebook, Note, AppSettings }
+export type { Notebook, Note, AppSettings, FlashThought }
 
 let db: Database.Database | null = null
 
@@ -166,6 +166,16 @@ export async function initDatabase(): Promise<void> {
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    )
+  `)
+
+  // 闪念表
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS flash_thoughts (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
     )
   `)
 
@@ -1037,6 +1047,28 @@ const dbMethods = {
     const noteResult = d.prepare('DELETE FROM notes WHERE is_deleted = 1').run()
     const nbResult = d.prepare('DELETE FROM notebooks WHERE is_deleted = 1').run()
     return { notes: noteResult.changes, notebooks: nbResult.changes }
+  },
+
+  // ============ 闪念 ============
+  listFlashThoughts(): FlashThought[] {
+    const rows = getDatabase().prepare('SELECT * FROM flash_thoughts ORDER BY created_at DESC').all() as any[]
+    return rows.map((row: any) => ({
+      id: row.id,
+      content: row.content,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }))
+  },
+
+  createFlashThought(content: string): FlashThought {
+    const id = generateId()
+    const now = Date.now()
+    getDatabase().prepare('INSERT INTO flash_thoughts (id, content, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, content, now, now)
+    return { id, content, createdAt: now, updatedAt: now }
+  },
+
+  deleteFlashThought(id: string): void {
+    getDatabase().prepare('DELETE FROM flash_thoughts WHERE id = ?').run(id)
   },
 
   // ============ 设置 ============

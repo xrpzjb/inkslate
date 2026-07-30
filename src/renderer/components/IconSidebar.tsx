@@ -6,7 +6,7 @@ import {
   Palette,
   PanelLeftClose, PanelLeftOpen,
   Check, Upload, Download, Settings,
-  AlertCircle, RefreshCw, FolderPlus
+  AlertCircle, RefreshCw, FolderPlus, Lightbulb
 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { THEME_LABELS } from '../../shared/themeLabels'
@@ -340,6 +340,14 @@ export function IconSidebar() {
           title="新建笔记"
         >
           <FilePlus size={20} />
+        </button>
+
+        <button
+          className="icon-sidebar-btn"
+          onClick={() => clickMenu('open-flash-thoughts')}
+          title="闪念"
+        >
+          <Lightbulb size={20} />
         </button>
 
         <div className="icon-sidebar-sep" />

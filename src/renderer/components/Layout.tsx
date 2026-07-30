@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar'
 import { Editor, AIDialog } from './Editor'
 import { Preview } from './Preview'
 import { RecycleBinView } from './RecycleBinView'
+import { FlashThoughtView } from './FlashThoughtView'
 import { IconSidebar } from './IconSidebar'
 import { TabBar } from './TabBar'
 import { Search, X } from 'lucide-react'
@@ -101,6 +102,7 @@ export function Layout() {
   const currentNote = useAppStore(s => s.currentNote)
   const viewMode = useAppStore(s => s.viewMode)
   const isRecycleBin = viewMode === 'recycle-bin'
+  const isFlashThoughts = viewMode === 'flash-thoughts'
 
   const [sidebarWidth, setSidebarWidth] = useState(settings?.layout.sidebarWidth ?? 260)
 
@@ -368,6 +370,10 @@ export function Layout() {
             {isRecycleBin ? (
               <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
                 <RecycleBinView />
+              </div>
+            ) : isFlashThoughts ? (
+              <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+                <FlashThoughtView />
               </div>
             ) : (
               <>

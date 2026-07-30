@@ -1712,25 +1712,25 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
 
 ## 工作流程
 1. 先用工具获取信息（scan_dir / read_file / grep_dir）
-2. 工具调用完成后，最终回复必须是 JSON，不能有其他文字
+2. 工具调用完成后，最终回复必须是纯 JSON
 
 ## 最终 JSON 格式
 {"status":"completed|question|working","content":"...","description":"..."}
 
 status 含义：
-- completed: 完成。content=完整笔记内容（保留原文）。description=完成总结。
+- completed: 任务完成。content=完整的最终笔记内容（必须包含全部输出，不能为空）。description=简短说明（1-2句）。
 - question: 需要追问。content=""。description=你的问题。
 - working: 处理中。content=""。description=进度说明。
 
 示例：
-{"status":"completed","content":"# 标题\\n\\n正文内容","description":"已完成修改。"}
+{"status":"completed","content":"# 标题\\n\\n这是完整的文档内容，包含所有信息","description":"已生成文档。"}
 {"status":"question","content":"","description":"请问你希望分析哪个模块？"}
 
-规则：
-- 工具调用阶段可自由使用函数调用，不受 JSON 限制
-- 最终回复第1个字符必须是 {，最后1个字符必须是 }
-- description 必填，写你想对用户说的话
-- status=completed 时 content 必填，包含完整的最终笔记
+重要规则——必须严格遵守：
+- 最终回复必须是纯 JSON，第1个字符必须是 {，最后1个字符必须是 }
+- JSON 前面不能有任何文字，不要写"开始生成"之类的说明
+- status=completed 时 content 必须包含完整的最终笔记内容，content 不能为空字符串
+- content 中的双引号用 \\" 转义，换行用 \\n 表示
 - ${formatHint || ''}
 
 当前笔记标题：${noteTitle || '(未命名)'}
@@ -1747,8 +1747,6 @@ ${noteContent}
         setLastStatus(parsed.status)
         if (parsed.status === 'completed' && parsed.content) {
           onReplace(parsed.content)
-        } else if (parsed.status === 'completed' && !parsed.content && parsed.description) {
-          onReplace(parsed.description)
         }
       } else {
         onHistoryChange([...newHistory, { role: 'assistant', content: raw }])

@@ -159,6 +159,13 @@ export interface SyncStatus {
   pendingFiles?: number
 }
 
+export interface FlashThought {
+  id: string
+  content: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface AssetUploadResult {
   url: string
   hash: string
@@ -232,6 +239,14 @@ export const IPC_CHANNELS = {
   // 回收站菜单事件
   MENU_OPEN_RECYCLE_BIN: 'menu:open-recycle-bin',
   MENU_RECYCLE_BIN_SETTINGS: 'menu:recycle-bin-settings',
+
+  // 闪念菜单事件
+  MENU_OPEN_FLASH_THOUGHTS: 'menu:open-flash-thoughts',
+
+  // 闪念
+  FLASH_THOUGHTS_LIST: 'flash-thoughts:list',
+  FLASH_THOUGHTS_CREATE: 'flash-thoughts:create',
+  FLASH_THOUGHTS_DELETE: 'flash-thoughts:delete',
 
   // 文件笔记
   FILE_NOTE_CREATE: 'file-note:create',

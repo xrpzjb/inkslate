@@ -178,6 +178,7 @@ export async function handleMenuClick(id: string, arg: any) {
     case 'new-notebook': sendToRenderer(IPC_CHANNELS.MENU_NEW_NOTEBOOK); return
     case 'save': sendToRenderer(IPC_CHANNELS.MENU_SAVE); return
     case 'open-recycle-bin': sendToRenderer(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN); return
+    case 'open-flash-thoughts': sendToRenderer(IPC_CHANNELS.MENU_OPEN_FLASH_THOUGHTS); return
     case 'recycle-bin-settings': sendToRenderer(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS); return
     case 'empty-recycle-bin': {
       const win = BrowserWindow.getFocusedWindow()

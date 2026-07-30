@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult, SyncStatus } from '../shared/types'
+import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult, SyncStatus, FlashThought } from '../shared/types'
 
 /** preload 桥接：把 IPC 调用暴露给渲染进程 */
 
@@ -46,6 +46,13 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_RESTORE, id),
     purge: (id: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_PURGE, id)
+  },
+
+  /** 闪念 */
+  flashThoughts: {
+    list: (): Promise<FlashThought[]> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_LIST),
+    create: (content: string): Promise<FlashThought> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_CREATE, content),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_DELETE, id)
   },
 
   /** 文件笔记：源文件复制/替换/另存/读取 */
@@ -216,6 +223,7 @@ const api = {
     ipcRenderer.on('menu:show-settings', () => callback('show-settings'))
     ipcRenderer.on('menu:show-about', () => callback('show-about'))
     ipcRenderer.on(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN, () => callback('open-recycle-bin'))
+    ipcRenderer.on(IPC_CHANNELS.MENU_OPEN_FLASH_THOUGHTS, () => callback('open-flash-thoughts'))
     ipcRenderer.on(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS, () => callback('recycle-bin-settings'))
     ipcRenderer.on('menu:rebuild', () => callback('menu-rebuild'))
     ipcRenderer.on('menu:reload', () => callback('reload'))
@@ -241,6 +249,7 @@ const api = {
       ipcRenderer.removeAllListeners('menu:show-settings')
       ipcRenderer.removeAllListeners('menu:show-about')
       ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_OPEN_RECYCLE_BIN)
+      ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_OPEN_FLASH_THOUGHTS)
       ipcRenderer.removeAllListeners(IPC_CHANNELS.MENU_RECYCLE_BIN_SETTINGS)
       ipcRenderer.removeAllListeners('menu:rebuild')
       ipcRenderer.removeAllListeners('menu:reload')
