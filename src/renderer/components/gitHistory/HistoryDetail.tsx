@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NoteFormat } from '@shared/types'
 import { SnapshotView } from './SnapshotView'
 import { DiffView } from './DiffView'
@@ -10,7 +11,8 @@ export function HistoryDetail({
   currentContent,
   loading,
   error,
-  hasSelection
+  hasSelection,
+  onRestore
 }: {
   viewMode: 'snapshot' | 'diff'
   setViewMode: (m: 'snapshot' | 'diff') => void
@@ -20,7 +22,10 @@ export function HistoryDetail({
   loading: boolean
   error: string | null
   hasSelection: boolean
+  onRestore?: (content: string) => void
 }) {
+  const [confirming, setConfirming] = useState(false)
+
   if (!hasSelection) {
     return (
       <div className="history-detail">
@@ -45,21 +50,46 @@ export function HistoryDetail({
     )
   }
 
+  const isSame = snapshotContent === currentContent
+  const canRestore = !!onRestore && !isSame && snapshotContent !== null
+
+  const handleRestore = () => {
+    if (!confirming) {
+      setConfirming(true)
+      return
+    }
+    if (snapshotContent !== null) {
+      onRestore!(snapshotContent)
+    }
+    setConfirming(false)
+  }
+
   return (
     <div className="history-detail">
       <div className="history-detail-toolbar">
-        <button
-          className={`history-toggle-btn ${viewMode === 'snapshot' ? 'active' : ''}`}
-          onClick={() => setViewMode('snapshot')}
-        >
-          查看快照
-        </button>
-        <button
-          className={`history-toggle-btn ${viewMode === 'diff' ? 'active' : ''}`}
-          onClick={() => setViewMode('diff')}
-        >
-          与当前对比
-        </button>
+        <div className="history-detail-toolbar-left">
+          <button
+            className={`history-toggle-btn ${viewMode === 'snapshot' ? 'active' : ''}`}
+            onClick={() => setViewMode('snapshot')}
+          >
+            查看快照
+          </button>
+          <button
+            className={`history-toggle-btn ${viewMode === 'diff' ? 'active' : ''}`}
+            onClick={() => setViewMode('diff')}
+          >
+            与当前对比
+          </button>
+        </div>
+        {canRestore && (
+          <button
+            className={`history-restore-btn ${confirming ? 'confirming' : ''}`}
+            onClick={handleRestore}
+            onMouseLeave={() => setConfirming(false)}
+          >
+            {confirming ? '点击确认回滚' : '回滚到此版本'}
+          </button>
+        )}
       </div>
       <div className="history-detail-body">
         {viewMode === 'snapshot'

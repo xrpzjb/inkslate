@@ -547,6 +547,7 @@ export default function App() {
           if (!note || !['url', 'file'].includes(note.format))
             return (
               <HistoryPanel
+                noteId={note?.id ?? ''}
                 notePath={note?.path ?? ''}
                 noteFormat={(note?.format as 'markdown' | 'html' | 'richtext' | 'code') ?? 'markdown'}
                 currentContent={note?.content ?? ''}

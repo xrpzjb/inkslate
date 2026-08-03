@@ -19,6 +19,7 @@ import { php } from '@codemirror/lang-php'
 import { xml } from '@codemirror/lang-xml'
 import { yaml } from '@codemirror/lang-yaml'
 import { history, defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { format as formatSql } from 'sql-formatter'
@@ -85,6 +86,37 @@ function makeEditorTheme(opts: {
     '.cm-gutters-after': { borderLeft: 'none' },
     '.cm-lineNumbers .cm-gutterElement': { padding: '0 12px 0 8px', minWidth: '40px', textAlign: 'right' },
     '.cm-activeLineGutter': { backgroundColor: opts.activeLine, color: opts.activeLineGutterFg },
+    // 搜索/替换面板样式（适配明暗主题）
+    '.cm-panel.cm-search': {
+      display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px',
+      padding: '6px 8px', borderBottom: '1px solid var(--border-color)',
+      backgroundColor: opts.gutterBg, color: opts.fg, fontSize: '12px',
+      position: 'sticky', top: 0, zIndex: 20,
+    },
+    '.cm-panel.cm-search input[type=checkbox]': { margin: '0 3px 0 4px', verticalAlign: 'middle', accentColor: opts.caret },
+    '.cm-panel.cm-search label': { display: 'inline-flex', alignItems: 'center', userSelect: 'none' },
+    '.cm-panel.cm-search br': { width: '100%', display: 'none' },
+    '.cm-panel.cm-search .cm-textfield': {
+      minWidth: '140px', padding: '4px 8px', fontSize: '12px',
+      border: '1px solid var(--border-strong)', borderRadius: '4px',
+      backgroundColor: opts.bg, color: opts.fg, outline: 'none',
+      fontFamily: 'var(--font-mono), sans-serif',
+    },
+    '.cm-panel.cm-search .cm-textfield:focus': { borderColor: opts.caret },
+    '.cm-panel.cm-search .cm-button': {
+      padding: '4px 8px', fontSize: '11px', border: '1px solid var(--border-strong)',
+      borderRadius: '4px', backgroundColor: opts.gutterBg, color: opts.fg,
+      cursor: 'pointer', whiteSpace: 'nowrap',
+    },
+    '.cm-panel.cm-search .cm-button:hover': { backgroundColor: opts.activeLine },
+    // 高亮所有匹配 + 当前匹配
+    '.cm-searchMatch': {
+      backgroundColor: 'rgba(124, 58, 237, 0.25)', outline: '1px solid rgba(124, 58, 237, 0.5)',
+      borderRadius: '2px',
+    },
+    '.cm-searchMatch-selected': {
+      backgroundColor: 'rgba(232, 121, 40, 0.45)', outline: '1px solid rgba(232, 121, 40, 0.8)',
+    },
   }, { dark: opts.isDark })
 
   const highlight = HighlightStyle.define([
@@ -568,6 +600,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       highlightActiveLine(),
       history(),
       drawSelection(),
+      // 搜索/替换（Ctrl+F / Ctrl+H）：官方搜索面板 + 高亮所有匹配 + 自动高亮选中词
+      search(),
+      highlightSelectionMatches(),
+      keymap.of(searchKeymap),
       // 双击选中时裁掉行尾换行符，避免光标落到下一行导致下一行高亮
       EditorState.transactionFilter.of(tr => {
         if (!tr.selection) return tr
@@ -582,6 +618,16 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
+        ...searchKeymap,
+        {
+          key: 'Mod-h',
+          run: (view) => {
+            // Ctrl+H：打开搜索面板（含替换栏），并把光标聚焦到搜索框
+            view.dispatch({ selection: { anchor: view.state.selection.main.anchor } })
+            openSearchPanel(view)
+            return true
+          }
+        },
         {
           key: 'Mod-s',
           run: () => { onSave?.(); return true },

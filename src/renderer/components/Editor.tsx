@@ -1748,8 +1748,13 @@ ${noteContent}
         if (parsed.status === 'completed' && parsed.content) {
           onReplace(parsed.content)
         }
-      } else {
+      } else if (raw === 'AI 未返回内容') {
         onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
+      } else {
+        // 模型未按 JSON 协议返回（如直接输出整篇 Markdown），整段视为笔记内容自动填入
+        onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
+        setLastStatus('completed')
+        onReplace(raw)
       }
     } catch (e: any) {
       setError(e?.message || '请求失败')
@@ -1797,6 +1802,9 @@ ${noteContent}
             if (parsed) {
               displayContent = parsed.description || (parsed.status === 'completed' ? '已完成笔记更新' : '')
               status = parsed.status
+            } else if (msg.role === 'assistant') {
+              displayContent = `内容已自动填入笔记（${msg.content.length} 字）`
+              status = 'completed'
             }
             return (
               <div key={i} style={{ marginBottom: 12 }}>
@@ -1815,13 +1823,6 @@ ${noteContent}
                   border: msg.role === 'user' ? '1px solid var(--border-color)' : '1px solid transparent'
                 }}>
                   {displayContent}
-                  {!parsed && msg.role === 'assistant' && (
-                    <div style={{ marginTop: 8 }}>
-                      <button onClick={() => onReplace(msg.content)} style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--accent-color)', color: '#fff', fontSize: 12, cursor: 'pointer' }}>
-                        填入笔记
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             )

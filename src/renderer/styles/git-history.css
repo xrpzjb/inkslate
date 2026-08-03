@@ -193,10 +193,17 @@
 
 .history-detail-toolbar {
   display: flex;
-  gap: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px 16px;
   background-color: var(--bg-tertiary);
   flex-shrink: 0;
+}
+
+.history-detail-toolbar-left {
+  display: flex;
+  gap: 0;
 }
 
 .history-toggle-btn {
@@ -222,6 +229,35 @@
   background: var(--accent-color, #3b82f6);
   color: #fff;
   border-color: var(--accent-color, #3b82f6);
+}
+
+.history-restore-btn {
+  padding: 4px 14px;
+  border: 1px solid var(--accent-color, #3b82f6);
+  background: transparent;
+  color: var(--accent-color, #3b82f6);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.history-restore-btn:hover {
+  background: var(--accent-color, #3b82f6);
+  color: #fff;
+}
+
+.history-restore-btn.confirming {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+
+.history-restore-btn.confirming:hover {
+  background: #dc2626;
+  border-color: #dc2626;
 }
 
 .history-detail-body {

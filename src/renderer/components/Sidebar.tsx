@@ -5,7 +5,7 @@ import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
   FileDown, FileCode, Globe, Link2, Paperclip, Palette, History, ArrowRightLeft,
-  Lock, Unlock, Clock, Upload
+  Lock, Unlock, Clock, Upload, Bot
 } from 'lucide-react'
 import { MatIcon } from './MatIcon'
 import { IonIcon } from './IonIcon'
@@ -626,6 +626,26 @@ export function Sidebar() {
     return !['url', 'file'].includes(note.format) && !!(useAppStore.getState().settings?.gitSync?.configured)
   }
 
+  const canAiWrite = (node: NoteTreeNode): boolean => {
+    if (node.type !== 'note') return false
+    const note = notes.find(n => n.id === node.id)
+    if (!note) return false
+    return !['url', 'file'].includes(note.format)
+  }
+
+  /** 在 AI 写作面板中打开指定笔记：先选中（确保 currentNote 就绪），再打开面板 */
+  const handleAiWrite = async (nodeId: string) => {
+    closeContextMenu()
+    try {
+      if (selectedNoteId !== nodeId) {
+        await selectNote(nodeId)
+      }
+    } catch (e) {
+      console.error('[sidebar] selectNote for AI write failed:', e)
+    }
+    window.dispatchEvent(new CustomEvent('inkslate:open-ai-panel'))
+  }
+
   const renderNode = (node: NoteTreeNode, depth: number = 0) => {
     const isExpanded = expanded.has(node.id)
     const isSelected = selectedNoteId === node.id || selectedNotebookId === node.id
@@ -918,6 +938,11 @@ export function Sidebar() {
 
               {contextMenu.node.type === 'note' && (
                 <>
+                  <div style={{ height: 6 }} />
+                  {canAiWrite(contextMenu.node) && (
+                    <MenuItem icon={<Bot size={14} />} label="AI 写作" onClick={() => handleAiWrite(contextMenu.node!.id)} />
+                  )}
+
                   <div style={{ height: 6 }} />
                   <MenuItem icon={<FileCode size={14} />} label="导出为 HTML..." onClick={() => handleExportHtml(contextMenu.node!.id)} />
                   <MenuItem icon={<FileDown size={14} />} label="导出为 PDF..." onClick={() => handleExportPdf(contextMenu.node!.id)} />

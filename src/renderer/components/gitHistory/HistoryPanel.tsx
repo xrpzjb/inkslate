@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { GitCommitEntry } from '@shared/types'
 import { absoluteToGitPath } from '../../utils/gitPath'
+import { useAppStore } from '../../store/app'
+import { toast } from '../Toast'
 import { HistoryList } from './HistoryList'
 import { HistoryDetail } from './HistoryDetail'
 import '../../styles/git-history.css'
 
 export function HistoryPanel({
+  noteId,
   notePath,
   noteFormat,
   currentContent,
   onClose
 }: {
+  noteId: string
   notePath: string
   noteFormat: 'markdown' | 'html' | 'richtext' | 'code'
   currentContent: string
@@ -86,6 +90,17 @@ export function HistoryPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const handleRestore = async (content: string) => {
+    try {
+      await useAppStore.getState().updateNote(noteId, { content })
+      window.dispatchEvent(new CustomEvent('inkslate:ai-replace', { detail: content }))
+      toast.success('已回滚到此版本')
+      onClose()
+    } catch (e: any) {
+      toast.error('回滚失败：' + (e?.message ?? '未知错误'))
+    }
+  }
+
   const renderBody = () => {
     switch (status) {
       case 'loading':
@@ -130,6 +145,7 @@ export function HistoryPanel({
                 loading={detailLoading}
                 error={detailError}
                 hasSelection={!!selectedOid}
+                onRestore={handleRestore}
               />
             </div>
           </div>
