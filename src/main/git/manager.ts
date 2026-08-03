@@ -780,6 +780,37 @@ export class GitManager {
     // Step 1: pull 远端变更（新机器拉取后重建 SQLite）
     const pullResult = await this.pull()
 
+    // Step 1.5 空库防覆盖防护（数据安全关键）
+    //
+    // 事故场景：本地 SQLite 为空（新机器 / DB 被误清），但 git HEAD 元数据里有完整数据。
+    // 此时 pull 拿不到新 commit → reconcile 被跳过，随后 commitAll 的 exportMetadata
+    // 会把空库导出成 .inkslate/*.json 并 push，直接覆盖远端完整数据（即本次事故根因）。
+    //
+    // 防护：若本地 DB 笔记数为 0 而 HEAD 元数据非空，先用 HEAD 元数据恢复本地 DB；
+    //       若恢复后仍为空，则中止 sync，绝不把空数据推上远端。
+    const localNoteCount = dbApi.listActiveNotes().length
+    const headNoteCount = await this.countNotesInHead()
+    if (localNoteCount === 0 && headNoteCount > 0) {
+      console.warn(`[git] 空库防覆盖：本地 DB 有 ${localNoteCount} 条笔记，但 git HEAD 元数据有 ${headNoteCount} 条，先从元数据恢复本地 DB`)
+      try {
+        await this.restoreWorkdirFromHead()
+        const recon = this.reconcileFromMetadata()
+        console.log(`[git] 空库防覆盖：已从元数据恢复 ${recon.notesApplied} 条笔记 / ${recon.notebooksApplied} 个笔记本`)
+      } catch (e) {
+        console.error('[git] 空库防覆盖：恢复本地 DB 失败', e)
+      }
+      const afterCount = dbApi.listActiveNotes().length
+      if (afterCount === 0) {
+        phases.commit = 'failed'
+        return {
+          ok: false,
+          message: `本地数据库为空但远端元数据存在 ${headNoteCount} 条笔记，已中止同步，避免用空数据覆盖远端`,
+          phases,
+          phase: 'commit'
+        }
+      }
+    }
+
     // Step 2: commit 本地变更（如果有）
     // pull 必须在 commit 之前，否则空数据库的 exportMetadata 会覆盖远端元数据
     try {
@@ -938,6 +969,39 @@ export class GitManager {
   }
 
   // ============ 内部 ============
+
+  /**
+   * 统计 git HEAD 中 .inkslate/notes.json 的笔记条数
+   * （空库防覆盖防护用：判断本地 DB 是否比 HEAD 元数据"空"很多）
+   */
+  private async countNotesInHead(): Promise<number> {
+    if (!this.isInitialized()) return 0
+    try {
+      const raw = await this.showFile('HEAD', '.inkslate/notes.json')
+      if (!raw) return 0
+      const data = JSON.parse(raw)
+      return Array.isArray(data.notes) ? data.notes.length : 0
+    } catch (e) {
+      return 0
+    }
+  }
+
+  /**
+   * 把 git HEAD 中的 .inkslate/*.json 恢复到工作区
+   * （空库防覆盖防护用：恢复被本地空库 exportMetadata 覆盖掉的远端元数据）
+   */
+  private async restoreWorkdirFromHead(): Promise<void> {
+    if (!this.isInitialized()) return
+    const dir = this.getWorkDir()
+    const inkslateDir = path.join(dir, '.inkslate')
+    try { fs.mkdirSync(inkslateDir, { recursive: true }) } catch {}
+    for (const name of ['notebooks.json', 'notes.json', 'flash_thoughts.json']) {
+      const content = await this.showFile('HEAD', `.inkslate/${name}`)
+      if (content != null) {
+        fs.writeFileSync(path.join(inkslateDir, name), content, 'utf-8')
+      }
+    }
+  }
 
   private markInitialized() {
     if (this.config) {
