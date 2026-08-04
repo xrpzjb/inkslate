@@ -7,6 +7,7 @@ import { OssManager } from './oss/manager'
 import { GitManager } from './git/manager'
 import { encryptWithCachedKey, hasCachedKey } from './crypto'
 import { exportNoteToWord } from './export/docx'
+import { addPdfOutline } from './export/pdfOutline'
 
 let ProxyAgent: any = undefined
 try {
@@ -283,7 +284,8 @@ export function setupIpcHandlers(): void {
 <meta charset="utf-8">
 <title>${safeTitle}</title>
 <style>
-  @page { size: A4; margin: 16mm 14mm; }
+  /* 页面尺寸和边距统一由下方 printToPDF 选项决定，这里不设 @page margin，
+     否则会和 printToPDF 的 margins 叠加，影响标题→页码换算 */
   body {
     font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
     color: #1f2328;
@@ -311,20 +313,49 @@ ${payload?.html ?? ''}
 </body>
 </html>`
 
+    // A4 尺寸与 printToPDF 的 0.4in 边距 → 打印内容区（CSS px，96dpi）
+    // 让隐藏窗口用相同的内容宽度排版，DOM 里的标题 offsetTop 就能换算成准确页码
+    const PX_PER_PT = 96 / 72
+    const PAGE_W = 595.28
+    const PAGE_H = 841.89
+    const MARGIN_IN = 0.4
+    const MARGIN_PT = MARGIN_IN * 72
+    const CONTENT_W = Math.ceil((PAGE_W - MARGIN_PT * 2) * PX_PER_PT)
+    const CONTENT_H = (PAGE_H - MARGIN_PT * 2) * PX_PER_PT
+
     const tempWin = new BrowserWindow({
       show: false,
+      width: CONTENT_W,
+      height: 800,
+      useContentSize: true,
       webPreferences: { offscreen: true, sandbox: true, contextIsolation: true }
     })
     try {
       await tempWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(wrapper))
       // 等渲染稳定
       await new Promise(r => setTimeout(r, 150))
+      // 收集所有标题及其在文档中的纵向位置（CSS px），用于生成 PDF 目录书签
+      const headings: { text: string; top: number }[] = await tempWin.webContents.executeJavaScript(`(() => {
+        const res = []
+        document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+          const text = (h.textContent || '').trim()
+          if (!text) return
+          res.push({ text, top: h.getBoundingClientRect().top + (window.scrollY || 0) })
+        })
+        return res
+      })()`)
       const pdfBuffer = await tempWin.webContents.printToPDF({
         pageSize: 'A4',
         printBackground: true,
-        margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
+        margins: { top: MARGIN_IN, bottom: MARGIN_IN, left: MARGIN_IN, right: MARGIN_IN }
       })
-      await require('node:fs').promises.writeFile(result.filePath, pdfBuffer)
+      // printToPDF 不会生成书签，用 pdf-lib 后处理注入目录（Outlines）树
+      const outlineItems = headings.map(h => ({
+        title: h.text,
+        pageIndex: Math.floor(h.top / CONTENT_H)
+      }))
+      const out = await addPdfOutline(new Uint8Array(pdfBuffer), outlineItems)
+      await require('node:fs').promises.writeFile(result.filePath, out)
       return true
     } finally {
       tempWin.destroy()
