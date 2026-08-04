@@ -187,6 +187,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT, format),
     exportPdf: (payload: { title: string; html: string }): Promise<boolean> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_PDF, payload),
+    exportDocx: (payload: { title: string; content: string; format: Note['format']; basePath?: string; language?: string }): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_DOCX, payload),
     write: (filePath: string, content: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, filePath, content),
     readAsBase64: (filePath: string): Promise<{ base64: string; mime: string }> =>

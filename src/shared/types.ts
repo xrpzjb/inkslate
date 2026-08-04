@@ -226,6 +226,7 @@ export const IPC_CHANNELS = {
   FILE_OPEN_DIALOG: 'file:open-dialog',
   FILE_EXPORT: 'file:export',
   FILE_EXPORT_PDF: 'file:export-pdf',
+  FILE_EXPORT_DOCX: 'file:export-docx',
   FILE_WRITE: 'file:write',
   FILE_READ_BASE64: 'file:read-base64',
 

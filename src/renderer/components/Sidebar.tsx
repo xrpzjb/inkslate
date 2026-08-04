@@ -608,14 +608,49 @@ export function Sidebar() {
       }
       const note = notes.find(n => n.id === nodeId)
       const title = note?.title || '未命名笔记'
-      // 抓预览区已经渲染好的 HTML（带 mermaid / katex 渲染结果）
+      // 抓预览区已经渲染好的 HTML（带 mermaid / katex 渲染结果），
+      // 但要去掉右侧悬浮目录按钮，避免它出现在导出的 PDF 里
       const inner = document.querySelector('.preview .preview-inner') as HTMLElement | null
-      const html = inner ? inner.innerHTML : ''
+      let html = ''
+      if (inner) {
+        const clone = inner.cloneNode(true) as HTMLElement
+        clone.querySelectorAll('.toc').forEach(el => el.remove())
+        html = clone.innerHTML
+      }
       const ok = await window.inkslateApi.file.exportPdf({ title, html })
       if (!ok) console.log('PDF 导出已取消')
     } catch (e) {
       console.error('PDF 导出失败:', e)
       toast.error('PDF 导出失败：' + (e as Error).message)
+    }
+  }
+
+  /** 导出当前右键的笔记为 Word 文档。
+   *  把笔记原始内容发给主进程，主进程负责渲染 + 转换 + 保存 */
+  const handleExportWord = async (nodeId: string) => {
+    closeContextMenu()
+    try {
+      const note = await window.inkslateApi.notes.get(nodeId)
+      if (!note) {
+        toast.error('笔记不存在或已被删除')
+        return
+      }
+      if (note.format === 'richtext' || note.format === 'url' || note.format === 'file') {
+        toast.error('该格式暂不支持导出为 Word')
+        return
+      }
+      const res = await window.inkslateApi.file.exportDocx({
+        title: note.title,
+        content: note.content,
+        format: note.format,
+        basePath: note.path,
+        language: note.language
+      })
+      if (res.ok) toast.success('已导出 Word 文档')
+      else if (res.message && res.message !== '已取消') toast.error('Word 导出失败：' + res.message)
+    } catch (e) {
+      console.error('Word 导出失败:', e)
+      toast.error('Word 导出失败：' + (e as Error).message)
     }
   }
 
@@ -946,6 +981,7 @@ export function Sidebar() {
                   <div style={{ height: 6 }} />
                   <MenuItem icon={<FileCode size={14} />} label="导出为 HTML..." onClick={() => handleExportHtml(contextMenu.node!.id)} />
                   <MenuItem icon={<FileDown size={14} />} label="导出为 PDF..." onClick={() => handleExportPdf(contextMenu.node!.id)} />
+                  <MenuItem icon={<FileText size={14} />} label="导出为 Word..." onClick={() => handleExportWord(contextMenu.node!.id)} />
 
                   <div style={{ height: 6 }} />
                   {showGitHistory(contextMenu.node) && (

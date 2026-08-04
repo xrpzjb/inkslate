@@ -6,6 +6,7 @@ import { dbApi, getFilesDir, slugify, getUniqueFileName } from './db'
 import { OssManager } from './oss/manager'
 import { GitManager } from './git/manager'
 import { encryptWithCachedKey, hasCachedKey } from './crypto'
+import { exportNoteToWord } from './export/docx'
 
 let ProxyAgent: any = undefined
 try {
@@ -333,6 +334,30 @@ ${payload?.html ?? ''}
   // 把字符串内容写到任意路径（HTML 导出等用）
   ipcMain.handle(IPC_CHANNELS.FILE_WRITE, async (_, filePath: string, content: string): Promise<void> => {
     await require('node:fs').promises.writeFile(filePath, content, 'utf-8')
+  })
+
+  /** 导出 Word：渲染进程传笔记原始内容，主进程渲染 + 转换 + 保存 */
+  ipcMain.handle(IPC_CHANNELS.FILE_EXPORT_DOCX, async (_, payload: {
+    title: string
+    content: string
+    format: Note['format']
+    basePath?: string
+    language?: string
+  }): Promise<{ ok: boolean; message: string }> => {
+    const owner = BrowserWindow.getFocusedWindow()
+    if (!owner) return { ok: false, message: '没有活动窗口' }
+    const result = await dialog.showSaveDialog(owner, {
+      defaultPath: `${payload?.title || '笔记'}.docx`,
+      filters: [{ name: 'Word 文档', extensions: ['docx'] }]
+    })
+    if (result.canceled || !result.filePath) return { ok: false, message: '已取消' }
+    try {
+      const buffer = await exportNoteToWord(payload)
+      await fs.promises.writeFile(result.filePath, buffer)
+      return { ok: true, message: result.filePath }
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? '导出失败' }
+    }
   })
 
   // 把本地图片读为 base64 data URL（富文本插入图片用）
