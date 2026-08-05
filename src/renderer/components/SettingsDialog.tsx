@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, Settings as SettingsIcon, Type, Keyboard, Info, Bot } from 'lucide-react'
+import { X, Settings as SettingsIcon, Type, Keyboard, Info, Bot, Loader2 } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { toast } from './Toast'
 
@@ -92,6 +92,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [aiModel, setAiModel] = useState(settings?.ai?.model ?? aiPresets['deepseek'].model)
   const [aiKey, setAiKey] = useState(settings?.ai?.apiKey ?? '')
   const [aiProxyUrl, setAiProxyUrl] = useState(settings?.ai?.proxyUrl ?? '')
+  const [aiTesting, setAiTesting] = useState(false)
 
   const persist = (patch: Record<string, unknown>) => {
     const cur = useAppStore.getState().settings
@@ -269,16 +270,27 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <button
                 onClick={async () => {
                   if (!aiUrl || !aiKey) return
+                  setAiTesting(true)
                   try {
                     const res = await window.inkslateApi.ai.chat([{ role: 'user', content: 'hi' }])
                     toast.success(res ? '连接成功' : '连接成功（无返回）')
                   } catch (e: any) {
                     toast.error('连接失败: ' + (e?.message || '未知'))
+                  } finally {
+                    setAiTesting(false)
                   }
                 }}
-                style={{ padding: '6px 14px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, cursor: 'pointer' }}
+                disabled={aiTesting || !aiUrl || !aiKey}
+                style={{
+                  padding: '6px 14px', borderRadius: 4, border: '1px solid var(--border-color)',
+                  background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13,
+                  cursor: aiTesting ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  opacity: aiTesting ? 0.6 : 1
+                }}
               >
-                测试连接
+                {aiTesting && <Loader2 size={14} className="spin" />}
+                {aiTesting ? '测试中…' : '测试连接'}
               </button>
               <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>支持 DeepSeek / 通义千问 / GLM / Kimi 等国内大模型</span>
             </div>
@@ -458,6 +470,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         .settings-toggle-row input:checked + .settings-toggle-slider::after {
           transform: translateX(16px);
         }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
     </div>
   )

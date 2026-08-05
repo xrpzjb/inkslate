@@ -249,6 +249,39 @@ export class GitManager {
     const dir = this.getWorkDir()
     if (!this.isInitialized()) throw new Error('Git 仓库未初始化')
 
+    // ⚠️ 空库/残缺防覆盖（最后防线，防止把空或残缺元数据推上远端把线上覆盖掉）
+    //
+    // 事故复盘：本地 DB 为空（坏 clone / 新机器）时，如果直接 exportMetadata →
+    // commit → push，会把 .inkslate/notes.json 覆盖成空并推上远端，线上 112 条
+    // 笔记的元数据一夜变空。此防护必须放在 commitAll 里（仅推送/一键同步都会经过这里），
+    // 并且 countNotesInHead 之前因 readBlob 无法解析 'HEAD' 而恒返回 0，导致防护从未生效。
+    //
+    // 规则：以 git HEAD 元数据（或工作区元数据）中的笔记数为基线，本地 DB 少于基线
+    // 就先用元数据恢复本地 DB；恢复后仍不够则中止提交，绝不用残缺数据覆盖远端。
+    const localNoteCount = dbApi.listActiveNotes().length
+    const headNoteCount = await this.countNotesInHead()
+    const workdirNoteCount = this.readWorkdirNotesCount()
+    // 取两者中较大者作为"仓库应有的笔记数"参照（-1 = 读不到，忽略）
+    const baseline = Math.max(headNoteCount, workdirNoteCount)
+    if (baseline > 0 && localNoteCount < baseline) {
+      console.warn(
+        `[git] commitAll: 本地 DB 有 ${localNoteCount} 条笔记，少于元数据基线 ${baseline} 条（HEAD=${headNoteCount}, 工作区=${workdirNoteCount}），先从 HEAD 恢复本地 DB`
+      )
+      try {
+        await this.restoreWorkdirFromHead()
+        this.reconcileFromMetadata()
+      } catch (e) {
+        console.error('[git] commitAll: 恢复本地 DB 失败', e)
+      }
+      const afterCount = dbApi.listActiveNotes().length
+      if (afterCount < baseline) {
+        throw new Error(
+          `本地数据库只有 ${afterCount} 条笔记，但 git 元数据有 ${baseline} 条，已中止提交，避免用残缺数据覆盖远端。请先执行"仅拉取"把远端笔记拉下来`
+        )
+      }
+      console.log(`[git] commitAll: 已从 HEAD 恢复本地 DB 至 ${afterCount} 条笔记`)
+    }
+
     // 关键：在 add 之前先导出 .inkslate/notebooks.json + notes.json
     // —— Git 是 source of truth，新机器拉取后靠这俩 metadata 重建 SQLite
     this.exportMetadata()
@@ -864,8 +897,16 @@ export class GitManager {
     try {
       // 确保 remote origin 存在且 URL 正确
       await this.ensureRemote()
+      // 先记录 pull 前的本地分支 HEAD，用于判断是否真的拉到了新 commit
+      // （isomorphic-git 1.38 的 git.pull 不返回任何结果，无法直接从返回值判断，
+      //   只能比较 pull 前后 HEAD 是否变化 —— 快进合并或新建合并提交都会改变 HEAD）
+      let headBefore: string | null = null
+      try {
+        headBefore = await git.resolveRef({ fs, dir, ref: branch })
+      } catch {}
+
       // pull = fetch + merge，fastForward 模式（能 ff 就 ff，否则建 merge commit）
-      const result = await git.pull({
+      await git.pull({
         fs, http, dir,
         ref: branch,
         remote: 'origin',
@@ -876,9 +917,13 @@ export class GitManager {
         committer: this.committer(),
         onAuth: this.auth
       })
-      // isomorphic-git pull 返回 fastForward oid 数组或 merge commit oid
-      // 无变更时返回 []
-      const updated = Array.isArray(result) && result.length > 0
+
+      // pull 后再次解析 HEAD，HEAD 变化即表示拉到了新 commit
+      let headAfter: string | null = null
+      try {
+        headAfter = await git.resolveRef({ fs, dir, ref: branch })
+      } catch {}
+      const updated = !!headBefore && !!headAfter && headBefore !== headAfter
 
       // ⚠️ 关键护栏：只有在 pull 真正拉取到了新的 commit（updated === true）时，
       // 才根据远端元数据重建/合并本地 SQLite。
@@ -902,9 +947,32 @@ export class GitManager {
         }
       } else {
         console.log('[git] pull: no new commits, skipping reconcile to avoid overwriting local data')
+        // 空库恢复：本地 DB 为空但 HEAD 元数据有数据时，直接从元数据恢复。
+        // 覆盖"clone 成功后 DB 重建失败 / 新机器尚未同步"等场景 —— 此时即便没有新 commit，
+        // 也必须把远端已有的数据补进本地 DB，否则 UI 一直显示"已是最新"却一个笔记都没有。
+        const localNoteCount = dbApi.listActiveNotes().length
+        const headNoteCount = await this.countNotesInHead()
+        if (localNoteCount === 0 && headNoteCount > 0) {
+          console.warn(`[git] pull: 本地 DB 为空（${localNoteCount} 条），HEAD 元数据有 ${headNoteCount} 条，先从元数据恢复本地 DB`)
+          try {
+            await this.restoreWorkdirFromHead()
+            const recon = this.reconcileFromMetadata()
+            if (recon.notebooksApplied || recon.notesApplied) {
+              console.log(`[git] pull: 已从元数据恢复 ${recon.notebooksApplied} 个笔记本 / ${recon.notesApplied} 条笔记`)
+              reconciled = true
+            }
+          } catch (e) {
+            console.error('[git] pull: 空库恢复失败 (non-fatal):', e)
+          }
+        }
       }
 
-      return { ok: true, message: updated ? '拉取成功（有更新）' : '已是最新', updated, reconciled }
+      return {
+        ok: true,
+        message: updated ? '拉取成功（有更新）' : reconciled ? '已从远端元数据恢复本地数据' : '已是最新',
+        updated,
+        reconciled
+      }
     } catch (e: any) {
       return { ok: false, message: e?.message ?? 'pull 失败', updated: false, reconciled: false }
     }
@@ -944,28 +1012,37 @@ export class GitManager {
     }
   }
 
-  /** 读指定 commit 的某个文件内容（文本） */
+  /** 读指定 commit 的某个文件内容（文本）。
+   *  oid 可以是完整 40 位哈希，也可以是 ref（如 'HEAD'）——isomorphic-git 1.38 的
+   *  readBlob 不能直接解析 'HEAD' 这种 ref，必须先 resolveRef 成真实 oid。 */
   async showFile(oid: string, filepath: string): Promise<string | null> {
     const dir = this.getWorkDir()
     if (!this.isInitialized()) return null
     try {
-      const { blob } = await git.readBlob({ fs, dir, oid, filepath })
+      const resolvedOid = this.isFullOid(oid) ? oid : await git.resolveRef({ fs, dir, ref: oid })
+      const { blob } = await git.readBlob({ fs, dir, oid: resolvedOid, filepath })
       return Buffer.from(blob).toString('utf-8')
     } catch (e) {
       return null
     }
   }
 
-  /** 读指定 commit 的某个文件内容（二进制 Buffer，给附件用） */
+  /** 读指定 commit 的某个文件内容（二进制 Buffer，给附件用）。oid 同上可传 ref。 */
   async showFileBuffer(oid: string, filepath: string): Promise<Buffer | null> {
     const dir = this.getWorkDir()
     if (!this.isInitialized()) return null
     try {
-      const { blob } = await git.readBlob({ fs, dir, oid, filepath })
+      const resolvedOid = this.isFullOid(oid) ? oid : await git.resolveRef({ fs, dir, ref: oid })
+      const { blob } = await git.readBlob({ fs, dir, oid: resolvedOid, filepath })
       return Buffer.from(blob)
     } catch (e) {
       return null
     }
+  }
+
+  /** 判断字符串是否已是完整 40 位十六进制 oid */
+  private isFullOid(ref: string): boolean {
+    return /^[0-9a-f]{40}$/i.test(ref)
   }
 
   // ============ 内部 ============
@@ -973,16 +1050,29 @@ export class GitManager {
   /**
    * 统计 git HEAD 中 .inkslate/notes.json 的笔记条数
    * （空库防覆盖防护用：判断本地 DB 是否比 HEAD 元数据"空"很多）
+   * 返回 -1 表示无法读取（HEAD 无该文件 / 读取失败）。
    */
   private async countNotesInHead(): Promise<number> {
-    if (!this.isInitialized()) return 0
+    if (!this.isInitialized()) return -1
     try {
       const raw = await this.showFile('HEAD', '.inkslate/notes.json')
-      if (!raw) return 0
+      if (raw == null) return -1
       const data = JSON.parse(raw)
       return Array.isArray(data.notes) ? data.notes.length : 0
     } catch (e) {
-      return 0
+      return -1
+    }
+  }
+
+  /** 读当前工作区 .inkslate/notes.json 的笔记条数；文件不存在/解析失败返回 -1 */
+  private readWorkdirNotesCount(): number {
+    const p = path.join(this.getWorkDir(), '.inkslate', 'notes.json')
+    try {
+      if (!fs.existsSync(p)) return -1
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8'))
+      return Array.isArray(data.notes) ? data.notes.length : 0
+    } catch (e) {
+      return -1
     }
   }
 

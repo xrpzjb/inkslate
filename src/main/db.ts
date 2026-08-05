@@ -1139,6 +1139,10 @@ const dbMethods = {
    * - 删除所有现存的活跃记录
    * - 按 notebooks 数组 INSERT（id 冲突走 REPLACE）
    * - 软删除的（is_deleted=1）不动
+   *
+   * ⚠️ 插入前必须按"父级在前、子级在后"排序：notebooks 表有 parent_id → id 的
+   * 外键约束，如果子笔记本先于父笔记本插入会抛 "FOREIGN KEY constraint failed"，
+   * 导致整批回滚（克隆后本地笔记一个都重建不出来）。
    */
   replaceNotebooks(notebooks: Array<{
     id: string
@@ -1150,13 +1154,14 @@ const dbMethods = {
     sortOrder?: number
   }>): void {
     const d = getDatabase()
+    const ordered = sortNotebooksByParent(notebooks)
     const tx = d.transaction(() => {
       d.prepare('DELETE FROM notebooks WHERE is_deleted = 0').run()
       const stmt = d.prepare(`
         INSERT INTO notebooks (id, name, parent_id, created_at, updated_at, icon, is_deleted, sort_order)
         VALUES (?, ?, ?, ?, ?, ?, 0, ?)
       `)
-      for (const nb of notebooks) {
+      for (const nb of ordered) {
         stmt.run(
           nb.id, nb.name, nb.parentId, nb.createdAt, nb.updatedAt,
           nb.icon ?? null, nb.sortOrder ?? nb.createdAt
@@ -1237,12 +1242,10 @@ const dbMethods = {
   }>): Record<string, string> {
     const d = getDatabase()
     const remap: Record<string, string> = {}
+    // ⚠️ 必须先父后子排序，否则子笔记本先插入会触发 parent_id 外键约束失败（整批回滚）
+    const ordered = sortNotebooksByParent(notebooks)
+    const batchIds = new Set(ordered.map(n => n.id))
     const tx = d.transaction(() => {
-      // 建立本地 name → id 映射，用于同名去重
-      const localByName = new Map<string, string>()
-      for (const row of d.prepare('SELECT id, name FROM notebooks WHERE is_deleted = 0').all() as any[]) {
-        localByName.set(row.name, row.id)
-      }
       const upsert = d.prepare(`
         INSERT INTO notebooks (id, name, parent_id, created_at, updated_at, icon, is_deleted, sort_order)
         VALUES (?, ?, ?, ?, ?, ?, 0, ?)
@@ -1254,28 +1257,21 @@ const dbMethods = {
           sort_order = excluded.sort_order,
           is_deleted = 0
       `)
-      for (const nb of notebooks) {
-        // 同名去重：如果本地已有同名笔记本（不同 id），更新本地记录而非插入新记录
-        const localId = localByName.get(nb.name)
-        if (localId && localId !== nb.id) {
-          d.prepare(`
-            UPDATE notebooks SET name = ?, parent_id = ?, updated_at = ?, icon = ?, sort_order = ?, is_deleted = 0
-            WHERE id = ?
-          `).run(nb.name, nb.parentId, nb.updatedAt, nb.icon ?? null, nb.sortOrder ?? nb.createdAt, localId)
-          // 记录重定向：远端 id → 本地 id，供调用方 remap 笔记的 notebook_id
-          remap[nb.id] = localId
-        } else {
-          // 插入前检查 parent_id 是否需要重定向（父笔记本被同名去重合并了）
-          const effectiveParentId = nb.parentId ? (remap[nb.parentId] ?? nb.parentId) : null
-          upsert.run(
-            nb.id, nb.name, effectiveParentId, nb.createdAt, nb.updatedAt,
-            nb.icon ?? null, nb.sortOrder ?? nb.createdAt
-          )
+      for (const nb of ordered) {
+        // 树直接用 id 关联：parent_id 引用的是同一份元数据里另一个 notebook 的 id，
+        // 拓扑排序保证父级已先插入，所以直接写库即可。
+        // ⚠️ 绝不能按名字去重——不同父级下可以有同名笔记本（如多个"运维"/"文档"/"开发"），
+        // 按名字合并会把整棵树挂错父级。
+        let parentId = nb.parentId
+        if (parentId && !batchIds.has(parentId)) {
+          // 悬空引用（父不在本批次）：本地有则沿用，否则置 null 兜底，避免外键约束整批失败
+          const exists = d.prepare('SELECT 1 FROM notebooks WHERE id = ? AND is_deleted = 0').get(parentId)
+          if (!exists) parentId = null
         }
-      }
-      // 第二轮：更新所有引用已重定向 parent_id 的笔记本（包括已 upsert 的）
-      for (const [oldId, newId] of Object.entries(remap)) {
-        d.prepare('UPDATE notebooks SET parent_id = ? WHERE parent_id = ? AND is_deleted = 0').run(newId, oldId)
+        upsert.run(
+          nb.id, nb.name, parentId, nb.createdAt, nb.updatedAt,
+          nb.icon ?? null, nb.sortOrder ?? nb.createdAt
+        )
       }
     })
     tx()
@@ -1432,6 +1428,36 @@ const dbMethods = {
 
 // 把方法挂到 db 对象上方便调用
 export const dbApi = dbMethods
+
+/**
+ * 把笔记本数组按"父级在前、子级在后"排序（拓扑序 / 先根遍历）。
+ *
+ * 原因：notebooks 表存在 parent_id → id 外键约束。git 拉取的 notebooks.json
+ * 由另一台机器按 sort_order 导出，父子顺序不保证，直接按原序 INSERT 会在
+ * 子笔记本先于父笔记本时抛 "FOREIGN KEY constraint failed"，整批回滚。
+ * 排序后保证每条记录插入时其父记录已存在（父不在本列表中的视为根级）。
+ */
+function sortNotebooksByParent<T extends { id: string; parentId?: string | null }>(notebooks: T[]): T[] {
+  const byId = new Map(notebooks.map(n => [n.id, n]))
+  const sorted: T[] = []
+  const visited = new Set<string>()
+  const visiting = new Set<string>()
+
+  const visit = (nb: T): void => {
+    if (visited.has(nb.id)) return
+    if (visiting.has(nb.id)) return // 防环（异常数据兜底）
+    visiting.add(nb.id)
+    if (nb.parentId && byId.has(nb.parentId)) {
+      visit(byId.get(nb.parentId)!)
+    }
+    visiting.delete(nb.id)
+    visited.add(nb.id)
+    sorted.push(nb)
+  }
+
+  for (const nb of notebooks) visit(nb)
+  return sorted
+}
 
 /** 在 dir 下递归搜索匹配 fileName 的文件，返回第一个匹配的路径 */
 export function findFileRecursively(dir: string, fileName: string): string | null {
