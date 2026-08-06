@@ -218,6 +218,12 @@ export function setupIpcHandlers(): void {
     return result
   })
 
+  ipcMain.handle(IPC_CHANNELS.FLASH_THOUGHTS_UPDATE, async (_, id: string, content: string) => {
+    const result = dbApi.updateFlashThought(id, content)
+    gitMgr.exportMetadata()
+    return result
+  })
+
   ipcMain.handle(IPC_CHANNELS.FLASH_THOUGHTS_DELETE, async (_, id: string) => {
     dbApi.deleteFlashThought(id)
     gitMgr.exportMetadata()
@@ -264,7 +270,7 @@ export function setupIpcHandlers(): void {
     return result.canceled ? null : result.filePath ?? null
   })
 
-  ipcMain.handle(IPC_CHANNELS.FILE_EXPORT_PDF, async (_, payload: { title: string; html: string }): Promise<boolean> => {
+  ipcMain.handle(IPC_CHANNELS.FILE_EXPORT_PDF, async (_, payload: { title: string; html: string; watermark?: string }): Promise<boolean> => {
     const owner = BrowserWindow.getFocusedWindow()
     if (!owner) return false
     const result = await dialog.showSaveDialog(owner, {
@@ -278,6 +284,28 @@ export function setupIpcHandlers(): void {
     const safeTitle = String(payload?.title ?? '笔记')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
+    const watermark = String(payload?.watermark ?? '').trim()
+    const safeWatermark = watermark
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+    // 兜底后处理：给 payload.html 里所有 <pre> 注入 !important 内联样式，
+    // 保证代码块在 PDF 中必定换行（无论 renderer 是否生效、是否有缓存）。
+    // 最高优先级 inline !important，无法被任何 CSS 覆盖。
+    const PRE_WRAP_CSS = 'white-space:pre-wrap !important;word-break:break-all !important;overflow:visible !important'
+    const forcePreWrap = (html: string): string =>
+      html.replace(/<pre\b([^>]*)>/gi, (_match, attrs: string) => {
+        const styleMatch = attrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i)
+        if (styleMatch) {
+          const merged = `${styleMatch[2]};${PRE_WRAP_CSS}`
+          return `<pre${attrs.replace(styleMatch[0], ` style="${merged}"`)}>`
+        }
+        return `<pre${attrs} style="${PRE_WRAP_CSS}">`
+      })
+    const safeHtml = forcePreWrap(String(payload?.html ?? ''))
+    // 水印层：position:fixed 元素会被 Chromium printToPDF 在每一页重复渲染，
+    // 用固定网格铺满整页，旋转 + 低透明度，不拦截鼠标事件
+    const watermarkHtml = safeWatermark ? `
+  <div class="pdf-watermark" aria-hidden="true">${Array.from({ length: 12 }, () => `<span>${safeWatermark}</span>`).join('')}</div>` : ''
     const wrapper = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -297,19 +325,41 @@ export function setupIpcHandlers(): void {
   h3 { font-size: 16px; margin: 20px 0 10px; }
   p  { margin: 8px 0; }
   pre, code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-  pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow: auto; }
+  /* PDF 里代码块不能有横向滚动条：改成自动换行，长行折行显示。
+     !important 兜底，防止笔记 HTML 里的内联样式（DOMPurify 放行 style）覆盖 */
+  pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow: visible !important; white-space: pre-wrap !important; word-break: break-all !important; }
   code { background: #f6f8fa; padding: 1px 4px; border-radius: 3px; font-size: 0.92em; }
-  pre code { background: transparent; padding: 0; }
+  pre code { background: transparent; padding: 0; white-space: pre-wrap !important; word-break: break-all !important; }
   blockquote { margin: 8px 0; padding: 0 12px; color: #57606a; border-left: 3px solid #d0d7de; }
   table { border-collapse: collapse; margin: 12px 0; }
   th, td { border: 1px solid #d0d7de; padding: 6px 12px; }
   th { background: #f6f8fa; }
   img { max-width: 100%; }
   hr { border: none; border-top: 1px solid #e1e4e8; margin: 16px 0; }
+  .pdf-watermark {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(4, 1fr);
+    align-items: center;
+    justify-items: center;
+  }
+  .pdf-watermark span {
+    font-size: 42px;
+    font-weight: bold;
+    color: #1f2328;
+    opacity: 0.12;
+    white-space: nowrap;
+    transform: rotate(-30deg);
+  }
 </style>
 </head>
 <body>
-${payload?.html ?? ''}
+${safeHtml}
+${watermarkHtml}
 </body>
 </html>`
 

@@ -212,6 +212,8 @@ export function Sidebar() {
     notebookName: string
     mode: 'set' | 'remove' | 'unlock'
   } | null>(null)
+  // PDF 导出水印输入弹框
+  const [pdfExportDialog, setPdfExportDialog] = useState<{ nodeId: string; value: string } | null>(null)
 
   useEffect(() => {
     if (!selectedNoteId) return
@@ -597,9 +599,14 @@ export function Sidebar() {
 
   /** 导出当前右键的笔记为 PDF 文件。
    *  抓取当前预览区的 innerHTML，连同标题一起传给主进程，
-   *  主进程用隐藏 BrowserWindow 加载纯净 HTML 后 printToPDF。 */
-  const handleExportPdf = async (nodeId: string) => {
+   *  主进程用隐藏 BrowserWindow 加载纯净 HTML 后 printToPDF。
+   *  先弹出水印输入框，确认后再真正导出。 */
+  const handleExportPdf = (nodeId: string) => {
     closeContextMenu()
+    setPdfExportDialog({ nodeId, value: '' })
+  }
+
+  const doExportPdf = async (nodeId: string, watermark: string) => {
     try {
       if (selectedNoteId !== nodeId) {
         await selectNote(nodeId)
@@ -615,9 +622,18 @@ export function Sidebar() {
       if (inner) {
         const clone = inner.cloneNode(true) as HTMLElement
         clone.querySelectorAll('.toc').forEach(el => el.remove())
+        // 代码块强制换行：PDF 里不能有横向滚动条。
+        // 用 setProperty + 'important' 写内联样式（最高优先级），
+        // 保证导出的内容一定折行显示，不受任何外部 CSS/缓存影响。
+        clone.querySelectorAll('pre').forEach((el) => {
+          const s = (el as HTMLElement).style
+          s.setProperty('white-space', 'pre-wrap', 'important')
+          s.setProperty('word-break', 'break-all', 'important')
+          s.setProperty('overflow', 'visible', 'important')
+        })
         html = clone.innerHTML
       }
-      const ok = await window.inkslateApi.file.exportPdf({ title, html })
+      const ok = await window.inkslateApi.file.exportPdf({ title, html, watermark })
       if (!ok) console.log('PDF 导出已取消')
     } catch (e) {
       console.error('PDF 导出失败:', e)
@@ -1194,6 +1210,98 @@ export function Sidebar() {
                 }}
               >
                 创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pdfExportDialog && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000
+          }}
+          onClick={() => setPdfExportDialog(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 8,
+              padding: 20,
+              minWidth: 360,
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+            }}
+          >
+            <h3 style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--text-primary)' }}>导出 PDF - 添加文字水印</h3>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>水印文字（留空则不加水印）</div>
+            <input
+              autoFocus
+              value={pdfExportDialog.value}
+              onChange={(e) => setPdfExportDialog({ ...pdfExportDialog, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const { nodeId, value } = pdfExportDialog
+                  setPdfExportDialog(null)
+                  doExportPdf(nodeId, value.trim())
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setPdfExportDialog(null)
+                }
+              }}
+              placeholder="例如：内部资料，请勿外传"
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                fontSize: 13,
+                border: '1px solid var(--border-color)',
+                borderRadius: 4,
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                outline: 'none',
+                boxSizing: 'border-box'
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+              <button
+                onClick={() => setPdfExportDialog(null)}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 4,
+                  background: 'transparent',
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer'
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  const { nodeId, value } = pdfExportDialog
+                  setPdfExportDialog(null)
+                  doExportPdf(nodeId, value.trim())
+                }}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  border: 'none',
+                  borderRadius: 4,
+                  background: 'var(--accent-color)',
+                  color: '#fff',
+                  cursor: 'pointer'
+                }}
+              >
+                导出
               </button>
             </div>
           </div>

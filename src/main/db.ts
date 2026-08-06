@@ -1067,6 +1067,13 @@ const dbMethods = {
     return { id, content, createdAt: now, updatedAt: now }
   },
 
+  updateFlashThought(id: string, content: string): FlashThought {
+    const now = Date.now()
+    getDatabase().prepare('UPDATE flash_thoughts SET content = ?, updated_at = ? WHERE id = ?').run(content, now, id)
+    const row = getDatabase().prepare('SELECT * FROM flash_thoughts WHERE id = ?').get(id) as any
+    return { id: row.id, content: row.content, createdAt: row.created_at, updatedAt: row.updated_at }
+  },
+
   deleteFlashThought(id: string): void {
     getDatabase().prepare('DELETE FROM flash_thoughts WHERE id = ?').run(id)
   },

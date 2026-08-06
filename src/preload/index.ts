@@ -52,6 +52,7 @@ const api = {
   flashThoughts: {
     list: (): Promise<FlashThought[]> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_LIST),
     create: (content: string): Promise<FlashThought> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_CREATE, content),
+    update: (id: string, content: string): Promise<FlashThought> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_UPDATE, id, content),
     delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_DELETE, id)
   },
 
@@ -185,7 +186,7 @@ const api = {
     },
     export: (format: 'html' | 'md'): Promise<string | null> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT, format),
-    exportPdf: (payload: { title: string; html: string }): Promise<boolean> =>
+    exportPdf: (payload: { title: string; html: string; watermark?: string }): Promise<boolean> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_PDF, payload),
     exportDocx: (payload: { title: string; content: string; format: Note['format']; basePath?: string; language?: string }): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_DOCX, payload),

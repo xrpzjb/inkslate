@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../store/app'
-import { Plus, X } from 'lucide-react'
+import { FlashThought } from '@shared/types'
+import { Plus, X, Pencil } from 'lucide-react'
 import { confirm } from './ConfirmDialog'
 
 export function FlashThoughtView() {
@@ -16,6 +17,10 @@ export function FlashThoughtView() {
     const ok = await confirm({ message: '确定删除这条闪念？删除后无法恢复。', title: '删除闪念', confirmText: '确定', cancelText: '取消', danger: true })
     if (!ok) return
     await deleteFlashThought(id)
+  }
+
+  const handleEdit = (ft: FlashThought) => {
+    window.dispatchEvent(new CustomEvent('inkslate:edit-flash-thought', { detail: ft }))
   }
 
   const handleAdd = () => {
@@ -155,10 +160,36 @@ export function FlashThoughtView() {
                 </div>
                 <div style={{
                   marginTop: 10,
-                  fontSize: 11,
-                  color: 'var(--text-tertiary)'
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
                 }}>
-                  {formatTime(ft.createdAt)}
+                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                    {formatTime(ft.createdAt)}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleEdit(ft)
+                    }}
+                    className="flash-thought-edit-btn"
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--text-tertiary)',
+                      cursor: 'pointer',
+                      padding: 2,
+                      borderRadius: 4,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: 0,
+                      transition: 'opacity 0.15s, color 0.15s'
+                    }}
+                    title="编辑"
+                  >
+                    <Pencil size={12} />
+                  </button>
                 </div>
               </div>
             ))}
@@ -167,11 +198,16 @@ export function FlashThoughtView() {
       )}
 
       <style>{`
-        .flash-thought-card:hover .flash-thought-delete-btn {
+        .flash-thought-card:hover .flash-thought-delete-btn,
+        .flash-thought-card:hover .flash-thought-edit-btn {
           opacity: 1 !important;
         }
         .flash-thought-delete-btn:hover {
           color: var(--text-primary) !important;
+          background: var(--bg-hover);
+        }
+        .flash-thought-edit-btn:hover {
+          color: var(--accent-color) !important;
           background: var(--bg-hover);
         }
       `}</style>

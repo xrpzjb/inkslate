@@ -2,14 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store/app'
 import { X } from 'lucide-react'
 import { toast } from './Toast'
+import { FlashThought } from '@shared/types'
 
 interface FlashThoughtDialogProps {
+  flashThought?: FlashThought
   onClose: () => void
 }
 
-export function FlashThoughtDialog({ onClose }: FlashThoughtDialogProps) {
+export function FlashThoughtDialog({ flashThought, onClose }: FlashThoughtDialogProps) {
   const createFlashThought = useAppStore(s => s.createFlashThought)
-  const [content, setContent] = useState('')
+  const updateFlashThought = useAppStore(s => s.updateFlashThought)
+  const isEdit = !!flashThought
+  const [content, setContent] = useState(flashThought?.content ?? '')
   const [busy, setBusy] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -33,8 +37,13 @@ export function FlashThoughtDialog({ onClose }: FlashThoughtDialogProps) {
     }
     setBusy(true)
     try {
-      await createFlashThought(text)
-      toast.success('闪念已保存')
+      if (isEdit) {
+        await updateFlashThought(flashThought.id, text)
+        toast.success('闪念已更新')
+      } else {
+        await createFlashThought(text)
+        toast.success('闪念已保存')
+      }
       onClose()
     } catch (e) {
       setBusy(false)
@@ -70,7 +79,7 @@ export function FlashThoughtDialog({ onClose }: FlashThoughtDialogProps) {
             display: 'flex', alignItems: 'center', gap: 8,
             color: 'var(--text-primary)'
           }}>
-            <span role="img" aria-label="lightbulb">💡</span> 闪念
+            <span role="img" aria-label="lightbulb">💡</span> {isEdit ? '编辑闪念' : '闪念'}
           </h2>
           <button
             onClick={onClose}

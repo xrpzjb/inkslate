@@ -74,6 +74,7 @@ interface AppState {
   flashThoughts: FlashThought[]
   loadFlashThoughts: () => Promise<void>
   createFlashThought: (content: string) => Promise<void>
+  updateFlashThought: (id: string, content: string) => Promise<void>
   deleteFlashThought: (id: string) => Promise<void>
 
   // 甯冨眬
@@ -630,6 +631,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   createFlashThought: async (content) => {
     await window.inkslateApi.flashThoughts.create(content)
+    await get().loadFlashThoughts()
+    await get().refreshSyncStatus()
+  },
+  updateFlashThought: async (id, content) => {
+    await window.inkslateApi.flashThoughts.update(id, content)
     await get().loadFlashThoughts()
     await get().refreshSyncStatus()
   },

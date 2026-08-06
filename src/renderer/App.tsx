@@ -16,6 +16,7 @@ import { UrlNoteDialog } from './components/UrlNoteDialog'
 import { FlashThoughtDialog } from './components/FlashThoughtDialog'
 import { HistoryPanel } from './components/gitHistory/HistoryPanel'
 import { useState } from 'react'
+import { FlashThought } from '@shared/types'
 
 export default function App() {
   const theme = useAppStore(s => s.theme)
@@ -38,6 +39,7 @@ export default function App() {
   const [urlNoteDialogOpen, setUrlNoteDialogOpen] = useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const [flashThoughtDialogOpen, setFlashThoughtDialogOpen] = useState(false)
+  const [flashThoughtEditing, setFlashThoughtEditing] = useState<FlashThought | null>(null)
 
   const loadRecycleBin = useAppStore(s => s.loadRecycleBin)
   const loadFlashThoughts = useAppStore(s => s.loadFlashThoughts)
@@ -162,8 +164,18 @@ export default function App() {
     const openHistory = () => setHistoryPanelOpen(true)
     window.addEventListener('inkslate:open-history', openHistory)
 
-    const openFlashThoughtDialog = () => setFlashThoughtDialogOpen(true)
+    const openFlashThoughtDialog = () => {
+      setFlashThoughtEditing(null)
+      setFlashThoughtDialogOpen(true)
+    }
     window.addEventListener('inkslate:new-flash-thought', openFlashThoughtDialog)
+
+    const editFlashThought = (e: Event) => {
+      const ft = (e as CustomEvent).detail as FlashThought
+      setFlashThoughtEditing(ft)
+      setFlashThoughtDialogOpen(true)
+    }
+    window.addEventListener('inkslate:edit-flash-thought', editFlashThought)
 
     const handleFileNote = async () => {
       const [sourcePath] = await window.inkslateApi.file.openDialog({
@@ -442,6 +454,7 @@ export default function App() {
       window.removeEventListener('inkslate:new-file-note', handleFileNote)
       window.removeEventListener('inkslate:open-history', openHistory)
       window.removeEventListener('inkslate:new-flash-thought', openFlashThoughtDialog)
+      window.removeEventListener('inkslate:edit-flash-thought', editFlashThought)
       cleanup()
     }
   }, [])
@@ -538,7 +551,7 @@ export default function App() {
         document.body
       )}
       {flashThoughtDialogOpen && createPortal(
-        <FlashThoughtDialog onClose={() => setFlashThoughtDialogOpen(false)} />,
+        <FlashThoughtDialog flashThought={flashThoughtEditing ?? undefined} onClose={() => { setFlashThoughtDialogOpen(false); setFlashThoughtEditing(null) }} />,
         document.body
       )}
       {historyPanelOpen && createPortal(

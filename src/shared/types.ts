@@ -247,6 +247,7 @@ export const IPC_CHANNELS = {
   // 闪念
   FLASH_THOUGHTS_LIST: 'flash-thoughts:list',
   FLASH_THOUGHTS_CREATE: 'flash-thoughts:create',
+  FLASH_THOUGHTS_UPDATE: 'flash-thoughts:update',
   FLASH_THOUGHTS_DELETE: 'flash-thoughts:delete',
 
   // 文件笔记

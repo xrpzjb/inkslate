@@ -55,6 +55,11 @@ export async function addPdfOutline(
   rootDict.set(PDFName.of('Last'), refs[refs.length - 1])
 
   pdfDoc.catalog.set(PDFName.of('Outlines'), rootRef)
+  // 打开 PDF 时默认展示目录/书签面板
+  pdfDoc.catalog.set(PDFName.of('PageMode'), PDFName.of('UseOutlines'))
 
-  return pdfDoc.save()
+  // useObjectStreams:false 写出传统 xref 表而非压缩的交叉引用流，
+  // 部分查看器（WPS/福昕）对 Chromium+pdf-lib 生成的 XRef 流解析不全，
+  // 会导致书签目录丢失；传统 xref 兼容性最好
+  return pdfDoc.save({ useObjectStreams: false })
 }
