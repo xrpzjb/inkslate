@@ -41,6 +41,8 @@ export class GitManager {
   private static instance: GitManager | null = null
   private config: AppSettings['gitSync'] | null = null
   private decryptedToken: string = ''
+  /** 最近一次 merge 时 mergeDriver 备份了几个本地文件（冲突提示用） */
+  private lastMergeDriverBackupCount: number = 0
 
   static getInstance(): GitManager {
     if (!GitManager.instance) {
@@ -169,6 +171,7 @@ export class GitManager {
     if (!fs.existsSync(gitignorePath)) {
       fs.writeFileSync(gitignorePath, '# inkslate git sync\n', 'utf-8')
     }
+    this.ensureSyncConflictsGitignored()
     await git.add({ fs, dir, filepath: '.gitignore' })
     await git.commit({
       fs, dir,
@@ -309,10 +312,41 @@ export class GitManager {
   // ============ 元数据导出/导入（Git 是 source of truth） ============
 
   /**
+   * 把绝对路径转成相对笔记工作区（getNotesDir）的路径，供 metadata 存储。
+   * 这样 notes.json 里的 path / file_path 在不同机器（不同 userData 绝对路径）间可移植。
+   * 归一化成 `/` 分隔，跨平台一致。
+   * 文件不在工作区内的返回 null（不存无法移植的绝对路径）。
+   */
+  private toMetadataPath(absPath: string | null | undefined): string | null {
+    if (!absPath) return null
+    if (!path.isAbsolute(absPath)) {
+      // 兜底：DB 里意外存了相对路径 → 原样归一化，避免污染
+      return absPath.split('\\').join('/')
+    }
+    const notesDir = this.getWorkDir()
+    const rel = path.relative(notesDir, absPath)
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null
+    return rel.split(path.sep).join('/')
+  }
+
+  /**
+   * 把 metadata 里的路径还原成本机绝对路径。
+   * - 已是绝对路径（老版本 metadata 存的是绝对路径）→ 原样返回（兼容旧数据）
+   * - 相对路径 → 基于本机 getNotesDir 拼接（跨机器同步的关键）
+   */
+  private fromMetadataPath(metaPath: string | null | undefined): string | null {
+    if (!metaPath) return null
+    if (path.isAbsolute(metaPath)) return metaPath
+    return path.join(this.getWorkDir(), metaPath.split('/').join(path.sep))
+  }
+
+  /**
    * 把当前 SQLite 里的 notebook / note 元数据写到 .inkslate/notebooks.json / notes.json
    * 每次 commitAll 前自动调一次，确保 push 出去的 commit 带着最新的元数据
    *
-   * 注意：content 字段不入 metadata —— 笔记内容在 notes/<path>/<slug>.<ext> 文件里
+   * 注意：
+   *  - content 字段不入 metadata —— 笔记内容在 notes/<path>/<slug>.<ext> 文件里
+   *  - path / file_path 存相对工作区的路径（跨机器可移植），不放绝对路径
    */
   exportMetadata(): void {
     const dir = this.getWorkDir()
@@ -348,12 +382,12 @@ export class GitManager {
           title: n.title,
           notebook_id: n.notebookId,
           parent_id: n.parentId,
-          path: n.path ?? null,
+          path: this.toMetadataPath(n.path),
           format: n.format,
           language: n.language ?? null,
           url: n.url ?? null,
           file_name: n.fileName ?? null,
-          file_path: n.filePath ?? null,
+          file_path: this.toMetadataPath(n.filePath),
           file_ext: n.fileExt ?? null,
           file_size: n.fileSize ?? null,
           icon: n.icon ?? null,
@@ -450,7 +484,9 @@ export class GitManager {
     //
     // 路径策略（按优先级）：
     //   ① 本地 DB 已有该笔记且 path 指向真实文件 → 保留（避免已损坏的 DB 再次被覆盖）
-    //   ② 元数据中有 path 且文件在磁盘上 → 使用（远端同步来的正确路径）
+    //   ② 元数据中有 path 且文件在磁盘上 → 使用（远端同步来的正确路径。
+    //      metadata 里存的是相对工作区的路径，已由 fromMetadataPath 还原成本机绝对路径，
+    //      因此跨机器也能正确命中 —— 这是相对路径修复的关键）
     //   ③ 扫描笔记本目录，找 slug 匹配的文件 → 使用（修复已损坏的 path）
     //   ④ getUniqueFileName 重新算（仅用于跨机器恢复等场景）
     //
@@ -468,6 +504,11 @@ export class GitManager {
       const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : 'md'
       const nbDir = getNotebookPath(effectiveNotebookId)
 
+      // metadata 里的 path / file_path 是相对工作区的路径（可跨机器），先还原成本机绝对路径；
+      // 老版本存的绝对路径也能兼容（isAbsolute 原样返回）
+      const metaPath = this.fromMetadataPath(n.path)
+      const metaFilePath = this.fromMetadataPath(n.file_path)
+
       // === 笔记内容文件路径 ===
       const existing = existingNotePaths.get(n.id)
       let notePath: string | null = null
@@ -477,8 +518,8 @@ export class GitManager {
         notePath = existing.path
       }
       // ② 元数据路径且文件存在
-      if (!notePath && n.path && fs.existsSync(n.path)) {
-        notePath = n.path
+      if (!notePath && metaPath && fs.existsSync(metaPath)) {
+        notePath = metaPath
       }
       // ③ 扫描目录找 slug 匹配的文件
       if (!notePath) {
@@ -491,7 +532,7 @@ export class GitManager {
       // ③.5 递归搜索：用文件名在整个 notebook 目录乃至 notes 目录搜索
       if (!notePath) {
         try {
-          const fileName = n.path ? path.basename(n.path) : `${slugify(n.title)}.${ext}`
+          const fileName = metaPath ? path.basename(metaPath) : `${slugify(n.title)}.${ext}`
           let found = findFileRecursively(nbDir, fileName)
           if (!found) found = findFileRecursively(getNotesDir(), fileName)
           if (found) notePath = found
@@ -516,8 +557,8 @@ export class GitManager {
           filePath = existing.filePath
         }
         // ② 元数据路径且文件存在
-        if (!filePath && n.file_path && fs.existsSync(n.file_path)) {
-          filePath = n.file_path
+        if (!filePath && metaFilePath && fs.existsSync(metaFilePath)) {
+          filePath = metaFilePath
         }
         // ③ 扫描目录
         if (!filePath) {
@@ -637,13 +678,16 @@ export class GitManager {
       const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : 'md'
       const nbDir = getNotebookPath(n.notebook_id)
       const existing = existingNotePaths.get(n.id)
+      // metadata 里的 path / file_path 是相对工作区的路径（可跨机器），先还原成本机绝对路径
+      const metaPath = this.fromMetadataPath(n.path)
+      const metaFilePath = this.fromMetadataPath(n.file_path)
       let notePath: string | null = null
 
       if (existing?.path && fs.existsSync(existing.path)) {
         notePath = existing.path
       }
-      if (!notePath && n.path && fs.existsSync(n.path)) {
-        notePath = n.path
+      if (!notePath && metaPath && fs.existsSync(metaPath)) {
+        notePath = metaPath
       }
       if (!notePath) {
         try {
@@ -667,8 +711,8 @@ export class GitManager {
         if (existing?.filePath && fs.existsSync(existing.filePath)) {
           filePath = existing.filePath
         }
-        if (!filePath && n.file_path && fs.existsSync(n.file_path)) {
-          filePath = n.file_path
+        if (!filePath && metaFilePath && fs.existsSync(metaFilePath)) {
+          filePath = metaFilePath
         }
         if (!filePath) {
           try {
@@ -789,6 +833,7 @@ export class GitManager {
     phases?: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' }
     pulled?: boolean
     pushed?: boolean
+    conflicts?: number
   }> {
     const phases: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' } = {
       commit: 'skipped',
@@ -844,6 +889,15 @@ export class GitManager {
       }
     }
 
+    // ⚠️ 关键护栏：pull 失败时绝不允许继续 commit ——
+    // 否则 commitAll 的 exportMetadata 会把本地（可能残缺的）元数据写进工作区再提交，
+    // 等于用本地数据"解决"了冲突，把 A 端的改动排除掉，随后 push 甚至会覆盖远端。
+    // （此前 bug：check 放在 commitAll 之后，pull 失败也照样 commit，导致 A 端改动永远没同步过来）
+    if (!pullResult.ok) {
+      phases.pull = 'failed'
+      return { ok: false, message: '拉取失败：' + pullResult.message, phases, phase: 'pull' }
+    }
+
     // Step 2: commit 本地变更（如果有）
     // pull 必须在 commit 之前，否则空数据库的 exportMetadata 会覆盖远端元数据
     try {
@@ -852,10 +906,6 @@ export class GitManager {
     } catch (e: any) {
       phases.commit = 'failed'
       return { ok: false, message: e?.message ?? 'commit 失败', phases, phase: 'commit' }
-    }
-    if (!pullResult.ok) {
-      phases.pull = 'failed'
-      return { ok: false, message: '拉取失败：' + pullResult.message, phases, phase: 'pull' }
     }
     // pull 阶段标记为 'ok' 的条件：获取了新 commit，或者 reconcile 重建了数据
     phases.pull = (pullResult.updated || pullResult.reconciled) ? 'ok' : 'up-to-date'
@@ -881,49 +931,113 @@ export class GitManager {
       message: parts.join('，'),
       phases,
       pulled: phases.pull === 'ok',
-      pushed: phases.push === 'ok'
+      pushed: phases.push === 'ok',
+      conflicts: pullResult.conflicts ?? 0
     }
   }
 
   /** pull = fetch + merge（fastForward 优先，保持线性历史） */
-  async pull(): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean }> {
-    if (!this.isConfigured()) return { ok: false, message: 'Git 未配置', updated: false, reconciled: false }
-    if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化', updated: false, reconciled: false }
-    if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写', updated: false, reconciled: false }
+  async pull(): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts: number }> {
+    if (!this.isConfigured()) return { ok: false, message: 'Git 未配置', updated: false, reconciled: false, conflicts: 0 }
+    if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化', updated: false, reconciled: false, conflicts: 0 }
+    if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写', updated: false, reconciled: false, conflicts: 0 }
     const sshHint = this.detectSshUrl(this.config!.repoUrl)
-    if (sshHint) return { ok: false, message: sshHint, updated: false, reconciled: false }
+    if (sshHint) return { ok: false, message: sshHint, updated: false, reconciled: false, conflicts: 0 }
     const dir = this.getWorkDir()
     const branch = this.config?.branch || 'main'
     try {
       // 确保 remote origin 存在且 URL 正确
       await this.ensureRemote()
+
       // 先记录 pull 前的本地分支 HEAD，用于判断是否真的拉到了新 commit
-      // （isomorphic-git 1.38 的 git.pull 不返回任何结果，无法直接从返回值判断，
-      //   只能比较 pull 前后 HEAD 是否变化 —— 快进合并或新建合并提交都会改变 HEAD）
       let headBefore: string | null = null
       try {
         headBefore = await git.resolveRef({ fs, dir, ref: branch })
       } catch {}
 
-      // pull = fetch + merge，fastForward 模式（能 ff 就 ff，否则建 merge commit）
-      await git.pull({
+      // fetch 远端（FETCH_HEAD = 远端 HEAD）
+      await git.fetch({
         fs, http, dir,
-        ref: branch,
         remote: 'origin',
-        remoteRef: branch,
+        ref: branch,
         singleBranch: true,
-        fastForward: true,
-        author: this.author(),
-        committer: this.committer(),
         onAuth: this.auth
       })
+      let fetchHeadOid: string
+      try {
+        fetchHeadOid = await git.resolveRef({ fs, dir, ref: 'FETCH_HEAD' })
+      } catch {
+        fetchHeadOid = await git.resolveRef({ fs, dir, ref: `refs/remotes/origin/${branch}` })
+      }
 
-      // pull 后再次解析 HEAD，HEAD 变化即表示拉到了新 commit
+      // ⚠️ 为什么不用 git.pull：
+      // .inkslate/*.json 是本地 exportMetadata() 每次改动都整份重写的机器元数据，
+      // 两端同时改动几乎必然冲突。git.pull 遇到冲突直接抛 MergeConflictError /
+      // CheckoutConflictError，导致 reconcile 被跳过 → A 端改动永远进不了本地 DB。
+      // 这里改用 fetch + git.merge（带 mergeDriver）：双方都改过的文件以远端（theirs）为准，
+      // 本地版本先备份到 notes/.sync-conflicts/（gitignore，不会推上远端）；
+      // 只有单方改过的文件由 git 自动保留（本地独有笔记、A 端新增笔记都正常并入）。
+
+      // 合并前先把本地所有已变更的受跟踪文件备份（零丢失保障）
+      const { backupDir, changed } = await this.backupWorkdirChanges()
+
+      // merge：fastForward 优先，冲突由 mergeDriver 解析
+      let mergeResult: any = null
+      try {
+        mergeResult = await git.merge({
+          fs, dir,
+          ours: branch,
+          theirs: fetchHeadOid,
+          fastForward: true,
+          allowUnrelatedHistories: true,
+          author: this.author(),
+          committer: this.committer(),
+          mergeDriver: this.getMergeDriver()
+        })
+      } catch (e: any) {
+        // 残留冲突（delete/modify、add/add 等 mergeDriver 覆盖不到的）：
+        // 逐个把远端的 theirs 版本写回工作区，再重跑 merge
+        if (e?.code === 'MergeConflictError' && Array.isArray(e?.data?.filepaths) && e.data.filepaths.length > 0) {
+          console.warn('[git] pull: residual conflicts:', e.data.filepaths)
+          await this.resolveConflictsAsTheirs(fetchHeadOid, e.data.filepaths)
+          mergeResult = await git.merge({
+            fs, dir,
+            ours: branch,
+            theirs: fetchHeadOid,
+            fastForward: true,
+            allowUnrelatedHistories: true,
+            author: this.author(),
+            committer: this.committer(),
+            mergeDriver: this.getMergeDriver()
+          })
+        } else {
+          throw e
+        }
+      }
+
+      // 远端没有新东西（theirs 是 ours 的祖先 / 完全相等）→ 不动工作区，保护本地未提交的编辑
+      if (!(mergeResult && mergeResult.alreadyMerged === true)) {
+        // 对齐工作区到合并后的树（force：脏的 .inkslate 元数据可再生成；本地改动已备份）
+        await git.checkout({ fs, dir, ref: branch, force: true })
+        // force checkout 会吞掉"远端没改、仅本地改了"的未提交编辑 → 恢复回来
+        if (headBefore) {
+          try {
+            const restored = await this.restoreLocalOnlyChanges(headBefore, backupDir, changed)
+            console.log(`[git] pull: restored ${restored} local-only changes`)
+          } catch (e) {
+            console.error('[git] pull: restoreLocalOnlyChanges failed (non-fatal):', e)
+          }
+        }
+      }
+
+      // 合并后再次解析 HEAD，HEAD 变化即表示拉到了新 commit
       let headAfter: string | null = null
       try {
         headAfter = await git.resolveRef({ fs, dir, ref: branch })
       } catch {}
       const updated = !!headBefore && !!headAfter && headBefore !== headAfter
+
+      const conflicts = changed.length + (this.lastMergeDriverBackupCount ?? 0)
 
       // ⚠️ 关键护栏：只有在 pull 真正拉取到了新的 commit（updated === true）时，
       // 才根据远端元数据重建/合并本地 SQLite。
@@ -971,14 +1085,78 @@ export class GitManager {
         ok: true,
         message: updated ? '拉取成功（有更新）' : reconciled ? '已从远端元数据恢复本地数据' : '已是最新',
         updated,
-        reconciled
+        reconciled,
+        conflicts
       }
     } catch (e: any) {
-      return { ok: false, message: e?.message ?? 'pull 失败', updated: false, reconciled: false }
+      return { ok: false, message: e?.message ?? 'pull 失败', updated: false, reconciled: false, conflicts: 0 }
     }
   }
 
   // ============ 历史快照 ============
+
+  /**
+   * 检查远端状态（只读，不修改工作区）：
+   * 拉取远端，对比 本地 DB / 本地已提交 HEAD / 远端 HEAD 的笔记数，
+   * 用于判断"A 端的改动是否还在远端"（例如同步出问题、怀疑数据被覆盖时排查用）。
+   */
+  async inspectRemote(): Promise<{
+    ok: boolean
+    message: string
+    localNoteCount: number
+    localHeadNoteCount: number
+    remoteNoteCount: number
+  }> {
+    const base = { ok: false, message: '', localNoteCount: 0, localHeadNoteCount: 0, remoteNoteCount: 0 }
+    if (!this.isConfigured()) return { ...base, message: 'Git 未配置' }
+    if (!this.isInitialized()) return { ...base, message: 'Git 仓库未初始化' }
+    if (!this.decryptedToken) return { ...base, message: 'Git 密码/Token 未配置，请打开 Git 设置填写' }
+    const sshHint = this.detectSshUrl(this.config!.repoUrl)
+    if (sshHint) return { ...base, message: sshHint }
+    const dir = this.getWorkDir()
+    const branch = this.config?.branch || 'main'
+    try {
+      await this.ensureRemote()
+      await git.fetch({
+        fs, http, dir,
+        remote: 'origin',
+        ref: branch,
+        singleBranch: true,
+        onAuth: this.auth
+      })
+      let fetchHeadOid: string
+      try {
+        fetchHeadOid = await git.resolveRef({ fs, dir, ref: 'FETCH_HEAD' })
+      } catch {
+        fetchHeadOid = await git.resolveRef({ fs, dir, ref: `refs/remotes/origin/${branch}` })
+      }
+      const localNoteCount = dbApi.listActiveNotes().length
+      const localHeadNoteCount = await this.countNotesInHead()
+      let remoteNoteCount = -1
+      try {
+        const raw = await this.showFile(fetchHeadOid, '.inkslate/notes.json')
+        if (raw != null) {
+          const data = JSON.parse(raw)
+          remoteNoteCount = Array.isArray(data.notes) ? data.notes.length : 0
+        }
+      } catch {
+        remoteNoteCount = -1
+      }
+      let message = `本地 DB：${localNoteCount} 条，本地已提交：${localHeadNoteCount} 条，远端：${remoteNoteCount < 0 ? '无法读取' : remoteNoteCount + ' 条'}`
+      if (remoteNoteCount > localNoteCount) {
+        message += '。远端比本地多，A 端的改动大概率还在远端，执行一次"同步"即可恢复。'
+      } else if (remoteNoteCount >= 0 && remoteNoteCount < localNoteCount) {
+        message += '。本地比远端多，本地可能有未推送的笔记。'
+      } else if (remoteNoteCount === localNoteCount) {
+        message += '。两端数量一致。'
+      } else {
+        message += '。无法读取远端 notes.json（可能远端是旧版结构）。'
+      }
+      return { ok: true, message, localNoteCount, localHeadNoteCount, remoteNoteCount }
+    } catch (e: any) {
+      return { ...base, message: e?.message ?? '检查失败' }
+    }
+  }
 
   /** 拿指定路径（或全仓库）的提交历史 */
   async log(filepath?: string, maxCount: number = 50): Promise<{
@@ -1089,6 +1267,139 @@ export class GitManager {
       const content = await this.showFile('HEAD', `.inkslate/${name}`)
       if (content != null) {
         fs.writeFileSync(path.join(inkslateDir, name), content, 'utf-8')
+      }
+    }
+  }
+
+  /** 确保 .gitignore 包含 .sync-conflicts/（冲突备份目录永远不进 git，不会推上远端） */
+  private ensureSyncConflictsGitignored(): void {
+    const dir = this.getWorkDir()
+    const giPath = path.join(dir, '.gitignore')
+    try {
+      let content = ''
+      if (fs.existsSync(giPath)) content = fs.readFileSync(giPath, 'utf-8')
+      if (!content.includes('.sync-conflicts')) {
+        const sep = content.length > 0 && !content.endsWith('\n') ? '\n' : ''
+        fs.writeFileSync(giPath, content + sep + '.sync-conflicts/\n', 'utf-8')
+        console.log('[git] .gitignore: added .sync-conflicts/')
+      }
+    } catch (e) {
+      console.error('[git] ensureSyncConflictsGitignored failed:', e)
+    }
+  }
+
+  /**
+   * merge / force checkout 前，把本地所有已变更的受跟踪文件备份到 notes/.sync-conflicts/<时间戳>/
+   * （gitignore，不会被提交/推送）——零丢失保障：无论 merge 结果如何，本地内容都能找回。
+   * 返回备份目录 + 变更清单（供 restoreLocalOnlyChanges 用）。
+   */
+  private async backupWorkdirChanges(): Promise<{ backupDir: string; changed: { relPath: string; status: string }[] }> {
+    const dir = this.getWorkDir()
+    const changes = await this.status()
+    if (changes.length === 0) return { backupDir: '', changed: [] }
+    this.ensureSyncConflictsGitignored()
+    const ts = new Date().toISOString().replace(/[:.]/g, '-')
+    const backupDir = path.join(dir, '.sync-conflicts', ts)
+    fs.mkdirSync(backupDir, { recursive: true })
+    const changed: { relPath: string; status: string }[] = []
+    for (const { filepath, status } of changes) {
+      const abs = path.join(dir, filepath)
+      if (status === 'deleted') continue // 已删除，无本地内容可备份（可从 git 历史找回）
+      if (!fs.existsSync(abs)) continue
+      const safeName = filepath.replace(/[\\/:*?"<>|]/g, '_')
+      try {
+        fs.copyFileSync(abs, path.join(backupDir, safeName))
+        changed.push({ relPath: filepath, status })
+      } catch (e) {
+        console.error(`[git] backup failed for ${filepath}:`, e)
+      }
+    }
+    console.log(`[git] backed up ${changed.length} local changes to ${backupDir}`)
+    return { backupDir, changed }
+  }
+
+  /**
+   * git.merge 的 mergeDriver：双方都改过的文件一律以远端（theirs）为准。
+   * 本地版本（ours，含已提交但未推送的改动）备份到 notes/.sync-conflicts/merge-<ts>/。
+   * 元数据（.inkslate/*.json）与笔记内容文件都适用；本地未提交的改动已由
+   * backupWorkdirChanges 在合并前备份，这里只兜底已提交的本地版本。
+   */
+  private getMergeDriver(): (args: { path: string; contents: string[] }) => { cleanMerge: boolean; mergedText: string } | Promise<{ cleanMerge: boolean; mergedText: string }> {
+    const dir = this.getWorkDir()
+    let backupDir: string | null = null
+    this.lastMergeDriverBackupCount = 0
+    const ensureBackupDir = () => {
+      if (!backupDir) {
+        this.ensureSyncConflictsGitignored()
+        const ts = new Date().toISOString().replace(/[:.]/g, '-')
+        backupDir = path.join(dir, '.sync-conflicts', `merge-${ts}`)
+        fs.mkdirSync(backupDir, { recursive: true })
+      }
+      return backupDir
+    }
+    return async ({ path: rel, contents }) => {
+      // contents: [base, ours, theirs]
+      const ours = contents[1] ?? ''
+      try {
+        if (ours.length > 0) {
+          fs.writeFileSync(path.join(ensureBackupDir(), rel.replace(/[\\/:*?"<>|]/g, '_')), ours, 'utf-8')
+          this.lastMergeDriverBackupCount++
+        }
+      } catch (e) {
+        console.error('[git] mergeDriver backup failed:', e)
+      }
+      return { cleanMerge: true, mergedText: contents[2] ?? '' }
+    }
+  }
+
+  /**
+   * merge + force checkout 后，把"远端/合并没有改动、仅本地改动"的文件从备份恢复回原位。
+   * 否则 force checkout 会吞掉 B 端未提交的本地编辑（例如 B 改到一半的笔记，而 A 推了新内容）。
+   * 规则：合并后工作区内容 === 合并前本地 HEAD 内容 → 说明合并没有改这个文件（远端没动它），
+   * checkout 只是把它刷回了 HEAD，本地编辑应恢复；否则（合并产生新内容）以合并结果为准。
+   */
+  private async restoreLocalOnlyChanges(headBefore: string, backupDir: string, changed: { relPath: string; status: string }[]): Promise<number> {
+    const dir = this.getWorkDir()
+    if (!backupDir) return 0
+    let restored = 0
+    for (const { relPath, status } of changed) {
+      if (status === 'deleted') continue
+      const abs = path.join(dir, relPath)
+      if (!fs.existsSync(abs)) continue // 文件已被合并删除 → 不恢复
+      const oursBuf = await this.showFileBuffer(headBefore, relPath)
+      if (oursBuf == null) continue // 合并前 HEAD 没有该文件（本地新增/未跟踪）→ 未被 checkout 覆盖，无需恢复
+      let workdirBuf: Buffer
+      try {
+        workdirBuf = fs.readFileSync(abs)
+      } catch {
+        continue
+      }
+      if (Buffer.compare(oursBuf, workdirBuf) === 0) {
+        const backupAbs = path.join(backupDir, relPath.replace(/[\\/:*?"<>|]/g, '_'))
+        if (fs.existsSync(backupAbs)) {
+          fs.copyFileSync(backupAbs, abs)
+          restored++
+          console.log(`[git] restored local change for ${relPath}`)
+        }
+      }
+    }
+    return restored
+  }
+
+  /** 残留冲突（delete/modify、add/add 等 mergeDriver 覆盖不到的类型）：取远端的 theirs 版本写回工作区 */
+  private async resolveConflictsAsTheirs(fetchHeadOid: string, filepaths: string[]): Promise<void> {
+    const dir = this.getWorkDir()
+    for (const fp of filepaths) {
+      try {
+        const { blob } = await git.readBlob({ fs, dir, oid: fetchHeadOid, filepath: fp })
+        const abs = path.join(dir, fp)
+        fs.mkdirSync(path.dirname(abs), { recursive: true })
+        fs.writeFileSync(abs, Buffer.from(blob))
+        await git.add({ fs, dir, filepath: fp })
+        console.log(`[git] resolved conflict "${fp}" as theirs (remote)`)
+      } catch (e) {
+        console.error(`[git] resolveConflictsAsTheirs failed for ${fp}:`, e)
+        throw e
       }
     }
   }

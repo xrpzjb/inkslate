@@ -655,6 +655,17 @@ ${watermarkHtml}
     return gitMgr.getWorkDir()
   })
 
+  /** 检查远端状态（只读，用于排查"A 端的改动是否还在远端"） */
+  ipcMain.handle(IPC_CHANNELS.GIT_INSPECT_REMOTE, async (): Promise<{
+    ok: boolean
+    message: string
+    localNoteCount: number
+    localHeadNoteCount: number
+    remoteNoteCount: number
+  }> => {
+    return gitMgr.inspectRemote()
+  })
+
   // ============ AI ============
   const aiTools = [
     {

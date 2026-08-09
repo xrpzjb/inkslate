@@ -116,6 +116,19 @@ export function GitSettingsDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const handleInspectRemote = async () => {
+    setBusy(true)
+    setResult(null)
+    try {
+      const r = await window.inkslateApi.git.inspectRemote()
+      setResult({ ok: r.ok, message: r.message })
+    } catch (e: any) {
+      setResult({ ok: false, message: e?.message ?? '检查失败' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <>
       <div className="dialog-overlay" onClick={onClose} />
@@ -228,10 +241,16 @@ export function GitSettingsDialog({ onClose }: { onClose: () => void }) {
             </>
           )}
           {isInitialized && (
-            <button onClick={handleTestPush} disabled={busy} className="dialog-btn dialog-btn-secondary">
-              <RefreshCw size={14} className={busy ? 'spin' : ''} />
-              {busy ? '...' : '测试推送'}
-            </button>
+            <>
+              <button onClick={handleInspectRemote} disabled={busy} className="dialog-btn dialog-btn-secondary">
+                <GitBranch size={14} />
+                {busy ? '...' : '检查远端'}
+              </button>
+              <button onClick={handleTestPush} disabled={busy} className="dialog-btn dialog-btn-secondary">
+                <RefreshCw size={14} className={busy ? 'spin' : ''} />
+                {busy ? '...' : '测试推送'}
+              </button>
+            </>
           )}
           <div style={{ flex: 1 }} />
           <button onClick={onClose} className="dialog-btn dialog-btn-secondary">关闭</button>

@@ -269,6 +269,7 @@ export const IPC_CHANNELS = {
   GIT_LOG: 'git:log',
   GIT_SHOW_FILE: 'git:show-file',
   GIT_GET_WORKDIR: 'git:get-workdir',
+  GIT_INSPECT_REMOTE: 'git:inspect-remote',
   // 笔记加密
   NOTEBOOK_SET_PASSWORD: 'notebook:set-password',
   NOTEBOOK_REMOVE_PASSWORD: 'notebook:remove-password',

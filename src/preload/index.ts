@@ -92,11 +92,11 @@ const api = {
     /** push（可选 autoCommit 先提交未保存变更） */
     push: (autoCommit?: boolean): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, autoCommit ?? true),
-    /** pull = fetch + merge */
-    pull: (): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean }> =>
+    /** pull = fetch + merge（冲突自动以远端为准，本地副本备份到 notes/.sync-conflicts/） */
+    pull: (): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts: number }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL),
     /**
-     * 一键同步：commit → pull → push
+     * 一键同步：pull → commit → push
      * 适合「我在 A 端改了，现在在 B 端」：先拉再推避免覆盖他人改动
      */
     sync: (): Promise<{
@@ -106,6 +106,7 @@ const api = {
       phases?: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' }
       pulled?: boolean
       pushed?: boolean
+      conflicts?: number
     }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_SYNC),
     /** 是否已配置 + 是否已初始化 */
@@ -116,7 +117,10 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.GIT_LOG, filepath, maxCount),
     /** 读指定 commit 的文件内容（文本） */
     showFile: (oid: string, filepath: string): Promise<string | null> =>
-      ipcRenderer.invoke(IPC_CHANNELS.GIT_SHOW_FILE, oid, filepath)
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_SHOW_FILE, oid, filepath),
+    /** 检查远端状态（只读）：对比本地 DB / 本地 HEAD / 远端 HEAD 的笔记数 */
+    inspectRemote: (): Promise<{ ok: boolean; message: string; localNoteCount: number; localHeadNoteCount: number; remoteNoteCount: number }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_INSPECT_REMOTE)
   },
 
   /** AI 大模型 */
