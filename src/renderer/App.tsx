@@ -296,7 +296,10 @@ export default function App() {
               if (r.updated || r.reconciled) {
                 setSyncStatus({ state: 'success', message: '已更新', lastSyncAt: Date.now() })
                 toast.success('已从远端更新')
-                if (r.conflicts > 0) toast.info(`检测到 ${r.conflicts} 个文件冲突，已以远端为准自动处理，本地副本在 notes/.sync-conflicts/`, 6000)
+                if (r.conflicts > 0) {
+                  const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
+                  toast.info(`检测到 ${r.conflicts} 个文件冲突，两份版本均已保留为笔记（标题含「- 冲突副本」），请手动删除不需要的一份${names}`, 6000)
+                }
                 await useAppStore.getState().loadNotebooks()
                 await useAppStore.getState().loadNotes()
                 await refreshSyncStatus()
@@ -305,7 +308,10 @@ export default function App() {
               } else {
                 setSyncStatus({ state: 'success', message: '已是最新', lastSyncAt: Date.now() })
                 toast.info('已是最新，无需更新')
-                if (r.conflicts > 0) toast.info(`检测到 ${r.conflicts} 个文件冲突，已以远端为准自动处理，本地副本在 notes/.sync-conflicts/`, 6000)
+                if (r.conflicts > 0) {
+                  const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
+                  toast.info(`检测到 ${r.conflicts} 个文件冲突，两份版本均已保留为笔记（标题含「- 冲突副本」），请手动删除不需要的一份${names}`, 6000)
+                }
                 await refreshSyncStatus()
                 const cur = useAppStore.getState().settings
                 if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
@@ -339,7 +345,10 @@ export default function App() {
             } else {
               setSyncStatus({ state: 'success', message: '同步成功', lastSyncAt: Date.now() })
               toast.success('同步成功')
-              if (r.conflicts > 0) toast.info(`检测到 ${r.conflicts} 个文件冲突，已以远端为准自动处理，本地副本在 notes/.sync-conflicts/`, 6000)
+              if (r.conflicts > 0) {
+                const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
+                toast.info(`检测到 ${r.conflicts} 个文件冲突，两份版本均已保留为笔记（标题含「- 冲突副本」），请手动删除不需要的一份${names}`, 6000)
+              }
               // 如果 pull 阶段拉到了新数据，重建树
               if (r.pulled) {
                 await useAppStore.getState().loadNotebooks()

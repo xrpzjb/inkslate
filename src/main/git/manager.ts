@@ -43,6 +43,8 @@ export class GitManager {
   private decryptedToken: string = ''
   /** 最近一次 merge 时 mergeDriver 备份了几个本地文件（冲突提示用） */
   private lastMergeDriverBackupCount: number = 0
+  /** 最近一次 merge 中冲突的笔记内容文件（本地版本，pull 完成后据此生成"冲突副本"笔记） */
+  private lastNoteConflicts: { relPath: string; content: string }[] = []
 
   static getInstance(): GitManager {
     if (!GitManager.instance) {
@@ -850,6 +852,7 @@ export class GitManager {
     pulled?: boolean
     pushed?: boolean
     conflicts?: number
+    conflictTitles?: string[]
   }> {
     const phases: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' } = {
       commit: 'skipped',
@@ -911,7 +914,7 @@ export class GitManager {
     // （此前 bug：check 放在 commitAll 之后，pull 失败也照样 commit，导致 A 端改动永远没同步过来）
     if (!pullResult.ok) {
       phases.pull = 'failed'
-      return { ok: false, message: '拉取失败：' + pullResult.message, phases, phase: 'pull' }
+      return { ok: false, message: '拉取失败：' + pullResult.message, phases, phase: 'pull', conflictTitles: pullResult.conflictTitles ?? [] }
     }
 
     // Step 2: commit 本地变更（如果有）
@@ -948,17 +951,18 @@ export class GitManager {
       phases,
       pulled: phases.pull === 'ok',
       pushed: phases.push === 'ok',
-      conflicts: pullResult.conflicts ?? 0
+      conflicts: pullResult.conflicts ?? 0,
+      conflictTitles: pullResult.conflictTitles ?? []
     }
   }
 
   /** pull = fetch + merge（fastForward 优先，保持线性历史） */
-  async pull(): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts: number }> {
-    if (!this.isConfigured()) return { ok: false, message: 'Git 未配置', updated: false, reconciled: false, conflicts: 0 }
-    if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化', updated: false, reconciled: false, conflicts: 0 }
-    if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写', updated: false, reconciled: false, conflicts: 0 }
+  async pull(): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts: number; conflictTitles: string[] }> {
+    if (!this.isConfigured()) return { ok: false, message: 'Git 未配置', updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
+    if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化', updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
+    if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写', updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
     const sshHint = this.detectSshUrl(this.config!.repoUrl)
-    if (sshHint) return { ok: false, message: sshHint, updated: false, reconciled: false, conflicts: 0 }
+    if (sshHint) return { ok: false, message: sshHint, updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
     const dir = this.getWorkDir()
     const branch = this.config?.branch || 'main'
     try {
@@ -1053,8 +1057,6 @@ export class GitManager {
       } catch {}
       const updated = !!headBefore && !!headAfter && headBefore !== headAfter
 
-      const conflicts = changed.length + (this.lastMergeDriverBackupCount ?? 0)
-
       // ⚠️ 关键护栏：只有在 pull 真正拉取到了新的 commit（updated === true）时，
       // 才根据远端元数据重建/合并本地 SQLite。
       //
@@ -1097,15 +1099,19 @@ export class GitManager {
         }
       }
 
+      // 合并冲突后，把本地被远端覆盖的版本保留为"冲突副本"笔记（可见、可手动删除）
+      const conflictTitles = this.materializeNoteConflicts(changed, backupDir)
+
       return {
         ok: true,
         message: updated ? '拉取成功（有更新）' : reconciled ? '已从远端元数据恢复本地数据' : '已是最新',
         updated,
         reconciled,
-        conflicts
+        conflicts: conflictTitles.length,
+        conflictTitles
       }
     } catch (e: any) {
-      return { ok: false, message: e?.message ?? 'pull 失败', updated: false, reconciled: false, conflicts: 0 }
+      return { ok: false, message: e?.message ?? 'pull 失败', updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
     }
   }
 
@@ -1335,15 +1341,29 @@ export class GitManager {
   }
 
   /**
+   * 判断 git 相对路径是否为"笔记内容文件"（而非 .inkslate 元数据 / files 附件等）。
+   * 只有这类文件冲突时才会生成"冲突副本"笔记。
+   */
+  private isNoteContentRelPath(rel: string): boolean {
+    if (rel === '.gitignore') return false
+    if (rel.startsWith('.inkslate') || rel.startsWith('files/') || rel.startsWith('.sync-conflicts')) return false
+    const ext = path.extname(rel).slice(1).toLowerCase()
+    // file 格式笔记的内容文件只是占位空文件，冲突副本无意义（其源文件在 files/ 下，已排除）
+    return ['md', 'html', 'json', 'code', 'url'].includes(ext)
+  }
+
+  /**
    * git.merge 的 mergeDriver：双方都改过的文件一律以远端（theirs）为准。
    * 本地版本（ours，含已提交但未推送的改动）备份到 notes/.sync-conflicts/merge-<ts>/。
    * 元数据（.inkslate/*.json）与笔记内容文件都适用；本地未提交的改动已由
    * backupWorkdirChanges 在合并前备份，这里只兜底已提交的本地版本。
+   * 对笔记内容文件，额外收集本地版本，pull 完成后会生成"冲突副本"笔记。
    */
   private getMergeDriver(): (args: { path: string; contents: string[] }) => { cleanMerge: boolean; mergedText: string } | Promise<{ cleanMerge: boolean; mergedText: string }> {
     const dir = this.getWorkDir()
     let backupDir: string | null = null
     this.lastMergeDriverBackupCount = 0
+    this.lastNoteConflicts = []
     const ensureBackupDir = () => {
       if (!backupDir) {
         this.ensureSyncConflictsGitignored()
@@ -1360,6 +1380,9 @@ export class GitManager {
         if (ours.length > 0) {
           fs.writeFileSync(path.join(ensureBackupDir(), rel.replace(/[\\/:*?"<>|]/g, '_')), ours, 'utf-8')
           this.lastMergeDriverBackupCount++
+          if (this.isNoteContentRelPath(rel)) {
+            this.lastNoteConflicts.push({ relPath: rel, content: ours })
+          }
         }
       } catch (e) {
         console.error('[git] mergeDriver backup failed:', e)
@@ -1418,6 +1441,87 @@ export class GitManager {
         throw e
       }
     }
+  }
+
+  /**
+   * merge 冲突完成后，把本地版本生成"冲突副本"笔记（可见、可手动删除）：
+   * - 远端版本留在原路径（merge 已以 theirs 为准）
+   * - 本地版本写到同目录新文件，命名 "<原文件名>-冲突.<ext>"（getUniqueFileName 自动去重）
+   * - DB 插入一条新笔记（标题 "<原标题> - 冲突副本"，同 notebook），随下次同步推上远端
+   * 返回生成的冲突副本标题列表（供 UI 提示用户手动删除）。
+   *
+   * 检测两类冲突（后者是主要场景）：
+   * 1. lastNoteConflicts：双方都已提交的冲突（mergeDriver 只在这种场景触发）
+   * 2. backupWorkdirChanges 备份的未提交本地改动，合并后被远端版本覆盖（文件最终内容 !== 本地备份内容）。
+   *    —— 即"两端同时改了同一笔记，但本地还没提交"的常见情况，mergeDriver 不会触发。
+   */
+  private materializeNoteConflicts(changed: { relPath: string; status: string }[], backupDir: string): string[] {
+    const dir = this.getWorkDir()
+    const titles: string[] = []
+    // relPath -> 本地版本内容
+    const conflictMap = new Map<string, string>()
+
+    // 1. mergeDriver 收集的已提交冲突
+    for (const { relPath, content } of this.lastNoteConflicts) conflictMap.set(relPath, content)
+    this.lastNoteConflicts = []
+
+    // 2. 未提交的本地改动被远端覆盖（本地备份内容 !== 合并后内容）
+    if (backupDir) {
+      for (const { relPath, status } of changed) {
+        if (status === 'deleted') continue
+        if (!this.isNoteContentRelPath(relPath)) continue
+        const abs = path.join(dir, relPath)
+        const backupAbs = path.join(backupDir, relPath.replace(/[\\/:*?"<>|]/g, '_'))
+        if (!fs.existsSync(abs) || !fs.existsSync(backupAbs)) continue
+        let finalContent: string, localContent: string
+        try {
+          finalContent = fs.readFileSync(abs, 'utf-8')
+          localContent = fs.readFileSync(backupAbs, 'utf-8')
+        } catch {
+          continue
+        }
+        if (finalContent !== localContent) conflictMap.set(relPath, localContent)
+      }
+    }
+
+    if (conflictMap.size === 0) return titles
+
+    // 原笔记路径 → 笔记 映射（此时 reconcile 已完成，远端版本已按原路径落库）
+    const noteByPath = new Map<string, ReturnType<typeof dbApi.listActiveNotes>[number]>()
+    for (const n of dbApi.listActiveNotes()) noteByPath.set(n.path, n)
+
+    for (const [relPath, content] of conflictMap) {
+      try {
+        const absPath = path.join(dir, relPath)
+        const nbDir = path.dirname(absPath)
+        const ext = path.extname(absPath).slice(1)
+        const stem = path.basename(absPath, path.extname(absPath))
+        const conflictName = getUniqueFileName(`${stem}-冲突`, ext, nbDir)
+        const conflictPath = path.join(nbDir, conflictName)
+        fs.mkdirSync(nbDir, { recursive: true })
+        fs.writeFileSync(conflictPath, content, 'utf-8')
+
+        const base = noteByPath.get(absPath)
+        const fallbackNotebook = dbApi.listActiveNotebooks()[0]?.id ?? ''
+        const title = base ? `${base.title} - 冲突副本` : `${stem} - 冲突副本`
+        if (!base && !fallbackNotebook) {
+          console.warn(`[git] materializeNoteConflicts: no notebook to attach conflict copy of ${relPath}, skipping`)
+          continue
+        }
+        dbApi.addConflictNote({
+          title,
+          notebookId: base?.notebookId ?? fallbackNotebook,
+          parentId: base?.parentId ?? null,
+          path: conflictPath,
+          format: base?.format ?? 'markdown'
+        })
+        titles.push(title)
+        console.log(`[git] conflict note created: ${relPath} -> ${conflictName} (${title})`)
+      } catch (e) {
+        console.error(`[git] materializeNoteConflicts failed for ${relPath}:`, e)
+      }
+    }
+    return titles
   }
 
   private markInitialized() {

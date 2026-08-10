@@ -1398,6 +1398,20 @@ const dbMethods = {
     tx()
   },
 
+  /**
+   * 插入一条"冲突副本"笔记（pull 合并冲突时，把本地被远端覆盖的版本保留为独立笔记）。
+   * 注意：不能用 createNote —— 它会创建并写入初始内容文件；这里文件已由主进程写好，只负责落库一行记录。
+   */
+  addConflictNote(opts: { title: string; notebookId: string; parentId: string | null; path: string; format: Note['format'] }): Note {
+    const id = generateId()
+    const now = Date.now()
+    getDatabase().prepare(`
+      INSERT INTO notes (id, title, notebook_id, parent_id, path, format, created_at, updated_at, is_deleted, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+    `).run(id, opts.title, opts.notebookId, opts.parentId, opts.path, opts.format, now, now, now)
+    return { id, title: opts.title, content: '', format: opts.format, notebookId: opts.notebookId, parentId: opts.parentId, path: opts.path, createdAt: now, updatedAt: now, isDeleted: false }
+  },
+
   /** 检查笔记本是否受密码保护 */
   isNotebookProtected(notebookId: string): boolean {
     const row = getDatabase().prepare('SELECT password_protected FROM notebooks WHERE id = ?').get(notebookId) as any

@@ -611,7 +611,7 @@ ${watermarkHtml}
   })
 
   /** pull = fetch + merge */
-  ipcMain.handle(IPC_CHANNELS.GIT_PULL, async (): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean }> => {
+  ipcMain.handle(IPC_CHANNELS.GIT_PULL, async (): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts?: number; conflictTitles?: string[] }> => {
     const r = await gitMgr.pull()
     if (r.ok) {
       const at = Date.now()
@@ -628,6 +628,8 @@ ${watermarkHtml}
     phases?: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' }
     pulled?: boolean
     pushed?: boolean
+    conflicts?: number
+    conflictTitles?: string[]
   }> => {
     const r = await gitMgr.sync()
     // 整体成功才记 lastSyncAt（不论动了数据没）
