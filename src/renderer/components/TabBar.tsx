@@ -54,14 +54,13 @@ const FORMAT_COLORS: Record<string, string> = {
   file:     '#16a34a',
 }
 
-const TAB_WIDTH = 160 // 大概每个 tab 的宽度
-
 export function TabBar() {
   const openTabs = useAppStore(s => s.openTabs)
   const activeTabId = useAppStore(s => s.activeTabId)
   const notes = useAppStore(s => s.notes)
   const activateTab = useAppStore(s => s.activateTab)
   const closeTab = useAppStore(s => s.closeTab)
+  const closeTabsExcept = useAppStore(s => s.closeTabsExcept)
   const reorderTabs = useAppStore(s => s.reorderTabs)
 
   const tabs = openTabs
@@ -71,27 +70,50 @@ export function TabBar() {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [ctxMenu, setCtxMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const moreRef = useRef<HTMLDivElement>(null)
+  const tabElsRef = useRef<(HTMLDivElement | null)[]>([])
 
-  // 计算能显示几个 tab
-  const [visibleCount, setVisibleCount] = useState(tabs.length)
+  // 当前完全不在可视区内的标签（溢出到左右两侧之外的）
+  const [hiddenIds, setHiddenIds] = useState<string[]>([])
+  const tabsSig = tabs.map(t => `${t.id}:${t.title}`).join('|')
+
+  // 实测每个标签的可见性（ResizeObserver + scroll），准确决定「更多」是否显示
   useEffect(() => {
     const el = barRef.current
     if (!el) return
+    let raf = 0
     const calc = () => {
-      const w = el.clientWidth
-      const max = Math.max(1, Math.floor((w - 44) / TAB_WIDTH))
-      setVisibleCount(max)
+      raf = 0
+      const rect = el.getBoundingClientRect()
+      const left = rect.left
+      const right = rect.right
+      const hidden: string[] = []
+      for (let i = 0; i < tabs.length; i++) {
+        const tabEl = tabElsRef.current[i]
+        if (!tabEl) continue
+        const r = tabEl.getBoundingClientRect()
+        if (r.right <= left + 1 || r.left >= right - 1) hidden.push(tabs[i].id)
+      }
+      setHiddenIds(prev => prev.join(',') === hidden.join(',') ? prev : hidden)
     }
-    calc()
-    const ro = new ResizeObserver(calc)
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(calc)
+    }
+    schedule()
+    const ro = new ResizeObserver(schedule)
     ro.observe(el)
-    return () => ro.disconnect()
-  }, [tabs.length])
+    tabElsRef.current.forEach(t => { if (t) ro.observe(t) })
+    el.addEventListener('scroll', schedule, { passive: true })
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      ro.disconnect()
+      el.removeEventListener('scroll', schedule)
+    }
+  }, [tabsSig])
 
-  const visibleTabs = tabs.slice(0, visibleCount)
-  const overflowTabs = tabs.slice(visibleCount)
+  const hiddenTabs = tabs.filter(t => hiddenIds.includes(t.id))
 
   // 点外面关闭 more 列表
   useEffect(() => {
@@ -104,11 +126,52 @@ export function TabBar() {
     return () => document.removeEventListener('mousedown', onDown)
   }, [moreOpen])
 
-  const handleClick = (id: string) => {
-    if (id !== activeTabId) {
-      activateTab(id)
-      setMoreOpen(false)
+  // 右键菜单：点击外部 / Esc 关闭
+  useEffect(() => {
+    if (!ctxMenu) return
+    const onDown = (e: MouseEvent) => {
+      const menuEl = document.querySelector('.tab-ctx-menu')
+      if (menuEl && menuEl.contains(e.target as Node)) return
+      setCtxMenu(null)
     }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [ctxMenu])
+
+  const handleClick = (id: string) => {
+    if (id !== activeTabId) activateTab(id)
+  }
+
+  /** 点击「更多」里的标签：激活 + 关闭菜单 + 滚动标签条把它滚进可视区 */
+  const handleMoreTabClick = (id: string) => {
+    if (id !== activeTabId) activateTab(id)
+    setMoreOpen(false)
+    const idx = tabs.findIndex(t => t.id === id)
+    const el = idx >= 0 ? tabElsRef.current[idx] : null
+    const bar = barRef.current
+    if (el && bar) {
+      const barRect = bar.getBoundingClientRect()
+      const elRect = el.getBoundingClientRect()
+      const left = bar.scrollLeft + (elRect.left - barRect.left)
+      const target = left - (bar.clientWidth - elRect.width)
+      bar.scrollLeft = Math.max(0, target)
+    }
+  }
+
+  const handleCtxMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMoreOpen(false)
+    setCtxMenu({
+      id,
+      x: Math.min(e.clientX, window.innerWidth - 190),
+      y: Math.min(e.clientY, window.innerHeight - 150)
+    })
   }
 
   const handleMiddleClick = (e: React.MouseEvent, id: string) => {
@@ -152,13 +215,14 @@ export function TabBar() {
 
   if (tabs.length === 0) return null
 
-  const renderTab = (tab: typeof tabs[0]) => {
+  const renderTab = (tab: typeof tabs[0], i: number, isOverflow = false) => {
     const isActive = tab.id === activeTabId
     const isDropTarget = dropTargetId === tab.id && dragId && dragId !== tab.id
     return (
       <div
         key={tab.id}
         data-tab-id={tab.id}
+        ref={isOverflow ? undefined : (el) => { tabElsRef.current[i] = el }}
         className={
           'tab-item'
           + (isActive ? ' active' : '')
@@ -167,6 +231,7 @@ export function TabBar() {
         }
         onClick={() => handleClick(tab.id)}
         onMouseDown={(e) => handleMiddleClick(e, tab.id)}
+        onContextMenu={(e) => handleCtxMenu(e, tab.id)}
         draggable
         onDragStart={(e) => handleDragStart(e, tab.id)}
         onDragOver={(e) => handleDragOver(e, tab.id)}
@@ -195,21 +260,40 @@ export function TabBar() {
   }
 
   return (
-    <div className="tab-bar" ref={barRef}>
-      {visibleTabs.map(renderTab)}
-      {overflowTabs.length > 0 && (
-        <div ref={moreRef} style={{ position: 'relative', flexShrink: 0 }}>
+    <div className="tab-bar">
+      <div className="tab-scroll" ref={barRef}>
+        {tabs.map((tab, i) => renderTab(tab, i))}
+      </div>
+      {hiddenTabs.length > 0 && (
+        <div ref={moreRef} className="tab-more-wrap">
           <div
             className={'tab-item tab-more' + (moreOpen ? ' active' : '')}
-            onClick={() => setMoreOpen(!moreOpen)}
+            onClick={(e) => {
+              e.stopPropagation()
+              setMoreOpen(!moreOpen)
+            }}
+            title="更多标签"
           >
             <ChevronDown size={14} />
           </div>
           {moreOpen && (
             <div className="tab-more-popover">
-              {overflowTabs.map(renderTab)}
+              {hiddenTabs.map((tab, i) => renderTab(tab, tabs.indexOf(tab), true))}
             </div>
           )}
+        </div>
+      )}
+      {ctxMenu && (
+        <div className="tab-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+          <div className="tab-ctx-item" onClick={() => { closeTabsExcept(ctxMenu.id, 'left'); setCtxMenu(null) }}>
+            关闭左侧
+          </div>
+          <div className="tab-ctx-item" onClick={() => { closeTabsExcept(ctxMenu.id, 'right'); setCtxMenu(null) }}>
+            关闭右侧
+          </div>
+          <div className="tab-ctx-item" onClick={() => { closeTabsExcept(ctxMenu.id, 'other'); setCtxMenu(null) }}>
+            关闭其他标签
+          </div>
         </div>
       )}
     </div>

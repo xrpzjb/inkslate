@@ -27,6 +27,8 @@ interface AppState {
   activateTab: (id: string) => Promise<void>
   /** 多标签页：关闭标签；关闭当前激活的则切到相邻标签 */
   closeTab: (id: string) => Promise<void>
+  /** 多标签页：批量关闭。mode='left' 关闭 id 左侧所有，'right' 关闭右侧所有，'other' 关闭除 id 外所有；当前激活标签被关闭时激活 id */
+  closeTabsExcept: (id: string, mode: 'left' | 'right' | 'other') => Promise<void>
   /** 多标签页：拖动重排序 */
   reorderTabs: (orderedIds: string[]) => void
   /** 用户手动展开的笔记本 id 集合（启动时恢复） */
@@ -75,6 +77,7 @@ interface AppState {
   loadFlashThoughts: () => Promise<void>
   createFlashThought: (content: string) => Promise<void>
   updateFlashThought: (id: string, content: string) => Promise<void>
+  setFlashThoughtDone: (id: string, done: boolean) => Promise<void>
   deleteFlashThought: (id: string) => Promise<void>
 
   // 甯冨眬
@@ -412,6 +415,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       }).catch(() => {})
     }
   },
+  closeTabsExcept: async (id, mode) => {
+    const { openTabs, activeTabId, currentNote } = get()
+    const idx = openTabs.indexOf(id)
+    if (idx < 0) return
+    let newTabs: string[]
+    if (mode === 'left') newTabs = openTabs.slice(idx)
+    else if (mode === 'right') newTabs = openTabs.slice(0, idx + 1)
+    else newTabs = [id]
+
+    let newActive = activeTabId
+    let newCurrent = currentNote
+    let newSelected = get().selectedNoteId
+    if (!newTabs.includes(activeTabId)) {
+      // 当前激活标签被关掉了 → 激活锚点 id
+      newActive = id
+      newSelected = id
+      const note = await window.inkslateApi.notes.get(id)
+      newCurrent = note
+    }
+    // 清理已关闭标签的布局
+    const closed = openTabs.filter(t => !newTabs.includes(t))
+    const layouts = { ...get().tabLayouts }
+    closed.forEach(t => delete layouts[t])
+
+    set({
+      openTabs: newTabs,
+      activeTabId: newActive,
+      selectedNoteId: newSelected,
+      currentNote: newCurrent,
+      tabLayouts: layouts
+    })
+    const layout = get().settings?.layout
+    if (layout) {
+      window.inkslateApi.settings.update({
+        layout: { ...layout, openTabs: newTabs, activeTabId: newActive }
+      }).catch(() => {})
+    }
+  },
 
   createNotebook: async (name, parentId, icon) => {
     const nb = await window.inkslateApi.notebooks.create(name, parentId, icon)
@@ -636,6 +677,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   updateFlashThought: async (id, content) => {
     await window.inkslateApi.flashThoughts.update(id, content)
+    await get().loadFlashThoughts()
+    await get().refreshSyncStatus()
+  },
+  setFlashThoughtDone: async (id, done) => {
+    await window.inkslateApi.flashThoughts.setDone(id, done)
     await get().loadFlashThoughts()
     await get().refreshSyncStatus()
   },

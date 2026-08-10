@@ -1,13 +1,14 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../store/app'
 import { FlashThought } from '@shared/types'
-import { Plus, X, Pencil } from 'lucide-react'
+import { Plus, X, Pencil, Check, RotateCcw } from 'lucide-react'
 import { confirm } from './ConfirmDialog'
 
 export function FlashThoughtView() {
   const flashThoughts = useAppStore(s => s.flashThoughts)
   const loadFlashThoughts = useAppStore(s => s.loadFlashThoughts)
   const deleteFlashThought = useAppStore(s => s.deleteFlashThought)
+  const setFlashThoughtDone = useAppStore(s => s.setFlashThoughtDone)
 
   useEffect(() => {
     loadFlashThoughts()
@@ -17,6 +18,10 @@ export function FlashThoughtView() {
     const ok = await confirm({ message: '确定删除这条闪念？删除后无法恢复。', title: '删除闪念', confirmText: '确定', cancelText: '取消', danger: true })
     if (!ok) return
     await deleteFlashThought(id)
+  }
+
+  const handleToggleDone = async (id: string, done: boolean) => {
+    await setFlashThoughtDone(id, done)
   }
 
   const handleEdit = (ft: FlashThought) => {
@@ -108,18 +113,22 @@ export function FlashThoughtView() {
             columnWidth: 280,
             columnGap: 16
           }}>
-            {flashThoughts.map(ft => (
+            {flashThoughts.map(ft => {
+              const isDone = ft.done === true
+              return (
               <div
                 key={ft.id}
                 className="flash-thought-card"
                 style={{
                   breakInside: 'avoid',
                   marginBottom: 16,
-                  background: 'var(--bg-secondary)',
+                  background: isDone ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
                   borderRadius: 10,
                   border: '1px solid var(--border-color)',
                   padding: '14px 16px',
-                  position: 'relative'
+                  position: 'relative',
+                  opacity: isDone ? 0.65 : 1,
+                  transition: 'opacity 0.15s, background-color 0.15s'
                 }}
               >
                 <button
@@ -148,13 +157,40 @@ export function FlashThoughtView() {
                 >
                   <X size={14} />
                 </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleToggleDone(ft.id, !isDone)
+                  }}
+                  className="flash-thought-done-btn"
+                  style={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 30,
+                    border: 'none',
+                    background: 'transparent',
+                    color: isDone ? 'var(--accent-color)' : 'var(--text-tertiary)',
+                    cursor: 'pointer',
+                    padding: 2,
+                    borderRadius: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: isDone ? 0.9 : 0,
+                    transition: 'opacity 0.15s, color 0.15s'
+                  }}
+                  title={isDone ? '恢复未完成' : '标记完成'}
+                >
+                  {isDone ? <RotateCcw size={14} /> : <Check size={14} />}
+                </button>
                 <div style={{
                   fontSize: 14,
                   lineHeight: 1.65,
-                  color: 'var(--text-primary)',
+                  color: isDone ? 'var(--text-tertiary)' : 'var(--text-primary)',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
-                  paddingRight: 18
+                  paddingRight: 18,
+                  textDecoration: isDone ? 'line-through' : 'none'
                 }}>
                   {ft.content}
                 </div>
@@ -164,8 +200,8 @@ export function FlashThoughtView() {
                   alignItems: 'center',
                   justifyContent: 'space-between'
                 }}>
-                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                    {formatTime(ft.createdAt)}
+                  <span style={{ fontSize: 11, color: isDone ? 'var(--text-tertiary)' : 'var(--text-tertiary)' }}>
+                    {isDone && ft.doneAt ? `已完成 ${formatTime(ft.doneAt)} · ` : ''}{formatTime(ft.createdAt)}
                   </span>
                   <button
                     onClick={(e) => {
@@ -192,14 +228,16 @@ export function FlashThoughtView() {
                   </button>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
 
       <style>{`
         .flash-thought-card:hover .flash-thought-delete-btn,
-        .flash-thought-card:hover .flash-thought-edit-btn {
+        .flash-thought-card:hover .flash-thought-edit-btn,
+        .flash-thought-card:hover .flash-thought-done-btn {
           opacity: 1 !important;
         }
         .flash-thought-delete-btn:hover {
@@ -207,6 +245,10 @@ export function FlashThoughtView() {
           background: var(--bg-hover);
         }
         .flash-thought-edit-btn:hover {
+          color: var(--accent-color) !important;
+          background: var(--bg-hover);
+        }
+        .flash-thought-done-btn:hover {
           color: var(--accent-color) !important;
           background: var(--bg-hover);
         }

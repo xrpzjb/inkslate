@@ -53,6 +53,7 @@ const api = {
     list: (): Promise<FlashThought[]> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_LIST),
     create: (content: string): Promise<FlashThought> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_CREATE, content),
     update: (id: string, content: string): Promise<FlashThought> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_UPDATE, id, content),
+    setDone: (id: string, done: boolean): Promise<FlashThought> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_SET_DONE, id, done),
     delete: (id: string): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.FLASH_THOUGHTS_DELETE, id)
   },
 

@@ -408,7 +408,9 @@ export class GitManager {
           id: ft.id,
           content: ft.content,
           created_at: ft.createdAt,
-          updated_at: ft.updatedAt
+          updated_at: ft.updatedAt,
+          done: ft.done ? 1 : 0,
+          done_at: ft.doneAt ?? null
         }))
       }, null, 2),
       'utf-8'
@@ -612,10 +614,16 @@ export class GitManager {
         const remoteFts = Array.isArray(ftData.flash_thoughts) ? ftData.flash_thoughts : []
         const localIds = new Set(dbApi.listFlashThoughts().map(f => f.id))
         for (const ft of remoteFts) {
-          if (!localIds.has(ft.id)) {
-            dbApi.createFlashThought(ft.content)
-            flashThoughtsApplied++
-          }
+          if (!ft || typeof ft.id !== 'string') continue
+          dbApi.importFlashThought({
+            id: ft.id,
+            content: ft.content ?? '',
+            createdAt: ft.created_at,
+            updatedAt: ft.updated_at,
+            done: ft.done === 1 || ft.done === true,
+            doneAt: ft.done_at ?? undefined
+          })
+          if (!localIds.has(ft.id)) flashThoughtsApplied++
         }
       } catch (e) {
         console.error('[git] reconcile: failed to parse flash_thoughts.json', e)
@@ -764,7 +772,15 @@ export class GitManager {
           dbApi.deleteFlashThought(ft.id)
         }
         for (const ft of remoteFts) {
-          dbApi.createFlashThought(ft.content)
+          if (!ft || typeof ft.id !== 'string') continue
+          dbApi.importFlashThought({
+            id: ft.id,
+            content: ft.content ?? '',
+            createdAt: ft.created_at,
+            updatedAt: ft.updated_at,
+            done: ft.done === 1 || ft.done === true,
+            doneAt: ft.done_at ?? undefined
+          })
         }
       } catch (e) {
         console.error('[git] replaceFromMetadata: failed to parse flash_thoughts.json', e)

@@ -19,7 +19,7 @@ const clearDraft = (noteId: string) => {
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { appThemes } from '../themes'
-import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2, Lock, Unlock, AlertCircle } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2, Lock, Unlock, AlertCircle, MoreHorizontal, WrapText, Check } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
 import { toast } from './Toast'
@@ -37,8 +37,12 @@ export function Editor() {
   const updateSettings = useAppStore(s => s.updateSettings)
   const shadowDark = settings?.editorDark === true ||
     (settings?.theme != null && appThemes[settings.theme as keyof typeof appThemes]?.colorScheme === 'dark')
+  // 应用主题是否为暗色（auto 视为跟随系统，不按暗色处理）
+  const appIsDark = settings?.theme != null && appThemes[settings.theme as keyof typeof appThemes]?.colorScheme === 'dark'
 
   const [content, setContent] = useState(() => currentNote?.content ?? '')
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const moreMenuRef = useRef<HTMLDivElement | null>(null)
   const previewVisible = useAppStore(s => s.previewVisible)
   const togglePreview = useAppStore(s => s.togglePreview)
   const setSaveStatus = useAppStore(s => s.setSaveStatus)
@@ -122,6 +126,25 @@ export function Editor() {
       lastDraftRef.current = { id: editingNoteIdRef.current, title, content }
     }
   }, [title, content])
+
+  // 更多设置菜单：点击外部或按 Esc 关闭
+  useEffect(() => {
+    if (!moreMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [moreMenuOpen])
 
   // 外部更新 title（如 Sidebar 重命名）时，刷新本地 title
   // 仅在 store 里的 title 跟本地不一致时同步，避免覆盖用户正在输入
@@ -486,7 +509,7 @@ export function Editor() {
         marginLeft: -1,
         marginRight: -1,
         position: 'relative',
-        zIndex: 1,
+        zIndex: 10,
         boxShadow: currentNote?.format === 'code'
           ? (shadowDark ? '0 2px 3px -1px rgba(0,0,0,0.35)' : '0 2px 3px -1px rgba(0,0,0,0.08)')
           : undefined
@@ -516,26 +539,6 @@ export function Editor() {
             <PanelRightOpen size={16} />
           </button>
         )}
-        {/* Git 历史快照：仅对非文件/非网址笔记显示 */}
-        {currentNote && !['url', 'file'].includes(currentNote.format) && (
-          <button
-            className="panel-action-btn"
-            onClick={() => window.dispatchEvent(new CustomEvent('inkslate:open-history'))}
-            title="Git 历史快照"
-          >
-            <History size={16} />
-          </button>
-        )}
-        {/* AI 写作 — 侧栏面板 */}
-        {currentNote && !['url', 'file'].includes(currentNote.format) && (
-          <button
-            className="panel-action-btn"
-            onClick={() => window.dispatchEvent(new CustomEvent('inkslate:open-ai-panel'))}
-            title="AI 写作"
-          >
-            <Bot size={16} />
-          </button>
-        )}
         {/* 美化（格式化代码）：仅 code 类型且 language 在 CodeEditor 支持列表内才显示 */}
         {currentNote && currentNote.format === 'code' && isFormatableLanguage(currentNote.language) && (
           <button
@@ -556,26 +559,75 @@ export function Editor() {
             <Wand2 size={16} />
           </button>
         )}
-        {/* 保存：仅对非文件/非网址笔记显示（与 History 同步） */}
-        {currentNote && !['url', 'file'].includes(currentNote.format) && (
+        {/* 更多设置：自动换行 / 编辑器暗色模式 / Git历史 / AI写作 / 保存 */}
+        <div ref={moreMenuRef} style={{ position: 'relative', display: 'inline-flex' }}>
           <button
             className="panel-action-btn"
-            onClick={handleSave}
-            title="保存 (Ctrl+S)"
+            onClick={() => setMoreMenuOpen(o => !o)}
+            title="编辑器设置"
           >
-            <Save size={16} />
+            <MoreHorizontal size={16} />
           </button>
-        )}
-        {/* 编辑器暗色模式切换：仅在 light 默认主题下显示 */}
-        {settings?.theme === 'light' && (
-          <button
-            className="panel-action-btn"
-            onClick={() => updateSettings({ editorDark: !(settings?.editorDark === true) })}
-            title={settings?.editorDark === true ? '切换到默认编辑器' : '切换到暗黑编辑器'}
-          >
-            {settings?.editorDark === true ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
-      )}
+          {moreMenuOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 4px)',
+                right: 0,
+                minWidth: 180,
+                padding: 4,
+                borderRadius: 8,
+                background: settings?.editorDark ? '#252526' : 'var(--bg-primary)',
+                color: settings?.editorDark ? '#e8e8e8' : 'var(--text-primary)',
+                border: '1px solid var(--border-color)',
+                boxShadow: '0 6px 20px rgba(0,0,0,0.15)',
+                zIndex: 1000,
+              }}
+            >
+              <MenuButton
+                dark={settings?.editorDark === true}
+                active={settings?.wordWrap === true}
+                label="自动换行"
+                icon={<WrapText size={14} style={{ flexShrink: 0 }} />}
+                onClick={() => updateSettings({ wordWrap: !(settings?.wordWrap === true) })}
+              />
+              {!appIsDark && (
+                <MenuButton
+                  dark={settings?.editorDark === true}
+                  active={settings?.editorDark === true}
+                  label={settings?.editorDark === true ? '默认编辑器' : '暗黑编辑器'}
+                  icon={settings?.editorDark === true
+                    ? <Sun size={14} style={{ flexShrink: 0 }} />
+                    : <Moon size={14} style={{ flexShrink: 0 }} />}
+                  onClick={() => updateSettings({ editorDark: !(settings?.editorDark === true) })}
+                />
+              )}
+              {currentNote && !['url', 'file'].includes(currentNote.format) && (
+                <>
+                  <MenuDivider />
+                  <MenuButton
+                    dark={settings?.editorDark === true}
+                    label="Git 历史快照"
+                    icon={<History size={14} style={{ flexShrink: 0 }} />}
+                    onClick={() => { setMoreMenuOpen(false); window.dispatchEvent(new CustomEvent('inkslate:open-history')) }}
+                  />
+                  <MenuButton
+                    dark={settings?.editorDark === true}
+                    label="AI 写作"
+                    icon={<Bot size={14} style={{ flexShrink: 0 }} />}
+                    onClick={() => { setMoreMenuOpen(false); window.dispatchEvent(new CustomEvent('inkslate:open-ai-panel')) }}
+                  />
+                  <MenuButton
+                    dark={settings?.editorDark === true}
+                    label="保存"
+                    icon={<Save size={14} style={{ flexShrink: 0 }} />}
+                    onClick={() => { setMoreMenuOpen(false); handleSave() }}
+                  />
+                </>
+              )}
+            </div>
+          )}
+        </div>
     </div>
 
             {currentNote.format === 'markdown' && (
@@ -1348,6 +1400,45 @@ function ToolbarBtn({ icon, title, onClick }: { icon: React.ReactNode; title: st
 
 function Divider() {
   return <div style={{ width: 1, height: 18, background: 'var(--border-color)', margin: '0 4px', alignSelf: 'center' }} />
+}
+
+/** 编辑器更多菜单里的条目：图标 + 文字，可带勾选状态 */
+function MenuButton({ icon, label, active, dark, onClick }: {
+  icon: React.ReactNode
+  label: string
+  active?: boolean
+  dark?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        width: '100%',
+        padding: '6px 8px',
+        border: 'none',
+        borderRadius: 6,
+        background: 'transparent',
+        color: 'inherit',
+        fontSize: 13,
+        textAlign: 'left',
+        cursor: 'pointer',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = dark ? '#3a3a3a' : 'var(--bg-hover)' }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+      onClick={onClick}
+    >
+      {icon}
+      <span style={{ flex: 1 }}>{label}</span>
+      {active && <Check size={14} style={{ color: 'var(--accent-color)' }} />}
+    </button>
+  )
+}
+
+function MenuDivider() {
+  return <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
 }
 
 // ==================== 富文本弹窗通用组件 ====================

@@ -461,10 +461,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   const themeCompartment = useRef(new Compartment())
   const formatCompartment = useRef(new Compartment())
   const fontSizeCompartment = useRef(new Compartment())
+  const wrapCompartment = useRef(new Compartment())
   // settings.theme 可以是 'auto'，但 editorThemes 只有具体 12 种配色，'auto' 落到 'light'
   const settingsTheme = useAppStore(s => s.settings?.theme)
   // 编辑器独立暗色模式：仅对浅色主题生效；深色主题本身已是暗色，无需覆盖
   const editorDark = useAppStore(s => s.settings?.editorDark === true)
+  // 自动换行
+  const wordWrap = useAppStore(s => s.settings?.wordWrap === true)
   const theme: AppThemeId = ((settingsTheme === 'auto' || !settingsTheme || !(settingsTheme in editorThemes)) ? 'light' : settingsTheme) as AppThemeId
   const themeIsDark = selectionColors[theme] != null && ['dark', 'cyberpunk', 'dracula', 'forest'].includes(theme)
   const effectiveTheme: AppThemeId = (editorDark && !themeIsDark) ? 'dark' : theme
@@ -643,6 +646,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       formatCompartment.current.of(languageExtension),
       themeCompartment.current.of(editorThemes[effectiveTheme]()),
       fontSizeCompartment.current.of(fontSizeExtension),
+      wrapCompartment.current.of(wordWrap ? EditorView.lineWrapping : []),
 
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -713,6 +717,14 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       effects: fontSizeCompartment.current.reconfigure(fontSizeExtension)
     })
   }, [fontSize])
+
+  // 自动换行开关：切换时热更新，不重建编辑器
+  useEffect(() => {
+    if (!viewRef.current) return
+    viewRef.current.dispatch({
+      effects: wrapCompartment.current.reconfigure(wordWrap ? EditorView.lineWrapping : [])
+    })
+  }, [wordWrap])
 
   // 外部 value 变化时同步到 CodeMirror（如 AI 替换内容）
   useEffect(() => {

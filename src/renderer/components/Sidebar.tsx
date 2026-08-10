@@ -622,6 +622,14 @@ export function Sidebar() {
       if (inner) {
         const clone = inner.cloneNode(true) as HTMLElement
         clone.querySelectorAll('.toc').forEach(el => el.remove())
+        // 去掉搜索高亮标记，避免导出 PDF 里残留 <mark>
+        clone.querySelectorAll('mark.preview-search-mark').forEach(m => {
+          const parent = m.parentNode
+          if (parent) {
+            parent.replaceChild(document.createTextNode(m.textContent ?? ''), m)
+            parent.normalize()
+          }
+        })
         // 代码块强制换行：PDF 里不能有横向滚动条。
         // 用 setProperty + 'important' 写内联样式（最高优先级），
         // 保证导出的内容一定折行显示，不受任何外部 CSS/缓存影响。

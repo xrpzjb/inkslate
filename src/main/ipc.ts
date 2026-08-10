@@ -224,6 +224,12 @@ export function setupIpcHandlers(): void {
     return result
   })
 
+  ipcMain.handle(IPC_CHANNELS.FLASH_THOUGHTS_SET_DONE, async (_, id: string, done: boolean) => {
+    const result = dbApi.setFlashThoughtDone(id, done)
+    gitMgr.exportMetadata()
+    return result
+  })
+
   ipcMain.handle(IPC_CHANNELS.FLASH_THOUGHTS_DELETE, async (_, id: string) => {
     dbApi.deleteFlashThought(id)
     gitMgr.exportMetadata()

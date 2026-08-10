@@ -70,6 +70,8 @@ export interface AppSettings {
   theme: 'light' | 'dark' | 'auto' | 'solarized' | 'cyberpunk' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral'
   /** 编辑器独立暗色模式（仅在 light 默认主题下生效）：true 强制编辑器用 dark 配色 */
   editorDark?: boolean
+  /** 编辑器自动换行（true 软换行，false 默认横向滚动） */
+  wordWrap?: boolean
   /** 全局 UI 字体选项 id（对应 SettingsDialog FONT_OPTIONS） */
   fontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   fontSize: number
@@ -164,6 +166,10 @@ export interface FlashThought {
   content: string
   createdAt: number
   updatedAt: number
+  /** 是否已完成（打勾后置灰并沉底） */
+  done: boolean
+  /** 完成时间戳，未完成时为 undefined */
+  doneAt?: number
 }
 
 export interface AssetUploadResult {
@@ -249,6 +255,7 @@ export const IPC_CHANNELS = {
   FLASH_THOUGHTS_CREATE: 'flash-thoughts:create',
   FLASH_THOUGHTS_UPDATE: 'flash-thoughts:update',
   FLASH_THOUGHTS_DELETE: 'flash-thoughts:delete',
+  FLASH_THOUGHTS_SET_DONE: 'flash-thoughts:set-done',
 
   // 文件笔记
   FILE_NOTE_CREATE: 'file-note:create',

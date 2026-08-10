@@ -7,6 +7,7 @@ import { attachHeadingIds } from '../utils/headings'
 import { md } from '../utils/markdown'
 import hljs from 'highlight.js'
 import { TableOfContents } from './TableOfContents'
+import { PreviewSearchBar } from './PreviewSearch'
 import { FilePreview } from './filePreview/FilePreview'
 import hljsLightCss from 'highlight.js/styles/atom-one-light.css?inline'
 import hljsDarkCss from 'highlight.js/styles/atom-one-dark.css?inline'
@@ -99,6 +100,8 @@ export function Preview() {
   const settings = useAppStore(s => s.settings)
   const containerRef = useRef<HTMLDivElement>(null)
   const markdownBodyRef = useRef<HTMLDivElement>(null)
+  const codePreviewRef = useRef<HTMLPreElement>(null)
+  const htmlIframeRef = useRef<HTMLIFrameElement>(null)
   const [tocOpen, setTocOpen] = useState(false)
 
   // 监听编辑器滚动：把"最靠上标题"的 id 同步到预览位置
@@ -242,7 +245,12 @@ export function Preview() {
         <div className="code-preview-header">
           <span className="code-preview-lang">{lang}</span>
         </div>
-        <pre className="code-preview hljs"><code dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
+        <PreviewSearchBar
+          key={`code-${currentNote.id}`}
+          getRoot={() => codePreviewRef.current}
+          style={{ margin: '8px 12px 0 auto' }}
+        />
+        <pre ref={codePreviewRef} className="code-preview hljs"><code dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
       </div>
     )
   }
@@ -315,7 +323,13 @@ export function Preview() {
 </html>`
     return (
       <div className="preview" style={{ padding: 0, overflow: 'auto' }}>
+        <PreviewSearchBar
+          key={`html-${currentNote.id}`}
+          getRoot={() => htmlIframeRef.current?.contentDocument?.body ?? null}
+          style={{ margin: '12px 12px 0 auto' }}
+        />
         <iframe
+          ref={htmlIframeRef}
           srcDoc={htmlDoc}
           sandbox="allow-same-origin allow-scripts"
           style={{ width: '100%', height: '100%', border: 'none', background: bgColor, display: 'block' }}
@@ -328,6 +342,7 @@ export function Preview() {
   // Markdown 普通渲染
   return (
     <div className="preview" ref={containerRef}>
+      <PreviewSearchBar key={`md-${currentNote.id}`} getRoot={() => markdownBodyRef.current} />
       <div className="preview-inner">
         <div
           ref={markdownBodyRef}

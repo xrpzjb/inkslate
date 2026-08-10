@@ -5,9 +5,24 @@
   height: 44px;
   background-color: var(--bg-tertiary) !important;
   border-bottom: 1px solid var(--border-color);
-  overflow: hidden;
+  overflow: visible;
   flex-shrink: 0;
   user-select: none;
+  position: relative;
+}
+
+/* 可横向滚动的标签区（隐藏滚动条），溢出到两侧的标签归入「更多」 */
+.tab-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tab-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 /* 单个 tab */
@@ -95,6 +110,13 @@
 }
 
 /* ============ "更多" 按钮 ============ */
+.tab-more-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+}
+
 .tab-more {
   min-width: unset;
   width: 36px;
@@ -124,4 +146,30 @@
 
 .tab-more-popover .tab-item.active {
   background: var(--accent-bg);
+}
+
+/* ============ 标签右键菜单 ============ */
+.tab-ctx-menu {
+  position: fixed;
+  min-width: 150px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  z-index: 100000;
+  padding: 4px;
+}
+
+.tab-ctx-item {
+  padding: 7px 12px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab-ctx-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }

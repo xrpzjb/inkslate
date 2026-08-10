@@ -460,3 +460,15 @@
   white-space: pre !important;
   word-wrap: normal !important;
 }
+
+/* ========== 预览内搜索（Ctrl+F）高亮 ========== */
+mark.preview-search-mark {
+  background: rgba(255, 213, 79, 0.45);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+mark.preview-search-mark.preview-search-active {
+  background: #ffb020;
+  color: #1f2328;
+}

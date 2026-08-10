@@ -178,6 +178,14 @@ export async function initDatabase(): Promise<void> {
       updated_at INTEGER NOT NULL
     )
   `)
+  // 闪念：完成状态迁移
+  const ftColumns = db.prepare('PRAGMA table_info(flash_thoughts)').all() as { name: string }[]
+  if (!ftColumns.some(c => c.name === 'done')) {
+    db.exec(`ALTER TABLE flash_thoughts ADD COLUMN done INTEGER NOT NULL DEFAULT 0`)
+  }
+  if (!ftColumns.some(c => c.name === 'done_at')) {
+    db.exec(`ALTER TABLE flash_thoughts ADD COLUMN done_at INTEGER`)
+  }
 
   // 索引
   db.exec(`CREATE INDEX IF NOT EXISTS idx_notes_notebook ON notes(notebook_id)`)
@@ -1051,27 +1059,56 @@ const dbMethods = {
 
   // ============ 闪念 ============
   listFlashThoughts(): FlashThought[] {
-    const rows = getDatabase().prepare('SELECT * FROM flash_thoughts ORDER BY created_at DESC').all() as any[]
+    const rows = getDatabase().prepare(
+      'SELECT * FROM flash_thoughts ORDER BY done ASC, COALESCE(done_at, created_at) DESC'
+    ).all() as any[]
     return rows.map((row: any) => ({
       id: row.id,
       content: row.content,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      done: row.done === 1,
+      doneAt: row.done_at ?? undefined
     }))
   },
 
   createFlashThought(content: string): FlashThought {
     const id = generateId()
     const now = Date.now()
-    getDatabase().prepare('INSERT INTO flash_thoughts (id, content, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, content, now, now)
-    return { id, content, createdAt: now, updatedAt: now }
+    getDatabase().prepare('INSERT INTO flash_thoughts (id, content, created_at, updated_at, done) VALUES (?, ?, ?, ?, 0)').run(id, content, now, now)
+    return { id, content, createdAt: now, updatedAt: now, done: false }
+  },
+
+  /** 从 git 元数据导入闪念：保留远端 id / 时间 / 完成状态 */
+  importFlashThought(ft: { id: string; content: string; createdAt?: number; updatedAt?: number; done?: boolean; doneAt?: number }): FlashThought {
+    const now = Date.now()
+    const createdAt = ft.createdAt ?? now
+    const updatedAt = ft.updatedAt ?? now
+    const done = ft.done === true
+    const doneAt = done ? (ft.doneAt ?? now) : null
+    getDatabase().prepare(
+      'INSERT OR REPLACE INTO flash_thoughts (id, content, created_at, updated_at, done, done_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(ft.id, ft.content, createdAt, updatedAt, done ? 1 : 0, doneAt)
+    return { id: ft.id, content: ft.content, createdAt, updatedAt, done, doneAt: doneAt ?? undefined }
   },
 
   updateFlashThought(id: string, content: string): FlashThought {
     const now = Date.now()
     getDatabase().prepare('UPDATE flash_thoughts SET content = ?, updated_at = ? WHERE id = ?').run(content, now, id)
     const row = getDatabase().prepare('SELECT * FROM flash_thoughts WHERE id = ?').get(id) as any
-    return { id: row.id, content: row.content, createdAt: row.created_at, updatedAt: row.updated_at }
+    return { id: row.id, content: row.content, createdAt: row.created_at, updatedAt: row.updated_at, done: row.done === 1, doneAt: row.done_at ?? undefined }
+  },
+
+  /** 标记闪念完成/取消完成：done=1 记录完成时间，取消时清空完成时间 */
+  setFlashThoughtDone(id: string, done: boolean): FlashThought {
+    const now = Date.now()
+    if (done) {
+      getDatabase().prepare('UPDATE flash_thoughts SET done = 1, done_at = ?, updated_at = ? WHERE id = ?').run(now, now, id)
+    } else {
+      getDatabase().prepare('UPDATE flash_thoughts SET done = 0, done_at = NULL, updated_at = ? WHERE id = ?').run(now, id)
+    }
+    const row = getDatabase().prepare('SELECT * FROM flash_thoughts WHERE id = ?').get(id) as any
+    return { id: row.id, content: row.content, createdAt: row.created_at, updatedAt: row.updated_at, done: row.done === 1, doneAt: row.done_at ?? undefined }
   },
 
   deleteFlashThought(id: string): void {
@@ -1373,7 +1410,7 @@ const dbMethods = {
   /** 给笔记本设置密码：加密所有笔记内容 */
   setNotebookPassword(notebookId: string, password: string): void {
     const d = getDatabase()
-    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all() as any[]
+    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all(notebookId) as any[]
     for (const row of notes) {
       const { content } = resolveNoteContent(row)
       if (!content || isEncryptedContent(content)) continue
@@ -1396,7 +1433,7 @@ const dbMethods = {
   /** 移除笔记本密码：解密所有笔记内容 */
   removeNotebookPassword(notebookId: string, password: string): boolean {
     const d = getDatabase()
-    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all() as any[]
+    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all(notebookId) as any[]
     for (const row of notes) {
       const { content } = resolveNoteContent(row)
       if (!content || !isEncryptedContent(content)) continue
