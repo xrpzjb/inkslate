@@ -8,6 +8,7 @@ import { GitManager } from './git/manager'
 import { encryptWithCachedKey, hasCachedKey } from './crypto'
 import { exportNoteToWord } from './export/docx'
 import { addPdfOutline } from './export/pdfOutline'
+import { resolveHeadingPages } from './export/pdfPages'
 
 let ProxyAgent: any = undefined
 try {
@@ -405,12 +406,19 @@ ${watermarkHtml}
         printBackground: true,
         margins: { top: MARGIN_IN, bottom: MARGIN_IN, left: MARGIN_IN, right: MARGIN_IN }
       })
-      // printToPDF 不会生成书签，用 pdf-lib 后处理注入目录（Outlines）树
-      const outlineItems = headings.map(h => ({
+      // printToPDF 不会生成书签，用 pdf-lib 后处理注入目录（Outlines）树。
+      // Chromium 按块分页，图片/表格在页底会被推到下一页，floor(top/CONTENT_H) 只是估算，
+      // 先用 pdfjs 按文本精确解析标题所在页，未命中再回退到估算值。
+      const pdfBytes = new Uint8Array(pdfBuffer)
+      const headingPages = await resolveHeadingPages(
+        pdfBytes,
+        headings.map(h => ({ text: h.text, fallbackPage: Math.floor(h.top / CONTENT_H) }))
+      )
+      const outlineItems = headings.map((h, i) => ({
         title: h.text,
-        pageIndex: Math.floor(h.top / CONTENT_H)
+        pageIndex: headingPages[i]
       }))
-      const out = await addPdfOutline(new Uint8Array(pdfBuffer), outlineItems)
+      const out = await addPdfOutline(pdfBytes, outlineItems)
       await require('node:fs').promises.writeFile(result.filePath, out)
       return true
     } finally {

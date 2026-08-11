@@ -266,3 +266,24 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+.notebook-icon-picker-auto {
+  width: 100%;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--accent-color);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.notebook-icon-picker-auto:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.notebook-icon-picker-auto:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

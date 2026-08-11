@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { MatIcon } from './MatIcon'
 import { IonIcon } from './IonIcon'
 import { useAppStore } from '../store/app'
+import { matchNotebookIcon } from '@shared/notebookIcons'
 import { toast } from './Toast'
 import './IconPicker.css'
 
@@ -29,10 +30,96 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
   {
     name: '编程',
     icons: [
-      'code', 'terminal', 'bug_report', 'build', 'construction',
-      'developer_board', 'dashboard', 'api', 'data_object', 'data_array',
+      'code', 'code_off', 'terminal', 'bug_report', 'build',
+      'developer_board', 'developer_board_off', 'developer_mode',
+      'api', 'data_object', 'data_array', 'data_thresholding',
       'integration_instructions', 'javascript', 'css', 'html', 'php',
-      'storage', 'cloud', 'dns', 'router', 'hub', 'lan',
+      'webhook', 'http', 'https', 'account_tree', 'commit',
+      'fork_left', 'fork_right', 'alt_route', 'data_usage',
+      'cloud_sync', 'dynamic_form', 'manage_search', 'route',
+    ],
+  },
+  {
+    name: '网络',
+    icons: [
+      'wifi', 'wifi_1_bar', 'wifi_2_bar', 'wifi_find', 'wifi_lock',
+      'wifi_off', 'wifi_password', 'wifi_protected_setup',
+      'wifi_tethering', 'bluetooth', 'bluetooth_connected',
+      'bluetooth_disabled', 'bluetooth_searching',
+      'network_check', 'network_ping', 'network_locked',
+      'network_cell', 'network_wifi', 'cell_tower', 'cell_wifi',
+      'signal_cellular_4_bar', 'signal_cellular_alt',
+      'signal_cellular_off', 'signal_wifi_4_bar', 'signal_wifi_off',
+      'lan', 'router', 'hub', 'dns', 'storage', 'cloud', 'cloud_queue',
+      'cloud_done', 'cloud_upload', 'cloud_download', 'cloud_off',
+      'cloud_circle', 'settings_ethernet', 'cast', 'cast_connected',
+      'cast_for_education', 'connected_tv', 'vpn_key', 'vpn_key_off',
+    ],
+  },
+  {
+    name: '硬件',
+    icons: [
+      'laptop', 'laptop_mac', 'laptop_windows', 'laptop_chromebook',
+      'desktop_mac', 'desktop_windows', 'computer', 'monitor',
+      'tablet', 'tablet_mac', 'tablet_android', 'smartphone',
+      'devices', 'devices_other', 'devices_fold', 'device_hub',
+      'important_devices', 'memory', 'sd_card', 'sd_card_alert',
+      'sd_storage', 'usb', 'usb_off', 'sim_card', 'sim_card_alert',
+      'sim_card_download', 'keyboard', 'keyboard_alt',
+      'keyboard_capslock', 'keyboard_command', 'keyboard_control',
+      'keyboard_hide', 'keyboard_return', 'keyboard_tab',
+      'keyboard_voice', 'mouse', 'adf_scanner', 'document_scanner',
+      'print', 'scanner', 'power', 'power_input', 'power_off',
+      'power_settings_new', 'battery_full', 'battery_charging_full',
+      'battery_alert', 'battery_saver', 'battery_unknown',
+      'bolt', 'electric_bolt', 'flash_on', 'flash_off', 'flash_auto',
+      'hardware', 'nfc', 'contactless', 'watch',
+    ],
+  },
+  {
+    name: '安全',
+    icons: [
+      'security', 'security_update', 'security_update_good',
+      'security_update_warning', 'shield', 'shield_moon',
+      'verified_user', 'gpp_good', 'gpp_bad', 'gpp_maybe',
+      'lock', 'lock_open', 'lock_outline', 'lock_clock',
+      'lock_person', 'lock_reset', 'key', 'key_off', 'password',
+      'fingerprint', 'privacy_tip', 'https', 'admin_panel_settings',
+      'supervisor_account', 'manage_accounts', 'domain',
+      'domain_add', 'domain_disabled', 'domain_verification',
+      'vpn_lock', 'no_accounts', 'no_encryption_gmailerrorred',
+    ],
+  },
+  {
+    name: '数据',
+    icons: [
+      'dataset', 'dataset_linked', 'data_exploration',
+      'data_saver_on', 'data_saver_off', 'analytics', 'insights',
+      'query_stats', 'query_builder', 'data_usage',
+      'storage', 'warehouse', 'inventory', 'backup', 'backup_table',
+      'restore', 'restore_from_trash', 'download', 'download_done',
+      'download_for_offline', 'downloading', 'upload', 'upload_file',
+      'sync', 'sync_alt', 'sync_disabled', 'sync_lock', 'sync_problem',
+      'import_export', 'cloud_sync', 'offline_bolt', 'speed',
+      'online_prediction', 'model_training', 'on_device_training',
+      'troubleshoot', 'science', 'biotech', 'data_thresholding',
+    ],
+  },
+  {
+    name: '应用',
+    icons: [
+      'apps', 'apps_outage', 'app_blocking', 'app_registration',
+      'app_settings_alt', 'app_shortcut', 'widgets', 'now_widgets',
+      'view_stream', 'window', 'splitscreen', 'fullscreen',
+      'fullscreen_exit', 'close_fullscreen', 'open_in_new',
+      'open_in_full', 'launch', 'rocket_launch', 'web', 'web_asset',
+      'web_asset_off', 'web_stories', 'browser_not_supported',
+      'browser_updated', 'install_desktop', 'install_mobile',
+      'system_update', 'system_update_alt', 'grid_view',
+      'space_dashboard', 'dashboard_customize', 'settings_suggest',
+      'settings_input_antenna', 'settings_input_component',
+      'settings_input_composite', 'settings_input_hdmi',
+      'settings_input_svideo', 'settings_overscan',
     ],
   },
   {
@@ -160,7 +247,7 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
       'io:cloud', 'io:cloud-done', 'io:cloudy', 'io:moon', 'io:sunny',
       'io:bulb', 'io:heart-circle', 'io:notifications', 'io:alarm',
       'io:calendar', 'io:cart', 'io:chatbox-ellipses', 'io:chatbubbles',
-      'io:checkmark-circle', 'io:clipboard', 'io:clock', 'io:code-slash',
+      'io:checkmark-circle', 'io:clipboard', 'io:calculator', 'io:code-slash',
       'io:cog', 'io:color-palette', 'io:compass', 'io:construct',
       'io:document', 'io:document-text', 'io:download', 'io:earth',
       'io:eye', 'io:file-tray', 'io:file-tray-full', 'io:film',
@@ -187,10 +274,38 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
       'io:thunderstorm', 'io:ticket', 'io:time', 'io:timer', 'io:toggle',
       'io:trash', 'io:trash-bin', 'io:trending-down', 'io:trending-up',
       'io:triangle', 'io:trophy', 'io:tv', 'io:umbrella', 'io:unlink',
-      'io:unlock', 'io:videocam', 'io:volume-high', 'io:volume-low',
+      'io:eye-off', 'io:videocam', 'io:volume-high', 'io:volume-low',
       'io:volume-medium', 'io:volume-mute', 'io:walk', 'io:wallet',
       'io:warning', 'io:watch', 'io:water', 'io:wifi', 'io:wine',
-      'io:woman', 'io:wrench',
+      'io:woman', 'io:git-compare', 'io:git-pull-request',
+      'io:git-network', 'io:code', 'io:code-working',
+      'io:code-download', 'io:hardware-chip',
+      'io:cloud-upload', 'io:cloud-download', 'io:cloud-offline',
+      'io:cellular', 'io:bug',
+      'io:cube', 'io:apps', 'io:grid', 'io:keypad',
+      'io:shield-checkmark', 'io:shield-half',
+      'io:desktop', 'io:phone-portrait', 'io:tablet-portrait',
+      'io:bar-chart',
+      'io:options', 'io:barcode',
+    ]
+  },
+  {
+    name: 'Ion 品牌',
+    icons: [
+      'io:logo-github', 'io:logo-gitlab', 'io:logo-bitbucket',
+      'io:logo-javascript', 'io:logo-nodejs', 'io:logo-npm',
+      'io:logo-html5', 'io:logo-css3', 'io:logo-python',
+      'io:logo-react', 'io:logo-angular', 'io:logo-vue',
+      'io:logo-docker', 'io:logo-electron', 'io:logo-firebase',
+      'io:logo-figma', 'io:logo-vercel', 'io:logo-amplify',
+      'io:logo-sass', 'io:logo-markdown', 'io:logo-stackoverflow',
+      'io:logo-codepen', 'io:logo-hackernews', 'io:logo-pwa',
+      'io:logo-capacitor', 'io:logo-ionic', 'io:logo-stencil',
+      'io:logo-web-component', 'io:logo-google', 'io:logo-microsoft',
+      'io:logo-apple', 'io:logo-android', 'io:logo-windows',
+      'io:logo-chrome', 'io:logo-firefox', 'io:logo-edge',
+      'io:logo-tux', 'io:logo-tableau', 'io:logo-slack',
+      'io:logo-discord', 'io:logo-medium', 'io:logo-buffer',
     ]
   },
   {
@@ -207,7 +322,7 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
       'io:alarm-outline', 'io:calendar-outline', 'io:cart-outline',
       'io:chatbox-ellipses-outline', 'io:chatbubbles-outline',
       'io:checkmark-circle-outline', 'io:clipboard-outline',
-      'io:clock-outline', 'io:code-slash-outline', 'io:cog-outline',
+      'io:calculator-outline', 'io:code-slash-outline', 'io:cog-outline',
       'io:color-palette-outline', 'io:compass-outline',
       'io:construct-outline', 'io:document-outline',
       'io:document-text-outline', 'io:download-outline', 'io:earth-outline',
@@ -250,13 +365,26 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
       'io:toggle-outline', 'io:trash-outline', 'io:trash-bin-outline',
       'io:trending-down-outline', 'io:trending-up-outline',
       'io:triangle-outline', 'io:trophy-outline', 'io:tv-outline',
-      'io:umbrella-outline', 'io:unlink-outline', 'io:unlock-outline',
+      'io:umbrella-outline', 'io:unlink-outline', 'io:eye-off-outline',
       'io:videocam-outline', 'io:volume-high-outline',
       'io:volume-low-outline', 'io:volume-medium-outline',
       'io:volume-mute-outline', 'io:walk-outline', 'io:wallet-outline',
       'io:warning-outline', 'io:watch-outline', 'io:water-outline',
       'io:wifi-outline', 'io:wine-outline', 'io:woman-outline',
-      'io:wrench-outline',
+      'io:git-compare-outline', 'io:git-pull-request-outline',
+      'io:git-network-outline', 'io:code-outline',
+      'io:code-working-outline', 'io:code-download-outline',
+      'io:hardware-chip-outline',
+      'io:cloud-upload-outline', 'io:cloud-download-outline',
+      'io:cloud-offline-outline', 'io:cellular-outline',
+      'io:bug-outline', 'io:cube-outline',
+      'io:apps-outline', 'io:grid-outline', 'io:keypad-outline',
+      'io:shield-checkmark-outline', 'io:shield-half-outline',
+      'io:desktop-outline',
+      'io:phone-portrait-outline', 'io:tablet-portrait-outline',
+      'io:bar-chart-outline',
+      'io:options-outline',
+      'io:barcode-outline',
     ]
   },
   {
@@ -273,7 +401,7 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
       'io:alarm-sharp', 'io:calendar-sharp', 'io:cart-sharp',
       'io:chatbox-ellipses-sharp', 'io:chatbubbles-sharp',
       'io:checkmark-circle-sharp', 'io:clipboard-sharp',
-      'io:clock-sharp', 'io:code-slash-sharp', 'io:cog-sharp',
+      'io:calculator-sharp', 'io:code-slash-sharp', 'io:cog-sharp',
       'io:color-palette-sharp', 'io:compass-sharp',
       'io:construct-sharp', 'io:document-sharp',
       'io:document-text-sharp', 'io:download-sharp', 'io:earth-sharp',
@@ -316,13 +444,26 @@ const ICON_CATEGORIES: { name: string; icons: string[] }[] = [
       'io:toggle-sharp', 'io:trash-sharp', 'io:trash-bin-sharp',
       'io:trending-down-sharp', 'io:trending-up-sharp',
       'io:triangle-sharp', 'io:trophy-sharp', 'io:tv-sharp',
-      'io:umbrella-sharp', 'io:unlink-sharp', 'io:unlock-sharp',
+      'io:umbrella-sharp', 'io:unlink-sharp', 'io:eye-off-sharp',
       'io:videocam-sharp', 'io:volume-high-sharp',
       'io:volume-low-sharp', 'io:volume-medium-sharp',
       'io:volume-mute-sharp', 'io:walk-sharp', 'io:wallet-sharp',
       'io:warning-sharp', 'io:watch-sharp', 'io:water-sharp',
       'io:wifi-sharp', 'io:wine-sharp', 'io:woman-sharp',
-      'io:wrench-sharp',
+      'io:git-compare-sharp', 'io:git-pull-request-sharp',
+      'io:git-network-sharp', 'io:code-sharp',
+      'io:code-working-sharp', 'io:code-download-sharp',
+      'io:hardware-chip-sharp',
+      'io:cloud-upload-sharp', 'io:cloud-download-sharp',
+      'io:cloud-offline-sharp', 'io:cellular-sharp',
+      'io:bug-sharp', 'io:cube-sharp',
+      'io:apps-sharp', 'io:grid-sharp', 'io:keypad-sharp',
+      'io:shield-checkmark-sharp', 'io:shield-half-sharp',
+      'io:desktop-sharp',
+      'io:phone-portrait-sharp', 'io:tablet-portrait-sharp',
+      'io:bar-chart-sharp',
+      'io:options-sharp',
+      'io:barcode-sharp',
     ]
   },
 ]
@@ -335,6 +476,7 @@ export interface IconPickerProps {
 
 export function IconPicker({ notebookId, currentIcon, onClose }: IconPickerProps) {
   const updateNotebook = useAppStore(s => s.updateNotebook)
+  const notebooks = useAppStore(s => s.notebooks)
   const [selected, setSelected] = useState<string | null>(currentIcon ?? null)
   const [busy, setBusy] = useState(false)
   const [categoryIdx, setCategoryIdx] = useState(0)
@@ -402,6 +544,27 @@ export function IconPicker({ notebookId, currentIcon, onClose }: IconPickerProps
       document.removeEventListener('keydown', onKey)
     }
   }, [onClose, search])
+
+  const handleAutoMatch = async () => {
+    const nb = notebooks.find(n => n.id === notebookId)
+    const icon = matchNotebookIcon(nb?.name ?? '')
+    if (!icon) {
+      toast.info(`「${nb?.name ?? ''}」未匹配到合适图标`)
+      return
+    }
+    setBusy(true)
+    try {
+      setSelected(icon)
+      await updateNotebook(notebookId, { icon })
+      toast.success('已按名称自动匹配图标')
+    } catch (e) {
+      console.error('Failed to auto-match notebook icon:', e)
+      toast.error('自动匹配失败：' + ((e as Error)?.message || '未知错误'))
+    } finally {
+      setBusy(false)
+      onClose()
+    }
+  }
 
   const handlePick = async (iconName: string | null) => {
     const stored = iconName
@@ -518,6 +681,13 @@ export function IconPicker({ notebookId, currentIcon, onClose }: IconPickerProps
       </div>
 
       <div className="notebook-icon-picker-footer">
+        <button
+          className="notebook-icon-picker-auto"
+          onClick={handleAutoMatch}
+          disabled={busy}
+        >
+          按名称自动匹配
+        </button>
         <button
           className="notebook-icon-picker-clear"
           onClick={() => handlePick(null)}

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { AppSettings, Note, Notebook, NoteTreeNode, SyncStatus, FlashThought } from '@shared/types'
+import { matchNotebookIcon } from '@shared/notebookIcons'
 
 interface AppState {
   // 涓婚
@@ -455,7 +456,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createNotebook: async (name, parentId, icon) => {
-    const nb = await window.inkslateApi.notebooks.create(name, parentId, icon)
+    // 未显式指定图标时按名称自动匹配（占位名如「新建笔记本」不命中 → 保持默认文件夹）
+    const matched = icon ?? matchNotebookIcon(name) ?? undefined
+    const nb = await window.inkslateApi.notebooks.create(name, parentId, matched)
     await get().loadNotebooks()
     await get().refreshSyncStatus()
     return nb
@@ -519,7 +522,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ currentNote: { ...cur, ...updates } })
   },
   renameNotebook: async (id, name) => {
+    // 取旧名与旧图标（loadNotebooks 前的 store 仍是旧数据）
+    const prev = get().notebooks.find(n => n.id === id)
     await window.inkslateApi.notebooks.rename(id, name)
+    if (prev) {
+      // 仅当图标从未设置、或当前图标正是「旧名称的自动匹配结果」时才重新匹配，
+      // 保证用户手动选择的图标在重命名时不被覆盖。
+      const autoPrev = matchNotebookIcon(prev.name)
+      const isAuto = !prev.icon || prev.icon === autoPrev
+      if (isAuto) {
+        const nextIcon = matchNotebookIcon(name)
+        if (nextIcon !== (prev.icon ?? null)) {
+          await window.inkslateApi.notebooks.update(id, { icon: nextIcon })
+        }
+      }
+    }
     await get().loadNotebooks()
     await get().refreshSyncStatus()
   },
