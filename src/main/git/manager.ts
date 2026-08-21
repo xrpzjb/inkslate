@@ -505,7 +505,7 @@ export class GitManager {
     const finalNotes = notes.map((n: any) => {
       // 如果 notebook 被同名去重，把笔记的 notebook_id 重定向到本地 id
       const effectiveNotebookId = notebookRemap[n.notebook_id] ?? n.notebook_id
-      const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : 'md'
+      const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : n.format === 'spreadsheet' ? 'sheet.json' : 'md'
       const nbDir = getNotebookPath(effectiveNotebookId)
 
       // metadata 里的 path / file_path 是相对工作区的路径（可跨机器），先还原成本机绝对路径；
@@ -685,7 +685,7 @@ export class GitManager {
     } catch {}
 
     const finalNotes = notes.map((n: any) => {
-      const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : 'md'
+      const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : n.format === 'spreadsheet' ? 'sheet.json' : 'md'
       const nbDir = getNotebookPath(n.notebook_id)
       const existing = existingNotePaths.get(n.id)
       // metadata 里的 path / file_path 是相对工作区的路径（可跨机器），先还原成本机绝对路径

@@ -1,7 +1,7 @@
 /**
  */
 
-export type NoteFormat = 'markdown' | 'html' | 'richtext' | 'code' | 'url' | 'file'
+export type NoteFormat = 'markdown' | 'html' | 'richtext' | 'code' | 'url' | 'file' | 'spreadsheet'
 
 export type CodeLanguage =
   | 'plaintext' | 'javascript' | 'typescript' | 'python' | 'java'

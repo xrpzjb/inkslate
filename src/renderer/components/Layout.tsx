@@ -186,7 +186,7 @@ export function Layout() {
   // url/file 笔记不渲染 Editor（见下方条件渲染），editor 这一列物理上为空。
   // 即便全局 editorVisible=true（上一个 md 笔记打开过），editor 也不占位。
   // 真正的"editor 是否占位"要参考这个。
-  const isNoEditorFormat = currentNote?.format === 'url' || currentNote?.format === 'file'
+  const isNoEditorFormat = currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet'
   const editorEffectivelyVisible = editorVisible && !isNoEditorFormat
 
   // 拖动 max：保证编辑器至少有 240px 可见，预览至少有 200px 可见（隐藏时给 0）
@@ -297,7 +297,7 @@ export function Layout() {
                 const notebook = notebooks.find(nb => nb.id === note.notebookId)
                 const formatColors: Record<string, string> = {
                   markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6',
-                  code: '#4a90e2', url: '#0ea5e9', file: '#16a34a'
+                  code: '#4a90e2', url: '#0ea5e9', file: '#16a34a', spreadsheet: '#f59e0b'
                 }
                 // 提取内容匹配片段
                 const q = searchQuery.trim()
@@ -389,13 +389,13 @@ export function Layout() {
                     <div
                       className={`layout-editor ${!editorVisible ? 'collapsed' : ''}`}
                       style={{
-                        // url 和 file 笔记都不渲染 Editor，整列给 preview
-                        width: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 0 : (editorVisible ? 'auto' : 0),
-                        flex: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : (editorVisible ? 1 : 'none'),
-                        display: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : undefined
+                        // url / file / spreadsheet 笔记都不渲染 Editor，整列给 preview
+                        width: (currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet') ? 0 : (editorVisible ? 'auto' : 0),
+                        flex: (currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet') ? 'none' : (editorVisible ? 1 : 'none'),
+                        display: (currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet') ? 'none' : undefined
                       }}
                     >
-                      {editorVisible && currentNote?.format !== 'url' && currentNote?.format !== 'file' && <Editor />}
+                      {editorVisible && currentNote?.format !== 'url' && currentNote?.format !== 'file' && currentNote?.format !== 'spreadsheet' && <Editor />}
                     </div>
 
                     <div

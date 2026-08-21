@@ -9,6 +9,7 @@ import hljs from 'highlight.js'
 import { TableOfContents } from './TableOfContents'
 import { PreviewSearchBar } from './PreviewSearch'
 import { FilePreview } from './filePreview/FilePreview'
+import { SpreadsheetView } from './SpreadsheetView'
 import hljsLightCss from 'highlight.js/styles/atom-one-light.css?inline'
 import hljsDarkCss from 'highlight.js/styles/atom-one-dark.css?inline'
 import '../styles/preview.css'
@@ -300,6 +301,15 @@ export function Preview() {
     return (
       <div className="preview-url" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <FilePreview />
+      </div>
+    )
+  }
+
+  // 智能表格：x-data-spreadsheet 网格，可编辑并自动保存
+  if (currentNote.format === 'spreadsheet') {
+    return (
+      <div className="preview-url" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <SpreadsheetView key={currentNote.id} noteId={currentNote.id} content={currentNote.content ?? ''} />
       </div>
     )
   }

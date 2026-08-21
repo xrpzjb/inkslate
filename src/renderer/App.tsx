@@ -219,6 +219,7 @@ export default function App() {
             markdown: '未命名笔记',
             html: '未命名 HTML',
             richtext: '未命名富文本',
+            spreadsheet: '未命名智能表格',
             code: language ? `${language} 代码片段` : '代码片段'
           }
           state.createNote(

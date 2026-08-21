@@ -745,7 +745,7 @@ const dbMethods = {
   createNote(title: string, notebookId: string, parentId: string | null, icon?: string, format: Note['format'] = 'markdown', language?: string, url?: string): Note {
     const id = generateId()
     const now = Date.now()
-    const ext = format === 'html' ? 'html' : format === 'richtext' ? 'json' : format === 'code' ? 'code' : format === 'url' ? 'url' : format === 'file' ? 'file' : 'md'
+    const ext = format === 'html' ? 'html' : format === 'richtext' ? 'json' : format === 'code' ? 'code' : format === 'url' ? 'url' : format === 'file' ? 'file' : format === 'spreadsheet' ? 'sheet.json' : 'md'
     const slug = slugify(title)
     // 树状目录：notes/<笔记本 slug 路径>/<note-slug>.<ext>
     const dir = getNotebookPath(notebookId)
@@ -768,6 +768,18 @@ const dbMethods = {
     else if (format === 'url') {
       // 网址笔记：内容用 url，文件存个简单标记
       initialContent = url ?? ''
+    } else if (format === 'spreadsheet') {
+      // 智能表格：初始一张空 Sheet（与 x-data-spreadsheet 的 loadData 格式一致）
+      initialContent = JSON.stringify({
+        name: 'Sheet1',
+        freeze: 'A1',
+        styles: [],
+        merges: [],
+        rows: { len: 100 },
+        cols: { len: 26 },
+        validations: [],
+        autofilter: {}
+      })
     }
     // file 格式：源文件由调用方（IPC 层）复制到 filePath 后再调本方法；
     // 这里只写一个占位空文件，保证 row.path 指向的文件存在
@@ -835,7 +847,7 @@ const dbMethods = {
     const formatChanged = updates.format !== undefined && updates.format !== row.format
     let newPath = row.path
     if ((titleChanged || notebookChanged || formatChanged) && row.path) {
-      const ext = newFormat === 'html' ? 'html' : newFormat === 'richtext' ? 'json' : newFormat === 'code' ? 'code' : newFormat === 'url' ? 'url' : newFormat === 'file' ? 'file' : 'md'
+      const ext = newFormat === 'html' ? 'html' : newFormat === 'richtext' ? 'json' : newFormat === 'code' ? 'code' : newFormat === 'url' ? 'url' : newFormat === 'file' ? 'file' : newFormat === 'spreadsheet' ? 'sheet.json' : 'md'
       const slug = slugify(newTitle)
       const targetDir = getNotebookPath(newNotebookId)
       try { fs.mkdirSync(targetDir, { recursive: true }) } catch {}

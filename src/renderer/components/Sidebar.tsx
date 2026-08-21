@@ -5,7 +5,7 @@ import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
   FileDown, FileCode, Globe, Link2, Paperclip, Palette, History, ArrowRightLeft,
-  Lock, Unlock, Clock, Upload, Bot
+  Lock, Unlock, Clock, Upload, Bot, Table2
 } from 'lucide-react'
 import { MatIcon } from './MatIcon'
 import { IonIcon } from './IonIcon'
@@ -587,6 +587,10 @@ export function Sidebar() {
         toast.error('笔记不存在或已被删除')
         return
       }
+      if (note.format === 'spreadsheet') {
+        toast.error('该格式暂不支持导出为 HTML')
+        return
+      }
       const path = await window.inkslateApi.file.export('html')
       if (!path) return  // 用户取消
       const html = wrapNoteAsHtml(note)
@@ -608,6 +612,11 @@ export function Sidebar() {
 
   const doExportPdf = async (nodeId: string, watermark: string) => {
     try {
+      const targetNote = notes.find(n => n.id === nodeId)
+      if (targetNote?.format === 'spreadsheet') {
+        toast.error('该格式暂不支持导出为 PDF')
+        return
+      }
       if (selectedNoteId !== nodeId) {
         await selectNote(nodeId)
         // 等 React 把新笔记的预览渲染出来
@@ -659,7 +668,7 @@ export function Sidebar() {
         toast.error('笔记不存在或已被删除')
         return
       }
-      if (note.format === 'richtext' || note.format === 'url' || note.format === 'file') {
+      if (note.format === 'richtext' || note.format === 'url' || note.format === 'file' || note.format === 'spreadsheet') {
         toast.error('该格式暂不支持导出为 Word')
         return
       }
@@ -682,14 +691,14 @@ export function Sidebar() {
     if (node.type !== 'note') return false
     const note = notes.find(n => n.id === node.id)
     if (!note) return false
-    return !['url', 'file'].includes(note.format) && !!(useAppStore.getState().settings?.gitSync?.configured)
+    return !['url', 'file', 'spreadsheet'].includes(note.format) && !!(useAppStore.getState().settings?.gitSync?.configured)
   }
 
   const canAiWrite = (node: NoteTreeNode): boolean => {
     if (node.type !== 'note') return false
     const note = notes.find(n => n.id === node.id)
     if (!note) return false
-    return !['url', 'file'].includes(note.format)
+    return !['url', 'file', 'spreadsheet'].includes(note.format)
   }
 
   /** 在 AI 写作面板中打开指定笔记：先选中（确保 currentNote 就绪），再打开面板 */
@@ -776,7 +785,8 @@ export function Sidebar() {
       richtext: { Icon: RichTextIcon, color: '#9b59b6', title: '富文本' },
       code: { Icon: CodeIcon, color: '#4a90e2', title: '代码' },
       url: { Icon: Link2, color: '#0ea5e9', title: '网址' },
-      file: { Icon: Paperclip, color: '#16a34a', title: '文件' }
+      file: { Icon: Paperclip, color: '#16a34a', title: '文件' },
+      spreadsheet: { Icon: Table2, color: '#f59e0b', title: '智能表格' }
     }[noteFormat ?? 'markdown'] ?? { Icon: MarkdownIcon, color: 'var(--text-secondary)', title: '笔记' }
     const { Icon: FormatIcon, color: formatColor, title: formatTitle } = formatInfo
     const hasChildren = node.children.length > 0
@@ -905,6 +915,13 @@ export function Sidebar() {
               setUrlDialog({ notebookId: nbId, parentId: target.parentId, name: '', value: 'https://' })
             }} />
             <MenuItem icon={<Paperclip size={14} />} label="文件笔记" onClick={handleCreateFileNote} />
+            <MenuItem icon={<Table2 size={14} />} label="智能表格" onClick={async () => {
+              closeContextMenu()
+              const target = resolveTarget(contextMenu.node)
+              const nbId = target.notebookId || await ensureNotebook()
+              const note = await createNote('未命名智能表格', nbId, target.parentId, undefined, 'spreadsheet')
+              setRenaming({ id: note.id, type: 'note', value: note.title })
+            }} />
             <MenuItem icon={<FileText size={14} />} label="Markdown 笔记" onClick={async () => {
               closeContextMenu()
               const target = resolveTarget(contextMenu.node)
@@ -1353,6 +1370,7 @@ function MoveNoteIcon({ format, size, color }: { format: string; size: number; c
     case 'html': return <Globe size={size} color={color} />
     case 'url': return <Link2 size={size} color={color} />
     case 'file': return <Paperclip size={size} color={color} />
+    case 'spreadsheet': return <Table2 size={size} color={color} />
     default: return <FileText size={size} color={color} />
   }
 }
@@ -1663,7 +1681,7 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
       const isFolder = node.type === 'notebook'
       const note = notes.find(n => n.id === node.id)
       const noteFormat = note?.format || 'markdown'
-      const formatColors: Record<string, string> = { markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6', code: '#4a90e2', url: '#0ea5e9', file: '#16a34a' }
+      const formatColors: Record<string, string> = { markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6', code: '#4a90e2', url: '#0ea5e9', file: '#16a34a', spreadsheet: '#f59e0b' }
       const fc = formatColors[noteFormat] || 'var(--text-secondary)'
       result.push(
         <div

@@ -472,3 +472,25 @@ mark.preview-search-mark.preview-search-active {
   background: #ffb020;
   color: #1f2328;
 }
+
+/* ========== 智能表格（x-data-spreadsheet） ==========
+ * x-data-spreadsheet 同时会画「选区框」（.x-spreadsheet-selector-area）和
+ * 「行内编辑框」（.x-spreadsheet-editor-area），两者都是 2px 蓝色边框，
+ * 编辑/点击时重叠会显成双蓝框（高 DPI 缩放下尤其明显）。
+ * 这里让编辑框不画自己的边框 —— 蓝色选中框始终只有一道。 */
+.spreadsheet-view .x-spreadsheet-editor .x-spreadsheet-editor-area {
+  border-color: transparent;
+}
+/* 应用全局的 input/textarea 边框规则不应干扰表格编辑器 */
+.spreadsheet-view .x-spreadsheet-editor .x-spreadsheet-editor-area textarea {
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+.spreadsheet-view .x-spreadsheet-editor .x-spreadsheet-editor-area textarea:focus {
+  border-color: transparent;
+}
+/* 选区框保持可见（唯一的一道蓝色框） */
+.spreadsheet-view .x-spreadsheet-selector .x-spreadsheet-selector-area {
+  border: 2px solid #4b89ff;
+}

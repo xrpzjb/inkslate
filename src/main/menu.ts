@@ -63,6 +63,7 @@ export function buildMenuData(): MenuData[] {
             { id: 'new-markdown', label: 'Markdown 笔记', accelerator: 'Ctrl+N', arg: { format: 'markdown' } },
             { id: 'new-html', label: 'HTML 笔记', accelerator: 'Ctrl+Shift+H', arg: { format: 'html' } },
             { id: 'new-richtext', label: '富文本笔记', accelerator: 'Ctrl+Shift+R', arg: { format: 'richtext' } },
+            { id: 'new-spreadsheet', label: '智能表格', arg: { format: 'spreadsheet' } },
             {
               id: 'new-code', label: '代码笔记',
               submenu: [
@@ -161,6 +162,7 @@ export async function handleMenuClick(id: string, arg: any) {
     case 'new-markdown': pickNewNote({ format: 'markdown' }); return
     case 'new-html': pickNewNote({ format: 'html' }); return
     case 'new-richtext': pickNewNote({ format: 'richtext' }); return
+    case 'new-spreadsheet': pickNewNote({ format: 'spreadsheet' }); return
     case 'new-code-js': pickNewNote({ format: 'code', language: 'javascript' }); return
     case 'new-code-ts': pickNewNote({ format: 'code', language: 'typescript' }); return
     case 'new-code-py': pickNewNote({ format: 'code', language: 'python' }); return

@@ -284,22 +284,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
       // url 网页笔记：Editor 对 url 不渲染（见 Layout），必须强制打开预览
-      if (note.format === 'url') {
-        if (!get().previewVisible) {
-          set({ previewVisible: true })
-          if (layout) {
-            get().updateSettings({ layout: { ...layout, previewVisible: true } })
-          }
-        }
-        if (get().editorVisible) {
-          set({ editorVisible: false })
-          if (layout) {
-            get().updateSettings({ layout: { ...layout, editorVisible: false } })
-          }
-        }
-      }
-      // file 文件笔记：跟 url 一样不渲染 Editor，强制预览占满整列
-      if (note.format === 'file') {
+      if (note.format === 'url' || note.format === 'file' || note.format === 'spreadsheet') {
         if (!get().previewVisible) {
           set({ previewVisible: true })
           if (layout) {
@@ -322,11 +307,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       const saved = get().tabLayouts[id]
       if (saved) {
         set({ editorVisible: saved.editorVisible, previewVisible: saved.previewVisible })
-      } else if (note.format === 'url' || note.format === 'file') {
+      } else if (note.format === 'url' || note.format === 'file' || note.format === 'spreadsheet') {
         // 兜底：tabLayouts 是 zustand 内存态，重启后丢失。
         // 但 openTabs 在 settings 里持久化了，启动时 App.tsx 只 selectNote(active)
         // 恢复当前激活标签，openTabs 里其他标签的 tabLayouts 都是空。
-        // 这里按格式强制初始化：url/file 笔记的 Editor 不渲染，editorVisible 必为 false，
+        // 这里按格式强制初始化：url/file/spreadsheet 笔记的 Editor 不渲染，editorVisible 必为 false，
         // 否则全局 editorVisible=true（上一个 md 标签打开过）会让 preview 卡在 previewWidth
         // 填不满右侧 → 用户看到"半个屏幕空白"
         if (get().editorVisible) {
