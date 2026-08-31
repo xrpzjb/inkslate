@@ -494,3 +494,7 @@ mark.preview-search-mark.preview-search-active {
 .spreadsheet-view .x-spreadsheet-selector .x-spreadsheet-selector-area {
   border: 2px solid #4b89ff;
 }
+/* 工具栏占满整行宽度（x-data-spreadsheet 会内联设置 width，需 !important 覆盖） */
+.spreadsheet-view .x-spreadsheet-toolbar {
+  width: 100% !important;
+}

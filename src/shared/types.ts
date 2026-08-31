@@ -3,6 +3,16 @@
 
 export type NoteFormat = 'markdown' | 'html' | 'richtext' | 'code' | 'url' | 'file' | 'spreadsheet'
 
+/** 智能表格笔记的内部数据格式（对应 x-data-spreadsheet 的 getData() 输出） */
+export interface SpreadsheetSheetData {
+  name?: string
+  styles?: Array<{ bgcolor?: string }>
+  merges?: string[]
+  rows?: Record<number, { cells?: Record<number, { text?: string; style?: number }> }>
+  cols?: Record<number, { width?: number }>
+}
+export type SpreadsheetData = SpreadsheetSheetData[]
+
 export type CodeLanguage =
   | 'plaintext' | 'javascript' | 'typescript' | 'python' | 'java'
   | 'go' | 'rust' | 'c' | 'cpp' | 'csharp' | 'ruby' | 'php'
@@ -73,12 +83,12 @@ export interface AppSettings {
   /** 编辑器自动换行（true 软换行，false 默认横向滚动） */
   wordWrap?: boolean
   /** 全局 UI 字体选项 id（对应 SettingsDialog FONT_OPTIONS） */
-  fontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
+  fontFamily?: 'system' | 'system-nano' | 'songti' | 'sourcehan-serif' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   fontSize: number
   /** 编辑区域字体选项 id，不设置则跟随全局 fontFamily */
-  editorFontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
+  editorFontFamily?: 'system' | 'system-nano' | 'songti' | 'sourcehan-serif' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   /** 树状图字体选项 id，不设置则跟随全局 fontFamily */
-  treeFontFamily?: 'system' | 'system-nano' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
+  treeFontFamily?: 'system' | 'system-nano' | 'songti' | 'sourcehan-serif' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   /** 树状图字体大小（px） */
   treeFontSize?: number
   /** 树状图显示子级数量 */
@@ -170,6 +180,8 @@ export interface FlashThought {
   done: boolean
   /** 完成时间戳，未完成时为 undefined */
   doneAt?: number
+  /** 是否已删除（软删除墓碑，仅同步内部使用，UI 不展示） */
+  isDeleted?: boolean
 }
 
 export interface AssetUploadResult {
@@ -233,6 +245,7 @@ export const IPC_CHANNELS = {
   FILE_EXPORT: 'file:export',
   FILE_EXPORT_PDF: 'file:export-pdf',
   FILE_EXPORT_DOCX: 'file:export-docx',
+  FILE_EXPORT_XLSX: 'file:export-xlsx',
   FILE_WRITE: 'file:write',
   FILE_READ_BASE64: 'file:read-base64',
 
@@ -283,5 +296,10 @@ export const IPC_CHANNELS = {
   NOTEBOOK_UNLOCK: 'notebook:unlock',
   // AI
   AI_CHAT: 'ai:chat',
-  AI_CONFIGURE: 'ai:configure'
+  AI_CONFIGURE: 'ai:configure',
+  /** 主进程向渲染端推送 AI 处理进度（主进程 → 渲染端，单向事件） */
+  AI_CHAT_PROGRESS: 'ai:chat:progress',
+  AI_CONVERSATION_GET: 'ai:conversation:get',
+  AI_CONVERSATION_SET: 'ai:conversation:set',
+  AI_CONVERSATION_CLEAR: 'ai:conversation:clear'
 } as const

@@ -239,6 +239,7 @@ export function IconSidebar() {
     },
     { kind: 'sep' },
     { kind: 'item', id: 'new-md', label: 'Markdown 笔记', hint: 'Ctrl+N', onClick: () => handleNewFormat('markdown') },
+    { kind: 'item', id: 'new-spreadsheet', label: '智能表格', onClick: () => handleNewFormat('spreadsheet') },
     { kind: 'item', id: 'new-html', label: 'HTML 笔记', hint: 'Ctrl+Shift+H', onClick: () => handleNewFormat('html') },
     { kind: 'item', id: 'new-richtext', label: '富文本笔记', hint: 'Ctrl+Shift+R', onClick: () => handleNewFormat('richtext') },
     { kind: 'sep' },

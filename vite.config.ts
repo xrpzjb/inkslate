@@ -16,11 +16,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: '@', replacement: path.resolve(__dirname, 'src/renderer') },
-      { find: '@shared', replacement: path.resolve(__dirname, 'src/shared') },
-      // 只精确匹配包名（用正则避免把 x-data-spreadsheet/dist/*.css 也重写掉）。
-      // x-data-spreadsheet 的入口是 ES 源码且 import 了 .less（未装 less 预处理器），
-      // 直接指向它预编译好的 UMD 产物；类型声明走 package.json 的 src/index.d.ts
-      { find: /^x-data-spreadsheet$/, replacement: path.resolve(__dirname, 'node_modules/x-data-spreadsheet/dist/xspreadsheet.js') }
+      { find: '@shared', replacement: path.resolve(__dirname, 'src/shared') }
     ]
   },
   server: {

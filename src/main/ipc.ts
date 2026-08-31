@@ -7,6 +7,7 @@ import { OssManager } from './oss/manager'
 import { GitManager } from './git/manager'
 import { encryptWithCachedKey, hasCachedKey } from './crypto'
 import { exportNoteToWord } from './export/docx'
+import { exportSpreadsheetToXlsx } from './export/xlsx'
 import { addPdfOutline } from './export/pdfOutline'
 import { resolveHeadingPages } from './export/pdfPages'
 
@@ -455,6 +456,27 @@ ${watermarkHtml}
     }
   })
 
+  /** 导出智能表格笔记为真正的 .xlsx：渲染进程传表格 JSON，主进程用 exceljs 重建 */
+  ipcMain.handle(IPC_CHANNELS.FILE_EXPORT_XLSX, async (_, payload: {
+    title: string
+    content: string
+  }): Promise<{ ok: boolean; message: string }> => {
+    const owner = BrowserWindow.getFocusedWindow()
+    if (!owner) return { ok: false, message: '没有活动窗口' }
+    const result = await dialog.showSaveDialog(owner, {
+      defaultPath: `${payload?.title || '表格'}.xlsx`,
+      filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
+    })
+    if (result.canceled || !result.filePath) return { ok: false, message: '已取消' }
+    try {
+      const buffer = await exportSpreadsheetToXlsx(payload.title, payload.content)
+      await fs.promises.writeFile(result.filePath, buffer)
+      return { ok: true, message: result.filePath }
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? '导出失败' }
+    }
+  })
+
   // 把本地图片读为 base64 data URL（富文本插入图片用）
   ipcMain.handle(IPC_CHANNELS.FILE_READ_BASE64, async (_, filePath: string): Promise<{ base64: string, mime: string }> => {
     const fs = require('node:fs')
@@ -839,15 +861,34 @@ ${watermarkHtml}
     return result
   }
 
-  ipcMain.handle(IPC_CHANNELS.AI_CHAT, async (_, messages: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string }>): Promise<string | null> => {
+  ipcMain.handle(IPC_CHANNELS.AI_CHAT, async (event, messages: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string }>): Promise<string | null> => {
     const settings = dbApi.getSettings()
     const ai = settings.ai
     if (!ai?.configured || !ai?.apiUrl || !ai?.apiKey) {
       throw new Error('AI 未配置，请在设置中配置 AI 模型')
     }
 
+    // 推送进度给渲染端（AI_CHAT_PROGRESS 单向事件）
+    const pushProgress = (text: string) => {
+      try { event.sender.send(IPC_CHANNELS.AI_CHAT_PROGRESS, text) } catch {}
+    }
+    // 把工具调用转成一行进度文案（截断过长的路径/内容）
+    const describeTool = (name: string, args: any): string => {
+      const p = (s: string | undefined, max = 60) => {
+        if (!s) return ''
+        return s.length > max ? s.slice(0, max) + '…' : s
+      }
+      switch (name) {
+        case 'scan_dir': return `📁 正在扫描目录 ${p(args.path)}`
+        case 'read_file': return `📄 正在读取文件 ${p(args.path)}`
+        case 'grep_dir': return `🔍 正在搜索 ${p(args.pattern)} @ ${p(args.path)}`
+        default: return `⚙️ 正在执行 ${name}`
+      }
+    }
+
     try {
       let currentMessages = [...messages]
+      pushProgress('正在连接 AI 模型…')
       const isAnthropic = ai.apiUrl.includes('/messages')
       let dispatcher: any = undefined
       if (ai.proxyUrl && ProxyAgent) {
@@ -880,6 +921,8 @@ ${watermarkHtml}
             })
           })
         } else {
+          // MiMo API 不支持 tools/function calling，跳过
+          const supportsTools = !ai.apiUrl.includes('xiaomimimo.com')
           resp = await fetch(ai.apiUrl, {
             ...fetchOpts,
             signal: ac.signal,
@@ -891,8 +934,7 @@ ${watermarkHtml}
             body: JSON.stringify({
               model: ai.model || 'deepseek-v4-flash',
               messages: currentMessages,
-              tools: aiTools,
-              tool_choice: 'auto',
+              ...(supportsTools ? { tools: aiTools, tool_choice: 'auto' } : {}),
               stream: false
             })
           })
@@ -939,7 +981,10 @@ ${watermarkHtml}
           currentMessages.push(msg)
           for (const tc of msg.tool_calls) {
             const fn = tc.function
-            const result = execAiTool(fn.name, JSON.parse(fn.arguments || '{}'))
+            let args: any = {}
+            try { args = JSON.parse(fn.arguments || '{}') } catch {}
+            pushProgress(describeTool(fn.name, args))
+            const result = execAiTool(fn.name, args)
             currentMessages.push({
               role: 'tool',
               tool_call_id: tc.id,
@@ -954,6 +999,7 @@ ${watermarkHtml}
         if (textCalls.length > 0) {
           currentMessages.push(msg)
           for (const tc of textCalls) {
+            pushProgress(describeTool(tc.name, tc.args || {}))
             const result = execAiTool(tc.name, tc.args || {})
             currentMessages.push({
               role: 'tool',
@@ -997,5 +1043,18 @@ ${watermarkHtml}
 
   ipcMain.handle(IPC_CHANNELS.AI_CONFIGURE, async (_, config: AppSettings['ai']): Promise<void> => {
     await dbApi.updateSettings({ ai: config } as any)
+  })
+
+  // ============ AI 写作对话历史（仅存本地数据库，不参与 git 同步） ============
+  ipcMain.handle(IPC_CHANNELS.AI_CONVERSATION_GET, async (_, noteId: string) => {
+    return dbApi.getAiConversation(noteId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AI_CONVERSATION_SET, async (_, noteId: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) => {
+    dbApi.setAiConversation(noteId, history)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AI_CONVERSATION_CLEAR, async (_, noteId: string) => {
+    dbApi.clearAiConversation(noteId)
   })
 }

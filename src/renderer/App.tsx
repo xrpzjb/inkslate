@@ -18,6 +18,43 @@ import { HistoryPanel } from './components/gitHistory/HistoryPanel'
 import { useState } from 'react'
 import { FlashThought } from '@shared/types'
 
+/**
+ * 拉取/同步成功后，把"当前打开的标签页"的内容刷新为磁盘上的最新版本。
+ *
+ * 背景：pull 会更新磁盘文件并重建 notes 数组，但当前激活标签的 currentNote
+ * 是独立引用的旧对象，编辑器/预览不会自动刷新 → 用户看到"B 端没有 A 端的更新"。
+ * 这里从刷新后的 notes 里取最新内容写回 currentNote，打开中的标签立即显示远端内容。
+ */
+function refreshOpenNoteFromPulledData(): void {
+  const state = useAppStore.getState()
+  const cur = state.currentNote
+  if (!cur) return
+  const fresh = state.notes.find(n => n.id === cur.id)
+  if (!fresh) return
+  // 内容/标题没变就不动，避免无谓刷新打断正在编辑的本地草稿
+  if (fresh.content === cur.content && fresh.title === cur.title) return
+  state.updateCurrentNoteDraft({ content: fresh.content, title: fresh.title })
+}
+
+/**
+ * 同步/拉取/推送前，先把当前打开的笔记落盘。
+ *
+ * 竞态根因：pull 把 A 端内容落到磁盘后，编辑器内存里仍是旧内容，若 autosave 在
+ * pull → commitAll 的窗口写回文件，commitAll+push 会把旧内容推上远程覆盖 A 的更新。
+ * 这里在同步开始前先把当前编辑落盘（合并冲突由 pull 的 theirs 优先处理），
+ * 配合编辑器在 syncing 期间禁写，彻底关掉这个窗口。
+ */
+async function flushCurrentNoteBeforeSync(): Promise<void> {
+  const state = useAppStore.getState()
+  const cn = state.currentNote
+  if (!cn) return
+  // notes 数组是最近一次落盘的内容；currentNote 是编辑器实时草稿。
+  // 仅当两者不一致（存在未保存编辑）才写盘，避免每次同步都制造 git 噪声。
+  const saved = state.notes.find(n => n.id === cn.id)
+  if (saved && saved.content === cn.content && saved.title === cn.title) return
+  await state.updateNote(cn.id, { content: cn.content, title: cn.title }).catch(() => {})
+}
+
 export default function App() {
   const theme = useAppStore(s => s.theme)
   const loadSettings = useAppStore(s => s.loadSettings)
@@ -265,29 +302,33 @@ export default function App() {
           break
         case 'git-push':
           setSyncStatus({ state: 'syncing', message: '推送中...' })
-          window.inkslateApi.git.push(true).then(async r => {
-            if (!r.ok) {
-              const errMsg = r.message || '未知错误'
+          // 推送前落盘当前编辑，并把编辑器切到"同步中禁写"状态
+          flushCurrentNoteBeforeSync().then(() => {
+            window.inkslateApi.git.push(true).then(async r => {
+              if (!r.ok) {
+                const errMsg = r.message || '未知错误'
+                setSyncStatus({ state: 'error', message: '推送失败', detail: errMsg })
+                toast.error('推送失败：' + errMsg)
+              } else {
+                setSyncStatus({ state: 'success', message: '推送成功', lastSyncAt: Date.now() })
+                toast.success('推送成功')
+                // 主进程已写 lastSyncAt 到 settings；这里刷新 pendingFiles
+                await refreshSyncStatus()
+                // 把 lastSyncAt 也同步进本地 settings（UI 上其他组件可能用）
+                const cur = useAppStore.getState().settings
+                if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
+              }
+            }).catch(e => {
+              const errMsg = e?.message ?? '未知错误'
               setSyncStatus({ state: 'error', message: '推送失败', detail: errMsg })
               toast.error('推送失败：' + errMsg)
-            } else {
-              setSyncStatus({ state: 'success', message: '推送成功', lastSyncAt: Date.now() })
-              toast.success('推送成功')
-              // 主进程已写 lastSyncAt 到 settings；这里刷新 pendingFiles
-              await refreshSyncStatus()
-              // 把 lastSyncAt 也同步进本地 settings（UI 上其他组件可能用）
-              const cur = useAppStore.getState().settings
-              if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
-            }
-          }).catch(e => {
-            const errMsg = e?.message ?? '未知错误'
-            setSyncStatus({ state: 'error', message: '推送失败', detail: errMsg })
-            toast.error('推送失败：' + errMsg)
+            })
           })
           break
         case 'git-pull':
           setSyncStatus({ state: 'syncing', message: '拉取中...' })
-          window.inkslateApi.git.pull().then(async r => {
+          flushCurrentNoteBeforeSync().then(() => {
+            window.inkslateApi.git.pull().then(async r => {
             if (!r.ok) {
               const errMsg = r.message || '未知错误'
               setSyncStatus({ state: 'error', message: '拉取失败', detail: errMsg })
@@ -303,6 +344,7 @@ export default function App() {
                 }
                 await useAppStore.getState().loadNotebooks()
                 await useAppStore.getState().loadNotes()
+                refreshOpenNoteFromPulledData()
                 await refreshSyncStatus()
                 const cur = useAppStore.getState().settings
                 if (cur) useAppStore.setState({ settings: { ...cur, gitSync: { ...cur.gitSync, lastSyncAt: Date.now() } } })
@@ -323,12 +365,14 @@ export default function App() {
             setSyncStatus({ state: 'error', message: '拉取失败', detail: errMsg })
             toast.error('拉取失败：' + errMsg)
           })
+          })
           break
         case 'git-sync':
           // 一键同步：先 pull（拿 A 端的最新）再 push（把自己的变更 + 拉来的合并提交推上去）
           // 避免在 B 端直接 push 把 A 端的修改覆盖
           setSyncStatus({ state: 'syncing', message: '同步中...' })
-          window.inkslateApi.git.sync().then(async r => {
+          flushCurrentNoteBeforeSync().then(() => {
+            window.inkslateApi.git.sync().then(async r => {
             if (!r.ok) {
               const errMsg = r.message || '未知错误'
               const phaseLabel = r.phase === 'commit' ? '提交'
@@ -354,6 +398,7 @@ export default function App() {
               if (r.pulled) {
                 await useAppStore.getState().loadNotebooks()
                 await useAppStore.getState().loadNotes()
+                refreshOpenNoteFromPulledData()
               }
               // commit/push 完成 → pendingFiles 应为 0
               await refreshSyncStatus()
@@ -366,6 +411,7 @@ export default function App() {
             setSyncStatus({ state: 'error', message: '同步失败', detail: errMsg })
             toast.error('同步失败：' + errMsg)
             await refreshSyncStatus()
+          })
           })
           break
         case 'show-shortcuts':

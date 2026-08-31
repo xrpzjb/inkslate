@@ -9,7 +9,6 @@ import hljs from 'highlight.js'
 import { TableOfContents } from './TableOfContents'
 import { PreviewSearchBar } from './PreviewSearch'
 import { FilePreview } from './filePreview/FilePreview'
-import { SpreadsheetView } from './SpreadsheetView'
 import hljsLightCss from 'highlight.js/styles/atom-one-light.css?inline'
 import hljsDarkCss from 'highlight.js/styles/atom-one-dark.css?inline'
 import '../styles/preview.css'
@@ -268,6 +267,19 @@ export function Preview() {
     )
   }
 
+  // 智能表格笔记：所见即所得，无需预览
+  if (currentNote.format === 'spreadsheet') {
+    return (
+      <div className="preview">
+        <div className="preview-empty">
+          <FileText size={48} className="preview-empty-icon" />
+          <p>智能表格笔记无需预览</p>
+          <p style={{ fontSize: 12, opacity: 0.6 }}>在编辑器中直接编辑</p>
+        </div>
+      </div>
+    )
+  }
+
   // 网址笔记：iframe 加载 url（带 sandbox 安全限制）
   if (currentNote.format === 'url') {
     const url = currentNote.url?.trim() || ''
@@ -301,15 +313,6 @@ export function Preview() {
     return (
       <div className="preview-url" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <FilePreview />
-      </div>
-    )
-  }
-
-  // 智能表格：x-data-spreadsheet 网格，可编辑并自动保存
-  if (currentNote.format === 'spreadsheet') {
-    return (
-      <div className="preview-url" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <SpreadsheetView key={currentNote.id} noteId={currentNote.id} content={currentNote.content ?? ''} />
       </div>
     )
   }

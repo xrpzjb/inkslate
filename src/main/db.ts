@@ -186,6 +186,18 @@ export async function initDatabase(): Promise<void> {
   if (!ftColumns.some(c => c.name === 'done_at')) {
     db.exec(`ALTER TABLE flash_thoughts ADD COLUMN done_at INTEGER`)
   }
+  if (!ftColumns.some(c => c.name === 'is_deleted')) {
+    db.exec(`ALTER TABLE flash_thoughts ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0`)
+  }
+
+  // AI 写作对话历史表（仅存本地数据库，不参与 git 同步）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_conversations (
+      note_id TEXT PRIMARY KEY,
+      history TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
 
   // 索引
   db.exec(`CREATE INDEX IF NOT EXISTS idx_notes_notebook ON notes(notebook_id)`)
@@ -594,6 +606,18 @@ function rowToNote(row: any, content: string = ''): Note {
   }
 }
 
+function rowToFlashThought(row: any): FlashThought {
+  return {
+    id: row.id,
+    content: row.content,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    done: row.done === 1,
+    doneAt: row.done_at ?? undefined,
+    isDeleted: row.is_deleted === 1
+  }
+}
+
 const dbMethods = {
   listNotebooks(): Notebook[] {
     const rows = getDatabase().prepare('SELECT * FROM notebooks WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) ASC').all()
@@ -769,17 +793,25 @@ const dbMethods = {
       // 网址笔记：内容用 url，文件存个简单标记
       initialContent = url ?? ''
     } else if (format === 'spreadsheet') {
-      // 智能表格：初始一张空 Sheet（与 x-data-spreadsheet 的 loadData 格式一致）
-      initialContent = JSON.stringify({
-        name: 'Sheet1',
-        freeze: 'A1',
-        styles: [],
-        merges: [],
-        rows: { len: 100 },
-        cols: { len: 26 },
-        validations: [],
-        autofilter: {}
-      })
+      // 智能表格：初始一张空 Sheet（与 x-data-spreadsheet 的 getData() 数组格式一致）
+      initialContent = JSON.stringify([
+        {
+          name: 'Sheet1',
+          styles: [{ bgcolor: '#f2f2f2' }],
+          rows: {
+            0: {
+              cells: {
+                0: { text: '项目', style: 0 },
+                1: { text: '数值', style: 0 },
+                2: { text: '备注', style: 0 }
+              }
+            },
+            1: { cells: { 0: { text: '' }, 1: { text: '' }, 2: { text: '' } } },
+            2: { cells: { 0: { text: '' }, 1: { text: '' }, 2: { text: '' } } }
+          },
+          cols: { 0: { width: 120 }, 1: { width: 120 }, 2: { width: 200 } }
+        }
+      ])
     }
     // file 格式：源文件由调用方（IPC 层）复制到 filePath 后再调本方法；
     // 这里只写一个占位空文件，保证 row.path 指向的文件存在
@@ -868,6 +900,8 @@ const dbMethods = {
 
     if (updates.content !== undefined) {
       fs.writeFileSync(newPath, updates.content, 'utf-8')
+      // 同步 DB content 列作为兜底备份（尤其 richtext 的 base64 图片内容）
+      d.prepare('UPDATE notes SET content = ? WHERE id = ?').run(updates.content, id)
     } else if (updates.url !== undefined && newFormat === 'url') {
       // 网址笔记：url 变化时同步更新文件内容（保持 url 即内容的约定）
       fs.writeFileSync(newPath, newUrl ?? '', 'utf-8')
@@ -1072,43 +1106,45 @@ const dbMethods = {
   // ============ 闪念 ============
   listFlashThoughts(): FlashThought[] {
     const rows = getDatabase().prepare(
+      'SELECT * FROM flash_thoughts WHERE is_deleted = 0 ORDER BY done ASC, COALESCE(done_at, created_at) DESC'
+    ).all() as any[]
+    return rows.map((row: any) => rowToFlashThought(row))
+  },
+
+  /** 列出全部闪念（含软删除的），用于导出 git 元数据 */
+  listAllFlashThoughts(): FlashThought[] {
+    const rows = getDatabase().prepare(
       'SELECT * FROM flash_thoughts ORDER BY done ASC, COALESCE(done_at, created_at) DESC'
     ).all() as any[]
-    return rows.map((row: any) => ({
-      id: row.id,
-      content: row.content,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      done: row.done === 1,
-      doneAt: row.done_at ?? undefined
-    }))
+    return rows.map((row: any) => rowToFlashThought(row))
   },
 
   createFlashThought(content: string): FlashThought {
     const id = generateId()
     const now = Date.now()
-    getDatabase().prepare('INSERT INTO flash_thoughts (id, content, created_at, updated_at, done) VALUES (?, ?, ?, ?, 0)').run(id, content, now, now)
-    return { id, content, createdAt: now, updatedAt: now, done: false }
+    getDatabase().prepare('INSERT INTO flash_thoughts (id, content, created_at, updated_at, done, is_deleted) VALUES (?, ?, ?, ?, 0, 0)').run(id, content, now, now)
+    return { id, content, createdAt: now, updatedAt: now, done: false, isDeleted: false }
   },
 
-  /** 从 git 元数据导入闪念：保留远端 id / 时间 / 完成状态 */
-  importFlashThought(ft: { id: string; content: string; createdAt?: number; updatedAt?: number; done?: boolean; doneAt?: number }): FlashThought {
+  /** 从 git 元数据导入闪念：保留远端 id / 时间 / 完成状态 / 删除状态 */
+  importFlashThought(ft: { id: string; content: string; createdAt?: number; updatedAt?: number; done?: boolean; doneAt?: number; isDeleted?: boolean }): FlashThought {
     const now = Date.now()
     const createdAt = ft.createdAt ?? now
     const updatedAt = ft.updatedAt ?? now
     const done = ft.done === true
     const doneAt = done ? (ft.doneAt ?? now) : null
+    const isDeleted = ft.isDeleted === true
     getDatabase().prepare(
-      'INSERT OR REPLACE INTO flash_thoughts (id, content, created_at, updated_at, done, done_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(ft.id, ft.content, createdAt, updatedAt, done ? 1 : 0, doneAt)
-    return { id: ft.id, content: ft.content, createdAt, updatedAt, done, doneAt: doneAt ?? undefined }
+      'INSERT OR REPLACE INTO flash_thoughts (id, content, created_at, updated_at, done, done_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(ft.id, ft.content, createdAt, updatedAt, done ? 1 : 0, doneAt, isDeleted ? 1 : 0)
+    return { id: ft.id, content: ft.content, createdAt, updatedAt, done, doneAt: doneAt ?? undefined, isDeleted }
   },
 
   updateFlashThought(id: string, content: string): FlashThought {
     const now = Date.now()
     getDatabase().prepare('UPDATE flash_thoughts SET content = ?, updated_at = ? WHERE id = ?').run(content, now, id)
     const row = getDatabase().prepare('SELECT * FROM flash_thoughts WHERE id = ?').get(id) as any
-    return { id: row.id, content: row.content, createdAt: row.created_at, updatedAt: row.updated_at, done: row.done === 1, doneAt: row.done_at ?? undefined }
+    return rowToFlashThought(row)
   },
 
   /** 标记闪念完成/取消完成：done=1 记录完成时间，取消时清空完成时间 */
@@ -1120,11 +1156,42 @@ const dbMethods = {
       getDatabase().prepare('UPDATE flash_thoughts SET done = 0, done_at = NULL, updated_at = ? WHERE id = ?').run(now, id)
     }
     const row = getDatabase().prepare('SELECT * FROM flash_thoughts WHERE id = ?').get(id) as any
-    return { id: row.id, content: row.content, createdAt: row.created_at, updatedAt: row.updated_at, done: row.done === 1, doneAt: row.done_at ?? undefined }
+    return rowToFlashThought(row)
   },
 
+  /** 软删除闪念：标记 is_deleted=1，保留墓碑以便跨设备传播删除 */
   deleteFlashThought(id: string): void {
-    getDatabase().prepare('DELETE FROM flash_thoughts WHERE id = ?').run(id)
+    getDatabase().prepare('UPDATE flash_thoughts SET is_deleted = 1, updated_at = ? WHERE id = ?').run(Date.now(), id)
+  },
+
+  /** 物理删除全部闪念（git clone 全量替换用，不带墓碑） */
+  purgeAllFlashThoughts(): void {
+    getDatabase().prepare('DELETE FROM flash_thoughts').run()
+  },
+
+  // ============ AI 写作对话历史（仅本地，不同步 git） ============
+  /** 读取某笔记的 AI 对话历史；无记录返回空数组 */
+  getAiConversation(noteId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
+    const row = getDatabase().prepare('SELECT history FROM ai_conversations WHERE note_id = ?').get(noteId) as { history: string } | undefined
+    if (!row) return []
+    try {
+      const parsed = JSON.parse(row.history)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  },
+
+  /** 保存某笔记的 AI 对话历史（整段覆盖） */
+  setAiConversation(noteId: string, history: Array<{ role: 'user' | 'assistant'; content: string }>): void {
+    getDatabase().prepare(
+      'INSERT OR REPLACE INTO ai_conversations (note_id, history, updated_at) VALUES (?, ?, ?)'
+    ).run(noteId, JSON.stringify(history), Date.now())
+  },
+
+  /** 清空某笔记的 AI 对话历史 */
+  clearAiConversation(noteId: string): void {
+    getDatabase().prepare('DELETE FROM ai_conversations WHERE note_id = ?').run(noteId)
   },
 
   // ============ 设置 ============
@@ -1554,14 +1621,16 @@ function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
   let content = ''
   let fixedPath: string | undefined
 
-  // 有独立文件的格式（md/html/code）
-  if (row.format !== 'file' && row.format !== 'url' && row.format !== 'richtext' && row.path) {
+  // 有独立文件的格式（md/html/code/richtext/spreadsheet）
+  // 注意：richtext 内容也以 .json 文件为准（updateNote 会把含 base64 图片的 JSON 写盘），
+  // 若只读 DB content 列，重开笔记/另一端拉取后会丢失编辑与图片。
+  if (row.format !== 'file' && row.format !== 'url' && row.path) {
     if (fs.existsSync(row.path)) {
       try { content = fs.readFileSync(row.path, 'utf-8') } catch {}
     }
     // path 失效：尝试在当前 notebook 目录甚至全局搜索
     if (!content) {
-      const ext = row.format === 'html' ? 'html' : row.format === 'code' ? 'code' : 'md'
+      const ext = row.format === 'html' ? 'html' : row.format === 'code' ? 'code' : row.format === 'richtext' ? 'json' : row.format === 'spreadsheet' ? 'sheet.json' : 'md'
       const fileName = path.basename(row.path) || `${slugify(row.title)}.${ext}`
       const nbDir = getNotebookPath(row.notebook_id)
       let found = findFileRecursively(nbDir, fileName)
@@ -1614,7 +1683,7 @@ export function repairNotePaths(): void {
 
     if (note.path && fs.existsSync(note.path)) continue
 
-    const ext = note.format === 'html' ? 'html' : note.format === 'code' ? 'code' : 'md'
+    const ext = note.format === 'html' ? 'html' : note.format === 'code' ? 'code' : note.format === 'richtext' ? 'json' : note.format === 'spreadsheet' ? 'sheet.json' : 'md'
     const fileName = note.path ? path.basename(note.path) : `${slugify(note.title)}.${ext}`
 
     // 1. 在当前 notebook 目录下搜索

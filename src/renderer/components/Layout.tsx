@@ -110,6 +110,29 @@ export function Layout() {
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [aiPanelConvs, setAiPanelConvs] = useState<Record<string, Array<{ role: 'user' | 'assistant'; content: string }>>>({})
   const prevSidebarVisible = useRef(sidebarVisible)
+  // AI 对话持久化到本地数据库（ai_conversations 表，不参与 git 同步）：启动时按需读取，变更时防抖写入
+  const aiConvsPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const persistAiConvs = useCallback((convs: Record<string, Array<{ role: 'user' | 'assistant'; content: string }>>) => {
+    if (aiConvsPersistTimer.current) clearTimeout(aiConvsPersistTimer.current)
+    aiConvsPersistTimer.current = setTimeout(() => {
+      for (const [noteId, history] of Object.entries(convs)) {
+        if (history.length > 0) window.inkslateApi.ai.setConversation(noteId, history).catch(() => {})
+        else window.inkslateApi.ai.clearConversation(noteId).catch(() => {})
+      }
+    }, 400)
+  }, [])
+  // 切换笔记时从数据库恢复该笔记的对话（内存中没有才读，避免覆盖本会话变更）
+  useEffect(() => {
+    const noteId = currentNote?.id
+    if (!noteId) return
+    if (aiPanelConvs[noteId]) return
+    let cancelled = false
+    window.inkslateApi.ai.getConversation(noteId).then(saved => {
+      if (cancelled || !saved || saved.length === 0) return
+      setAiPanelConvs(prev => (prev[noteId] ? prev : { ...prev, [noteId]: saved }))
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [currentNote?.id])
 
   useEffect(() => {
     const onOpen = () => {
@@ -182,11 +205,12 @@ export function Layout() {
 
   const isRichText = currentNote?.format === 'richtext'
   const isCode = currentNote?.format === 'code'
-  const effectivePreviewVisible = previewVisible && !isRichText && !isCode
+  const isSpreadsheet = currentNote?.format === 'spreadsheet'
+  const effectivePreviewVisible = previewVisible && !isRichText && !isCode && !isSpreadsheet
   // url/file 笔记不渲染 Editor（见下方条件渲染），editor 这一列物理上为空。
   // 即便全局 editorVisible=true（上一个 md 笔记打开过），editor 也不占位。
   // 真正的"editor 是否占位"要参考这个。
-  const isNoEditorFormat = currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet'
+  const isNoEditorFormat = currentNote?.format === 'url' || currentNote?.format === 'file'
   const editorEffectivelyVisible = editorVisible && !isNoEditorFormat
 
   // 拖动 max：保证编辑器至少有 240px 可见，预览至少有 200px 可见（隐藏时给 0）
@@ -347,7 +371,13 @@ export function Layout() {
             noteFormat={currentNote?.format ?? 'markdown'}
             history={currentNote?.id ? (aiPanelConvs[currentNote.id] || []) : []}
             onHistoryChange={(h) => {
-              if (currentNote?.id) setAiPanelConvs(prev => ({ ...prev, [currentNote.id]: h }))
+              if (currentNote?.id) {
+                setAiPanelConvs(prev => {
+                  const next = { ...prev, [currentNote.id]: h }
+                  persistAiConvs(next)
+                  return next
+                })
+              }
             }}
             onClose={() => {
               setAiPanelOpen(false)
@@ -389,13 +419,13 @@ export function Layout() {
                     <div
                       className={`layout-editor ${!editorVisible ? 'collapsed' : ''}`}
                       style={{
-                        // url / file / spreadsheet 笔记都不渲染 Editor，整列给 preview
-                        width: (currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet') ? 0 : (editorVisible ? 'auto' : 0),
-                        flex: (currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet') ? 'none' : (editorVisible ? 1 : 'none'),
-                        display: (currentNote?.format === 'url' || currentNote?.format === 'file' || currentNote?.format === 'spreadsheet') ? 'none' : undefined
+                        // url / file 笔记都不渲染 Editor，整列给 preview
+                        width: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 0 : (editorVisible ? 'auto' : 0),
+                        flex: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : (editorVisible ? 1 : 'none'),
+                        display: (currentNote?.format === 'url' || currentNote?.format === 'file') ? 'none' : undefined
                       }}
                     >
-                      {editorVisible && currentNote?.format !== 'url' && currentNote?.format !== 'file' && currentNote?.format !== 'spreadsheet' && <Editor />}
+                      {editorVisible && currentNote?.format !== 'url' && currentNote?.format !== 'file' && <Editor />}
                     </div>
 
                     <div

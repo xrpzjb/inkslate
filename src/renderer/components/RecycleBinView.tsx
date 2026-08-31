@@ -4,7 +4,7 @@ import { Note, Notebook } from '@shared/types'
 import {
   Trash2, RotateCcw, FileText, Folder, FolderOpen, Inbox,
   Calendar, AlertTriangle, FileCode2, FileType2, Globe, X,
-  Link2, Paperclip
+  Link2, Paperclip, Table
 } from 'lucide-react'
 import { confirm } from './ConfirmDialog'
 
@@ -204,7 +204,8 @@ function NoteRow({ note, onRestore, onPurge }: {
     richtext: { Icon: FileType2, label: '富文本', color: '#9b59b6' },
     code: { Icon: FileCode2, label: '代码', color: '#4a90e2' },
     url: { Icon: Link2, label: '网址', color: '#3b82f6' },
-    file: { Icon: Paperclip, label: '文件', color: '#8b5cf6' }
+    file: { Icon: Paperclip, label: '文件', color: '#8b5cf6' },
+    spreadsheet: { Icon: Table, label: '智能表格', color: '#0d9488' }
   }[note.format] ?? { Icon: FileText, label: note.format || '未知', color: '#7d8590' }
   const { Icon: FormatIcon, label: formatLabel, color: formatColor } = formatInfo
 

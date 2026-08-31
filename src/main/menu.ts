@@ -61,9 +61,9 @@ export function buildMenuData(): MenuData[] {
           id: 'new', label: '新建',
           submenu: [
             { id: 'new-markdown', label: 'Markdown 笔记', accelerator: 'Ctrl+N', arg: { format: 'markdown' } },
+            { id: 'new-spreadsheet', label: '智能表格', arg: { format: 'spreadsheet' } },
             { id: 'new-html', label: 'HTML 笔记', accelerator: 'Ctrl+Shift+H', arg: { format: 'html' } },
             { id: 'new-richtext', label: '富文本笔记', accelerator: 'Ctrl+Shift+R', arg: { format: 'richtext' } },
-            { id: 'new-spreadsheet', label: '智能表格', arg: { format: 'spreadsheet' } },
             {
               id: 'new-code', label: '代码笔记',
               submenu: [

@@ -132,7 +132,22 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.AI_CHAT, messages),
     /** 保存 AI 配置 */
     configure: (config: any): Promise<void> =>
-      ipcRenderer.invoke(IPC_CHANNELS.AI_CONFIGURE, config)
+      ipcRenderer.invoke(IPC_CHANNELS.AI_CONFIGURE, config),
+    /** 读取某笔记的 AI 对话历史（仅本地，不同步 git） */
+    getConversation: (noteId: string): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AI_CONVERSATION_GET, noteId),
+    /** 保存某笔记的 AI 对话历史（整段覆盖，仅本地） */
+    setConversation: (noteId: string, history: Array<{ role: 'user' | 'assistant'; content: string }>): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AI_CONVERSATION_SET, noteId, history),
+    /** 清空某笔记的 AI 对话历史（仅本地） */
+    clearConversation: (noteId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AI_CONVERSATION_CLEAR, noteId),
+    /** 订阅 AI 处理进度（主进程推送的实时进度文案），返回取消订阅函数 */
+    onProgress: (cb: (text: string) => void): (() => void) => {
+      const listener = (_: any, text: string) => cb(text)
+      ipcRenderer.on(IPC_CHANNELS.AI_CHAT_PROGRESS, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AI_CHAT_PROGRESS, listener)
+    }
   },
 
   recycleBin: {
@@ -196,6 +211,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_PDF, payload),
     exportDocx: (payload: { title: string; content: string; format: Note['format']; basePath?: string; language?: string }): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_DOCX, payload),
+    exportXlsx: (payload: { title: string; content: string }): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_XLSX, payload),
     write: (filePath: string, content: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, filePath, content),
     readAsBase64: (filePath: string): Promise<{ base64: string; mime: string }> =>

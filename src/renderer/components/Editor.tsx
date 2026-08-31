@@ -19,9 +19,10 @@ const clearDraft = (noteId: string) => {
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { appThemes } from '../themes'
-import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2, Lock, Unlock, AlertCircle, MoreHorizontal, WrapText, Check } from 'lucide-react'
+import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2, Lock, Unlock, AlertCircle, MoreHorizontal, WrapText, Check, Download } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
+import { SpreadsheetEditor } from './SpreadsheetEditor'
 import { toast } from './Toast'
 
 /**
@@ -52,6 +53,19 @@ export function Editor() {
   const codeEditorRef = useRef<import('./CodeEditor').CodeEditorHandle>(null)
   const richtextEditorRef = useRef<{ setHTML: (html: string) => void }>(null)
 
+  // Git 同步状态：同步进行中时禁止编辑器自动写盘，
+  // 否则 pull 把远端（A 端）内容落到磁盘后，编辑器里残留的旧内容会在
+  // pull → commitAll 的窗口里被 autosave 写回文件，随后被 push 覆盖远程。
+  const syncState = useAppStore(s => s.syncStatus.state)
+  const isSyncingRef = useRef(false)
+  isSyncingRef.current = syncState === 'syncing'
+  // 同步开始时：清掉已挂起的防抖定时器，避免旧内容在窗口期触发写盘
+  useEffect(() => {
+    if (syncState !== 'syncing') return
+    if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
+    if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
+  }, [syncState])
+
   // 关键防御：跟踪"本组件正在为哪个 note 持有本地 title/content 草稿"。
   // 切笔记时：旧 note 的草稿用完即弃，新 note 的同步效果跑完后才允许写入。
   // 防止"切到 B 时，A 的本地 content/title 错存到 B"。
@@ -77,11 +91,11 @@ export function Editor() {
         }
         // 异步 flush（不 await，避免阻塞 UI）
         // —— 把上一个 note 的最终草稿一次性写入库
-        // 防御：不保存空标题，不覆盖已有标题
-        if (last.title !== undefined && last.title.trim()) {
+        // 防御：不保存空标题，不覆盖已有标题；同步进行中不写盘（避免旧内容污染）
+        if (last.title !== undefined && last.title.trim() && !isSyncingRef.current) {
           updateNote(last.id, { title: last.title }).catch(() => {})
         }
-        if (last.content !== undefined) {
+        if (last.content !== undefined && !isSyncingRef.current) {
           updateNote(last.id, { content: last.content }).catch(() => {})
         }
       }
@@ -106,8 +120,10 @@ export function Editor() {
       if (last) {
         if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
         if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
-        updateNote(last.id, { title: last.title }).catch(() => {})
-        updateNote(last.id, { content: last.content }).catch(() => {})
+        if (!isSyncingRef.current) {
+          updateNote(last.id, { title: last.title }).catch(() => {})
+          updateNote(last.id, { content: last.content }).catch(() => {})
+        }
       }
 
       setContent('')
@@ -202,6 +218,8 @@ export function Editor() {
     titleTimerRef.current = setTimeout(() => {
       // 二次 guard：timer 触发时再次确认还在编辑同一个 note
       if (currentNote.id !== editingNoteIdRef.current) return
+      // 同步进行中不写盘（内容已在同步前落盘，此时旧 title 写回会污染文件）
+      if (isSyncingRef.current) return
       // 防御：不保存空标题
       if (!title?.trim()) return
       // 只传 title，避免覆盖 content
@@ -221,6 +239,8 @@ export function Editor() {
     contentTimerRef.current = setTimeout(() => {
       // 二次 guard：timer 触发时再次确认还在编辑同一个 note
       if (currentNote.id !== editingNoteIdRef.current) return
+      // 同步进行中不写盘（pull 已把远端内容落到磁盘，旧 content 写回会覆盖远端）
+      if (isSyncingRef.current) return
       // 只传 content，避免覆盖 title
       const noteId = currentNote.id
       updateNote(noteId, { content }).then(() => clearDraft(noteId)).catch(() => {})
@@ -246,6 +266,8 @@ export function Editor() {
         clearTimeout(contentTimerRef.current)
         contentTimerRef.current = null
       }
+      // 同步进行中不写盘（pull 后编辑器卸载，旧内容写回会覆盖远端）
+      if (isSyncingRef.current) return
       updateNote(last.id, { title: last.title }).catch(() => {})
       updateNote(last.id, { content: last.content }).catch(() => {})
     }
@@ -280,6 +302,8 @@ export function Editor() {
   const handleSave = async () => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
+    // 同步进行中不写盘（同步前已统一落盘）
+    if (isSyncingRef.current) return
     // 清掉两个防抖 timer，避免重复保存
     if (titleTimerRef.current) {
       clearTimeout(titleTimerRef.current)
@@ -298,6 +322,25 @@ export function Editor() {
     }
   }
 
+  /** 导出智能表格笔记为 Excel（.xlsx）：content 即为表格 JSON */
+  const handleExportExcel = async () => {
+    if (!currentNote) return
+    setMoreMenuOpen(false)
+    setSaveStatus({ saving: true })
+    try {
+      const res = await window.inkslateApi.file.exportXlsx({
+        title: title || '表格',
+        content
+      })
+      if (res.ok) toast.success('已导出 Excel 文件')
+      else if (res.message && res.message !== '已取消') toast.error('Excel 导出失败：' + res.message)
+    } catch (e) {
+      toast.error('Excel 导出失败：' + (e as Error).message)
+    } finally {
+      setSaveStatus({ saving: false })
+    }
+  }
+
   // CodeEditor 的 onSave 在 useEffect 内闭包，不会随 title/content 变化更新。
   // 用 ref 持有最新值，传给 CodeEditor 的始终是最新值。
   const contentRef = useRef(content)
@@ -310,6 +353,8 @@ export function Editor() {
   const stableSave = useCallback(() => {
     const cn = currentNoteRef.current
     if (!cn || cn.id !== editingNoteIdRef.current) return
+    // 同步进行中不写盘（避免把编辑器里的旧内容写回文件）
+    if (isSyncingRef.current) return
     if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
     if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
     setSaveStatus({ saving: true })
@@ -530,7 +575,7 @@ export function Editor() {
             outline: 'none'
           }}
         />
-                {currentNote?.format !== 'richtext' && currentNote?.format !== 'code' && !previewVisible && (
+                {currentNote?.format !== 'richtext' && currentNote?.format !== 'code' && currentNote?.format !== 'spreadsheet' && !previewVisible && (
           <button
             className="panel-action-btn"
             onClick={togglePreview}
@@ -584,13 +629,15 @@ export function Editor() {
                 zIndex: 1000,
               }}
             >
-              <MenuButton
-                dark={settings?.editorDark === true}
-                active={settings?.wordWrap === true}
-                label="自动换行"
-                icon={<WrapText size={14} style={{ flexShrink: 0 }} />}
-                onClick={() => updateSettings({ wordWrap: !(settings?.wordWrap === true) })}
-              />
+              {currentNote?.format !== 'spreadsheet' && (
+                <MenuButton
+                  dark={settings?.editorDark === true}
+                  active={settings?.wordWrap === true}
+                  label="自动换行"
+                  icon={<WrapText size={14} style={{ flexShrink: 0 }} />}
+                  onClick={() => updateSettings({ wordWrap: !(settings?.wordWrap === true) })}
+                />
+              )}
               {!appIsDark && (
                 <MenuButton
                   dark={settings?.editorDark === true}
@@ -605,18 +652,29 @@ export function Editor() {
               {currentNote && !['url', 'file'].includes(currentNote.format) && (
                 <>
                   <MenuDivider />
-                  <MenuButton
-                    dark={settings?.editorDark === true}
-                    label="Git 历史快照"
-                    icon={<History size={14} style={{ flexShrink: 0 }} />}
-                    onClick={() => { setMoreMenuOpen(false); window.dispatchEvent(new CustomEvent('inkslate:open-history')) }}
-                  />
-                  <MenuButton
-                    dark={settings?.editorDark === true}
-                    label="AI 写作"
-                    icon={<Bot size={14} style={{ flexShrink: 0 }} />}
-                    onClick={() => { setMoreMenuOpen(false); window.dispatchEvent(new CustomEvent('inkslate:open-ai-panel')) }}
-                  />
+                  {currentNote.format === 'spreadsheet' ? (
+                    <MenuButton
+                      dark={settings?.editorDark === true}
+                      label="导出为 Excel"
+                      icon={<Download size={14} style={{ flexShrink: 0 }} />}
+                      onClick={handleExportExcel}
+                    />
+                  ) : (
+                    <>
+                      <MenuButton
+                        dark={settings?.editorDark === true}
+                        label="Git 历史快照"
+                        icon={<History size={14} style={{ flexShrink: 0 }} />}
+                        onClick={() => { setMoreMenuOpen(false); window.dispatchEvent(new CustomEvent('inkslate:open-history')) }}
+                      />
+                      <MenuButton
+                        dark={settings?.editorDark === true}
+                        label="AI 写作"
+                        icon={<Bot size={14} style={{ flexShrink: 0 }} />}
+                        onClick={() => { setMoreMenuOpen(false); window.dispatchEvent(new CustomEvent('inkslate:open-ai-panel')) }}
+                      />
+                    </>
+                  )}
                   <MenuButton
                     dark={settings?.editorDark === true}
                     label="保存"
@@ -812,7 +870,13 @@ export function Editor() {
         </div>
       )}
 
-            {currentNote.format === 'richtext' ? (
+            {currentNote.format === 'spreadsheet' ? (
+        <SpreadsheetEditor
+          noteId={currentNote.id}
+          value={content}
+          onChange={setContent}
+        />
+      ) : currentNote.format === 'richtext' ? (
         <div style={{
           flex: 1,
           display: 'flex',
@@ -1690,7 +1754,7 @@ function MermaidMenu({ onInsert }: { onInsert: (type: string) => void }) {
 }
 
 interface AiJsonResponse {
-  status: 'completed' | 'question' | 'working'
+  status: 'completed' | 'question'
   content: string
   description: string
 }
@@ -1710,7 +1774,7 @@ function extractJson(text: string): AiJsonResponse | null {
     const attempt = (s: string): AiJsonResponse | null => {
       try {
         const p = JSON.parse(s)
-        if (p && typeof p.status === 'string' && ['completed', 'question', 'working'].includes(p.status)) {
+        if (p && typeof p.status === 'string' && ['completed', 'question'].includes(p.status)) {
           const d = p.description || ''
           return { status: p.status, content: p.content || '', description: (prefix && d) ? `${prefix}\n\n${d}` : (d || prefix) }
         }
@@ -1746,7 +1810,7 @@ function extractJson(text: string): AiJsonResponse | null {
   }
 
   // strategy 3: regex fallback for individual fields
-  const s = (raw.match(/"status"\s*:\s*"(completed|question|working)"/i) || [])[1]
+  const s = (raw.match(/"status"\s*:\s*"(completed|question)"/i) || [])[1]
   if (!s) return null
   const dm = raw.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/)
   const desc = dm ? dm[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : ''
@@ -1756,7 +1820,6 @@ function extractJson(text: string): AiJsonResponse | null {
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   completed: { label: '已完成', color: '#16a34a' },
   question:  { label: '询问中', color: '#2563eb' },
-  working:   { label: '处理中', color: '#d97706' },
 }
 
 export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteFormat, history, onHistoryChange, onClose, onReplace }: {
@@ -1774,11 +1837,20 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [lastStatus, setLastStatus] = useState<string | null>(null)
+  // 实时进度：主进程在工具调用/请求阶段推送的进度文案（方案C）
+  const [progress, setProgress] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     taRef.current?.focus()
   }, [])
+
+  // 订阅主进程推送的 AI 处理进度（loading 期间实时更新）
+  useEffect(() => {
+    if (!loading) { setProgress(null); return }
+    const off = window.inkslateApi.ai.onProgress(text => setProgress(text))
+    return () => off()
+  }, [loading])
 
   const handleSend = async () => {
     if (!prompt.trim() || loading) return
@@ -1802,22 +1874,23 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
         content: `你是 Inkslate 的 AI 笔记编辑助手。你有 scan_dir、read_file、grep_dir 三个工具。
 
 ## 工作流程
-1. 先用工具获取信息（scan_dir / read_file / grep_dir）
-2. 工具调用完成后，最终回复必须是纯 JSON
+1. 先用工具获取信息（scan_dir / read_file / grep_dir），可以多次、反复调用工具直到信息齐全
+2. 工具调用由系统自动执行并把结果返回给你；工具执行期间用户界面会显示实时进度，你无需回报"处理中"
+3. 全部信息收集完成后，最终回复必须是纯 JSON
 
 ## 最终 JSON 格式
-{"status":"completed|question|working","content":"...","description":"..."}
+{"status":"completed|question","content":"...","description":"..."}
 
 status 含义：
 - completed: 任务完成。content=完整的最终笔记内容（必须包含全部输出，不能为空）。description=简短说明（1-2句）。
 - question: 需要追问。content=""。description=你的问题。
-- working: 处理中。content=""。description=进度说明。
 
 示例：
 {"status":"completed","content":"# 标题\\n\\n这是完整的文档内容，包含所有信息","description":"已生成文档。"}
 {"status":"question","content":"","description":"请问你希望分析哪个模块？"}
 
 重要规则——必须严格遵守：
+- 不要返回 working/处理中 状态；工具调用由系统自动执行，你只需要在一次请求里完成所有工具调用并给出最终 JSON
 - 最终回复必须是纯 JSON，第1个字符必须是 {，最后1个字符必须是 }
 - JSON 前面不能有任何文字，不要写"开始生成"之类的说明
 - status=completed 时 content 必须包含完整的最终笔记内容，content 不能为空字符串
@@ -1828,11 +1901,13 @@ status 含义：
 当前笔记内容（原文）：
 ${noteContent}
 `}
+      // 方案C：单次请求内主进程自动执行所有工具调用并实时推送进度（ai.chat 内部完成），
+      // 渲染端只订阅进度显示 + 处理最终 JSON。不再循环追问 working。
       const messages = [systemMsg, ...newHistory.map(m => ({ role: m.role, content: m.content }))]
       const res = await window.inkslateApi.ai.chat(messages)
       const raw = res || 'AI 未返回内容'
-
       const parsed = extractJson(raw)
+
       if (parsed) {
         onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
         setLastStatus(parsed.status)
@@ -1920,8 +1995,10 @@ ${noteContent}
           })}
           {loading && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, color: 'var(--text-tertiary)', fontSize: 13 }}>
-              <Loader2 size={16} style={{ animation: 'ai-spin 1s linear infinite' }} />
-              思考中...
+              <Loader2 size={16} style={{ animation: 'ai-spin 1s linear infinite', flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                {progress || '思考中...'}
+              </span>
               <style>{'@keyframes ai-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'}</style>
             </div>
           )}

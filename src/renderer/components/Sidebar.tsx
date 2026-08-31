@@ -908,20 +908,6 @@ export function Sidebar() {
             label="新建笔记"
             parentRef={contextMenuRef}
           >
-            <MenuItem icon={<Globe size={14} />} label="网址笔记" onClick={async () => {
-              closeContextMenu()
-              const target = resolveTarget(contextMenu.node)
-              const nbId = target.notebookId || await ensureNotebook()
-              setUrlDialog({ notebookId: nbId, parentId: target.parentId, name: '', value: 'https://' })
-            }} />
-            <MenuItem icon={<Paperclip size={14} />} label="文件笔记" onClick={handleCreateFileNote} />
-            <MenuItem icon={<Table2 size={14} />} label="智能表格" onClick={async () => {
-              closeContextMenu()
-              const target = resolveTarget(contextMenu.node)
-              const nbId = target.notebookId || await ensureNotebook()
-              const note = await createNote('未命名智能表格', nbId, target.parentId, undefined, 'spreadsheet')
-              setRenaming({ id: note.id, type: 'note', value: note.title })
-            }} />
             <MenuItem icon={<FileText size={14} />} label="Markdown 笔记" onClick={async () => {
               closeContextMenu()
               const target = resolveTarget(contextMenu.node)
@@ -929,6 +915,20 @@ export function Sidebar() {
               const note = await createNote('未命名笔记', nbId, target.parentId, undefined, 'markdown')
               setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
+            <MenuItem icon={<Table2 size={14} />} label="智能表格" onClick={async () => {
+              closeContextMenu()
+              const target = resolveTarget(contextMenu.node)
+              const nbId = target.notebookId || await ensureNotebook()
+              const note = await createNote('未命名智能表格', nbId, target.parentId, undefined, 'spreadsheet')
+              setRenaming({ id: note.id, type: 'note', value: note.title })
+            }} />
+            <MenuItem icon={<Globe size={14} />} label="网址笔记" onClick={async () => {
+              closeContextMenu()
+              const target = resolveTarget(contextMenu.node)
+              const nbId = target.notebookId || await ensureNotebook()
+              setUrlDialog({ notebookId: nbId, parentId: target.parentId, name: '', value: 'https://' })
+            }} />
+            <MenuItem icon={<Paperclip size={14} />} label="文件笔记" onClick={handleCreateFileNote} />
             <MenuItem icon={<FileCode2 size={14} />} label="HTML 笔记" onClick={async () => {
               closeContextMenu()
               const target = resolveTarget(contextMenu.node)
@@ -1640,6 +1640,16 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
 }) {
   const [selected, setSelected] = useState<string | null>(null)
   const tree = useMemo(() => buildNoteTree(notebooks, notes), [notebooks, notes])
+  // 折叠状态：默认全部收起（集合里有的 id 表示"已折叠"），点击展开/收起
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(notebooks.map(n => n.id)))
+  const toggleCollapsed = (id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   // 收集要排除的节点（自身 + 子节点，防止循环）
   const excludeIds = useMemo(() => {
@@ -1679,6 +1689,8 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
         continue
       }
       const isFolder = node.type === 'notebook'
+      const hasChildren = node.children.length > 0
+      const isCollapsed = collapsed.has(node.id)
       const note = notes.find(n => n.id === node.id)
       const noteFormat = note?.format || 'markdown'
       const formatColors: Record<string, string> = { markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6', code: '#4a90e2', url: '#0ea5e9', file: '#16a34a', spreadsheet: '#f59e0b' }
@@ -1694,11 +1706,24 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
             display: 'flex', alignItems: 'center', gap: 6
           }}
         >
+          {isFolder ? (
+            <span
+              onClick={(e) => { e.stopPropagation(); toggleCollapsed(node.id) }}
+              style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: 'var(--text-tertiary)', flexShrink: 0 }}
+              title={isCollapsed ? '展开' : '收起'}
+            >
+              {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            </span>
+          ) : (
+            <span style={{ width: 12, flexShrink: 0 }} />
+          )}
           {isFolder ? <Folder size={13} color="var(--text-secondary)" /> : <MoveNoteIcon format={noteFormat} size={13} color={fc} />}
           {node.name || '(未命名)'}
         </div>
       )
-      result.push(...renderTree(node.children, depth + 1))
+      if (hasChildren && !isCollapsed) {
+        result.push(...renderTree(node.children, depth + 1))
+      }
     }
     return result
   }

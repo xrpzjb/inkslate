@@ -16,7 +16,7 @@ export function HistoryPanel({
 }: {
   noteId: string
   notePath: string
-  noteFormat: 'markdown' | 'html' | 'richtext' | 'code'
+  noteFormat: 'markdown' | 'html' | 'richtext' | 'code' | 'spreadsheet'
   currentContent: string
   onClose: () => void
 }) {

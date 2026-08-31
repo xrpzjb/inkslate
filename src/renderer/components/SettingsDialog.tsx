@@ -7,11 +7,13 @@ import { toast } from './Toast'
 export const FONT_OPTIONS: { value: string; label: string; stack: string; mono?: boolean; bold?: boolean }[] = [
   { value: 'system', label: '系统默认', stack: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif' },
   { value: 'system-nano', label: 'System Nano', stack: 'system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+  { value: 'songti', label: '宋体（清晰不虚）', stack: '"Songti SC", "SimSun", "NSimSun", "Source Han Serif SC", "Noto Serif CJK SC", "Times New Roman", serif' },
+  { value: 'sourcehan-serif', label: '思源宋体（庄重清晰）', stack: '"Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "SimSun", serif' },
+  { value: 'sourcehan', label: '思源黑体（圆润）', stack: '"Source Han Sans CN", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif' },
   { value: 'jetbrains', label: 'JetBrains Mono（圆润）', stack: '"JetBrains Mono", "Fira Code", Menlo, Consolas, monospace', mono: true },
   { value: 'cascadia', label: 'Cascadia Code', stack: '"Cascadia Code", "Fira Code", Consolas, monospace', mono: true },
   { value: 'jetbrains-bold', label: 'JetBrains Mono Bold（粗体）', stack: '"JetBrains Mono Bold", "JetBrains Mono ExtraBold", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace', mono: true, bold: true },
   { value: 'sourcecode', label: 'Source Code Pro（粗体清晰）', stack: '"Source Code Pro", "Source Code Pro Black", "JetBrains Mono", Menlo, Consolas, monospace', mono: true, bold: true },
-  { value: 'sourcehan', label: '思源黑体（圆润）', stack: '"Source Han Sans CN", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif' },
 ]
 
 /** 字体选择下拉框 */
@@ -73,6 +75,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     qwen:       { label: '通义千问 (Qwen)',         url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus' },
     glm:        { label: '智谱 GLM',                url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4-flash' },
     moonshot:   { label: '月之暗面 (Kimi)',         url: 'https://api.moonshot.cn/v1/chat/completions',           model: 'moonshot-v1-8k' },
+    mimo:       { label: 'MiMo (小米)',             url: 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions',            model: 'mimo-v2.5-pro' },
     openai:     { label: 'OpenAI',                  url: 'https://api.openai.com/v1/chat/completions',            model: 'gpt-4o-mini' },
     opencode:   { label: 'OpenCode Go',              url: 'https://opencode.ai/zen/go/v1/chat/completions',       model: 'deepseek-v4-flash' },
     custom:     { label: '自定义 (OpenAI 兼容)',    url: '',                                                     model: '' },
@@ -82,6 +85,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     qwen:     ['qwen-turbo', 'qwen-plus', 'qwen-max', 'qwen-long'],
     glm:      ['glm-4-flash', 'glm-4-plus', 'glm-4-air', 'glm-4-long'],
     moonshot: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    mimo:     ['mimo-v2.5', 'mimo-v2.5-pro'],
     openai:   ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
     opencode: ['grok-4.5', 'glm-5.2', 'glm-5.1', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'deepseek-v4-pro', 'deepseek-v4-flash', 'mimo-v2.5', 'mimo-v2.5-pro', 'minimax-m3', 'minimax-m2.7', 'minimax-m2.5', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus'],
   }

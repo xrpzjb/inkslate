@@ -401,7 +401,7 @@ export class GitManager {
       'utf-8'
     )
 
-    const flashThoughts = dbApi.listFlashThoughts()
+    const flashThoughts = dbApi.listAllFlashThoughts()
     fs.writeFileSync(
       path.join(inkslateDir, 'flash_thoughts.json'),
       JSON.stringify({
@@ -412,7 +412,8 @@ export class GitManager {
           created_at: ft.createdAt,
           updated_at: ft.updatedAt,
           done: ft.done ? 1 : 0,
-          done_at: ft.doneAt ?? null
+          done_at: ft.doneAt ?? null,
+          is_deleted: ft.isDeleted ? 1 : 0
         }))
       }, null, 2),
       'utf-8'
@@ -607,23 +608,41 @@ export class GitManager {
     dbApi.mergeNotes(finalNotes)
     console.log(`[git] reconcile: merged ${finalNotes.length} remote notes, local note count after: ${dbApi.listActiveNotes().length}`)
 
-    // 3. 闪念：增量合并（本地有远端无的保留，远端有本地无的新增，id 冲突用远端覆盖）
+    // 3. 闪念：增量合并（本地有远端无的保留，远端有本地无的新增，id 冲突用远端覆盖；
+    //    远端标记 is_deleted 的作为墓碑同步删除本地副本，避免"删除复活"和跨设备重复）
     const ftFile = path.join(inkslateDir, 'flash_thoughts.json')
     let flashThoughtsApplied = 0
     if (fs.existsSync(ftFile)) {
       try {
         const ftData = JSON.parse(fs.readFileSync(ftFile, 'utf-8'))
         const remoteFts = Array.isArray(ftData.flash_thoughts) ? ftData.flash_thoughts : []
-        const localIds = new Set(dbApi.listFlashThoughts().map(f => f.id))
+        const localFts = dbApi.listAllFlashThoughts()
+        const localById = new Map(localFts.map(f => [f.id, f]))
+        const localIds = new Set(localById.keys())
+        const activeContentById = new Map(localFts.filter(f => !f.isDeleted).map(f => [f.content, f.id]))
         for (const ft of remoteFts) {
           if (!ft || typeof ft.id !== 'string') continue
+          const isDeleted = ft.is_deleted === 1 || ft.is_deleted === true
+          const local = localById.get(ft.id)
+          // 内容去重：远端新增的闪念与本机已有活跃闪念内容相同 → 本机已有这条，
+          // 保留本机的（含删除状态），不重复导入。
+          if (!isDeleted && !local && activeContentById.has(ft.content ?? '')) {
+            continue
+          }
+          // 远端是墓碑 → 本地副本（若存在）同步标记删除
+          if (isDeleted && local && !local.isDeleted) {
+            dbApi.deleteFlashThought(ft.id)
+            flashThoughtsApplied++
+            continue
+          }
           dbApi.importFlashThought({
             id: ft.id,
             content: ft.content ?? '',
             createdAt: ft.created_at,
             updatedAt: ft.updated_at,
             done: ft.done === 1 || ft.done === true,
-            doneAt: ft.done_at ?? undefined
+            doneAt: ft.done_at ?? undefined,
+            isDeleted
           })
           if (!localIds.has(ft.id)) flashThoughtsApplied++
         }
@@ -764,25 +783,29 @@ export class GitManager {
     })
     dbApi.replaceNotes(finalNotes)
 
-    // 3. 闪念：全量替换
+    // 3. 闪念：全量替换（含删除墓碑，保持远端删除状态）
     const ftFileReplace = path.join(inkslateDir, 'flash_thoughts.json')
     if (fs.existsSync(ftFileReplace)) {
       try {
         const ftData = JSON.parse(fs.readFileSync(ftFileReplace, 'utf-8'))
         const remoteFts = Array.isArray(ftData.flash_thoughts) ? ftData.flash_thoughts : []
-        for (const ft of dbApi.listFlashThoughts()) {
-          dbApi.deleteFlashThought(ft.id)
-        }
+        dbApi.purgeAllFlashThoughts()
+        const activeContent = new Set<string>()
         for (const ft of remoteFts) {
           if (!ft || typeof ft.id !== 'string') continue
+          const isDeleted = ft.is_deleted === 1 || ft.is_deleted === true
+          const content = ft.content ?? ''
+          if (!isDeleted && activeContent.has(content)) continue
           dbApi.importFlashThought({
             id: ft.id,
-            content: ft.content ?? '',
+            content,
             createdAt: ft.created_at,
             updatedAt: ft.updated_at,
             done: ft.done === 1 || ft.done === true,
-            doneAt: ft.done_at ?? undefined
+            doneAt: ft.done_at ?? undefined,
+            isDeleted
           })
+          if (!isDeleted) activeContent.add(content)
         }
       } catch (e) {
         console.error('[git] replaceFromMetadata: failed to parse flash_thoughts.json', e)

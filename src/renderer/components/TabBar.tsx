@@ -33,6 +33,17 @@ function RichTextIcon({ size = 13 }: { size?: number }) {
   )
 }
 
+function TableIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="1" />
+      <path d="M3 10 L21 10" />
+      <path d="M3 15 L21 15" />
+      <path d="M9 4 L9 20" />
+    </svg>
+  )
+}
+
 function TabFormatIcon({ format, size = 13 }: { format: string; size?: number }) {
   switch (format) {
     case 'markdown': return <MarkdownIcon size={size} />
@@ -41,6 +52,7 @@ function TabFormatIcon({ format, size = 13 }: { format: string; size?: number })
     case 'url':     return <Link2 size={size} />
     case 'file':     return <Paperclip size={size} />
     case 'html':     return <Globe size={size} />
+    case 'spreadsheet': return <TableIcon size={size} />
     default:         return <MarkdownIcon size={size} />
   }
 }
@@ -52,6 +64,7 @@ const FORMAT_COLORS: Record<string, string> = {
   code:     '#4a90e2',
   url:      '#0ea5e9',
   file:     '#16a34a',
+  spreadsheet: '#0d9488',
 }
 
 export function TabBar() {
@@ -147,20 +160,13 @@ export function TabBar() {
     if (id !== activeTabId) activateTab(id)
   }
 
-  /** 点击「更多」里的标签：激活 + 关闭菜单 + 滚动标签条把它滚进可视区 */
+  /** 点击「更多」里的标签：移到最前 + 激活 + 关闭菜单 */
   const handleMoreTabClick = (id: string) => {
-    if (id !== activeTabId) activateTab(id)
     setMoreOpen(false)
-    const idx = tabs.findIndex(t => t.id === id)
-    const el = idx >= 0 ? tabElsRef.current[idx] : null
-    const bar = barRef.current
-    if (el && bar) {
-      const barRect = bar.getBoundingClientRect()
-      const elRect = el.getBoundingClientRect()
-      const left = bar.scrollLeft + (elRect.left - barRect.left)
-      const target = left - (bar.clientWidth - elRect.width)
-      bar.scrollLeft = Math.max(0, target)
-    }
+    // 把该标签移到 openTabs 最前面
+    const newTabs = [id, ...openTabs.filter(t => t !== id)]
+    reorderTabs(newTabs)
+    if (id !== activeTabId) activateTab(id)
   }
 
   const handleCtxMenu = (e: React.MouseEvent, id: string) => {
