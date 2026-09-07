@@ -22,7 +22,7 @@ import { appThemes } from '../themes'
 import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2, Lock, Unlock, AlertCircle, MoreHorizontal, WrapText, Check, Download } from 'lucide-react'
 import { FileText } from 'lucide-react'
 import { CodeEditor } from './CodeEditor'
-import { SpreadsheetEditor } from './SpreadsheetEditor'
+import { SpreadsheetEditor, spreadsheetToMarkdown, markdownToSpreadsheetData } from './SpreadsheetEditor'
 import { toast } from './Toast'
 
 /**
@@ -50,6 +50,10 @@ export function Editor() {
   const [title, setTitle] = useState(() => currentNote?.title ?? '')
   const titleTimerRef = useRef<NodeJS.Timeout | null>(null)
   const contentTimerRef = useRef<NodeJS.Timeout | null>(null)
+  // 智能表格：SpreadsheetEditor 通过 onChange 维护 content（数组格式），
+  // 一旦用户编辑过（dirty=true），currentNote.content 里的旧磁盘值就不得再覆盖 content，
+  // 否则新增 sheet / 编辑会被回滚；仅在未编辑（如 git pull 恢复）时允许同步。
+  const spreadsheetDirtyRef = useRef(false)
   const codeEditorRef = useRef<import('./CodeEditor').CodeEditorHandle>(null)
   const richtextEditorRef = useRef<{ setHTML: (html: string) => void }>(null)
 
@@ -109,6 +113,7 @@ export function Editor() {
       setContent(activeContent)
       setTitle(currentNote.title ?? '')
       editingNoteIdRef.current = currentNote.id
+      spreadsheetDirtyRef.current = false
       lastDraftRef.current = { id: currentNote.id, title: currentNote.title ?? '', content: activeContent }
       if (hasDraft) {
         clearDraft(currentNote.id)
@@ -186,6 +191,10 @@ export function Editor() {
     if (!currentNote.content) {
       if (!content) return
     }
+    // 智能表格：用户一旦通过 SpreadsheetEditor 编辑过（dirty），
+    // currentNote.content 仍是磁盘旧值，用它覆盖会回滚用户的新增 sheet / 编辑。
+    // 仅当从未编辑过时才允许同步（外部更新 / git pull 恢复）。
+    if (currentNote.format === 'spreadsheet' && spreadsheetDirtyRef.current) return
     // 有活跃防抖 timer 说明用户正在输入；
     // 此时不覆盖本地编辑，避免 selectNote 异步 fetch 返回的旧内容冲掉用户正在写的内容
     if (contentTimerRef.current) return
@@ -874,7 +883,10 @@ export function Editor() {
         <SpreadsheetEditor
           noteId={currentNote.id}
           value={content}
-          onChange={setContent}
+          onChange={(j) => {
+            spreadsheetDirtyRef.current = true
+            setContent(j)
+          }}
         />
       ) : currentNote.format === 'richtext' ? (
         <div style={{
@@ -1864,9 +1876,31 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
     onHistoryChange(newHistory)
 
     try {
+      const isSpreadsheet = noteFormat === 'spreadsheet'
+      // 智能表格：把 AI 返回的 Markdown 表格 / JSON 转成 x-data-spreadsheet 格式再写回；
+      // 解析失败返回 null（不替换，避免清空表格），其他格式原样使用。
+      const applyFormatTransform = (text: string): string | null => {
+        if (noteFormat !== 'spreadsheet') return text
+        try {
+          return JSON.stringify(markdownToSpreadsheetData(text))
+        } catch (e: any) {
+          setError('AI 输出无法解析为表格：' + (e?.message || '格式错误'))
+          return null
+        }
+      }
+      // 智能表格：把 JSON 转成 Markdown 表格给 AI 作为上下文
+      let contextContent = noteContent
+      if (isSpreadsheet) {
+        try {
+          contextContent = spreadsheetToMarkdown(JSON.parse(noteContent || '[]'))
+        } catch {
+          contextContent = '(表格内容无法解析)'
+        }
+      }
       const formatHint = noteFormat === 'html' ? '注意：content 中的内容必须是纯 HTML（不要用 ```html 包裹）'
         : noteFormat === 'richtext' ? '注意：content 中的内容必须是纯 HTML，包含表格、列表等直接用 <table><h1><ul> 等 HTML 标签'
         : noteFormat === 'code' ? '注意：content 中的内容必须是纯代码'
+        : noteFormat === 'spreadsheet' ? '注意：content 必须是 Markdown 表格格式，首行为表头，每行用 | 分隔单元格，不要用 ``` 包裹，不要输出 JSON、代码块或解释文字。示例：\n| 日期 | 任务 | 状态 |\n| --- | --- | --- |\n| 2026-09-01 | 需求评审 | 完成 |'
         : ''
 
       const systemMsg = {
@@ -1899,7 +1933,7 @@ status 含义：
 
 当前笔记标题：${noteTitle || '(未命名)'}
 当前笔记内容（原文）：
-${noteContent}
+${contextContent}
 `}
       // 方案C：单次请求内主进程自动执行所有工具调用并实时推送进度（ai.chat 内部完成），
       // 渲染端只订阅进度显示 + 处理最终 JSON。不再循环追问 working。
@@ -1912,7 +1946,8 @@ ${noteContent}
         onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
         setLastStatus(parsed.status)
         if (parsed.status === 'completed' && parsed.content) {
-          onReplace(parsed.content)
+          const finalContent = applyFormatTransform(parsed.content)
+          if (finalContent != null) onReplace(finalContent)
         }
       } else if (raw === 'AI 未返回内容') {
         onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
@@ -1920,7 +1955,8 @@ ${noteContent}
         // 模型未按 JSON 协议返回（如直接输出整篇 Markdown），整段视为笔记内容自动填入
         onHistoryChange([...newHistory, { role: 'assistant', content: raw }])
         setLastStatus('completed')
-        onReplace(raw)
+        const finalContent = applyFormatTransform(raw)
+        if (finalContent != null) onReplace(finalContent)
       }
     } catch (e: any) {
       setError(e?.message || '请求失败')

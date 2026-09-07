@@ -562,6 +562,12 @@ export default function App() {
           const r = await window.inkslateApi.git.sync()
           if (r.ok) {
             setSyncStatus({ state: 'success', message: r.message, lastSyncAt: Date.now() })
+            // 自动同步拉到新数据（含删除墓碑）后同样要重载笔记树，否则要重启才显示
+            if (r.pulled) {
+              await useAppStore.getState().loadNotebooks()
+              await useAppStore.getState().loadNotes()
+              refreshOpenNoteFromPulledData()
+            }
           } else {
             setSyncStatus({ state: 'error', message: '自动同步失败', detail: r.message })
           }

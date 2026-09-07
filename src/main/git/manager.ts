@@ -263,7 +263,7 @@ export class GitManager {
     //
     // 规则：以 git HEAD 元数据（或工作区元数据）中的笔记数为基线，本地 DB 少于基线
     // 就先用元数据恢复本地 DB；恢复后仍不够则中止提交，绝不用残缺数据覆盖远端。
-    const localNoteCount = dbApi.listActiveNotes().length
+    const localNoteCount = dbApi.countAllNotes()
     const headNoteCount = await this.countNotesInHead()
     const workdirNoteCount = this.readWorkdirNotesCount()
     // 取两者中较大者作为"仓库应有的笔记数"参照（-1 = 读不到，忽略）
@@ -278,7 +278,7 @@ export class GitManager {
       } catch (e) {
         console.error('[git] commitAll: 恢复本地 DB 失败', e)
       }
-      const afterCount = dbApi.listActiveNotes().length
+      const afterCount = dbApi.countAllNotes()
       if (afterCount < baseline) {
         throw new Error(
           `本地数据库只有 ${afterCount} 条笔记，但 git 元数据有 ${baseline} 条，已中止提交，避免用残缺数据覆盖远端。请先执行"仅拉取"把远端笔记拉下来`
@@ -286,6 +286,9 @@ export class GitManager {
       }
       console.log(`[git] commitAll: 已从 HEAD 恢复本地 DB 至 ${afterCount} 条笔记`)
     }
+
+    // 提交前清理重复闪念（软删除），墓碑随本次提交推送，把重复数据在整条链上清掉
+    try { dbApi.dedupeFlashThoughts() } catch (e) { console.error('[git] commitAll: dedupeFlashThoughts failed:', e) }
 
     // 关键：在 add 之前先导出 .inkslate/notebooks.json + notes.json
     // —— Git 是 source of truth，新机器拉取后靠这俩 metadata 重建 SQLite
@@ -343,6 +346,16 @@ export class GitManager {
   }
 
   /**
+   * 合并时的删除冲突裁决：本地已删除的记录，只有当远端"活跃版本"确实更新（updated_at > 本地删除时间）
+   * 时才允许重新激活；否则保持本地删除状态，防止另一端尚未收到墓碑的旧数据把删除复活。
+   */
+  private isRemoteNewerThanLocalDelete(remoteUpdatedAt: number | null | undefined, localDeletedAt: number | undefined): boolean {
+    if (localDeletedAt == null) return true
+    if (remoteUpdatedAt == null) return false
+    return remoteUpdatedAt > localDeletedAt
+  }
+
+  /**
    * 把当前 SQLite 里的 notebook / note 元数据写到 .inkslate/notebooks.json / notes.json
    * 每次 commitAll 前自动调一次，确保 push 出去的 commit 带着最新的元数据
    *
@@ -355,8 +368,8 @@ export class GitManager {
     const inkslateDir = path.join(dir, '.inkslate')
     try { fs.mkdirSync(inkslateDir, { recursive: true }) } catch {}
 
-    const notebooks = dbApi.listActiveNotebooks()
-    console.log(`[git] exportMetadata: writing ${notebooks.length} notebooks:`, notebooks.map(n => ({ id: n.id, name: n.name, parentId: n.parentId })))
+    const notebooks = dbApi.listAllNotebooks()
+    console.log(`[git] exportMetadata: writing ${notebooks.length} notebooks (含已删除墓碑):`, notebooks.map(n => ({ id: n.id, name: n.name, parentId: n.parentId, isDeleted: n.isDeleted })))
     fs.writeFileSync(
       path.join(inkslateDir, 'notebooks.json'),
       JSON.stringify({
@@ -368,13 +381,15 @@ export class GitManager {
           icon: nb.icon ?? null,
           created_at: nb.createdAt,
           updated_at: nb.updatedAt,
-          sort_order: nb.sortOrder
+          sort_order: nb.sortOrder,
+          is_deleted: nb.isDeleted ? 1 : 0,
+          deleted_at: nb.deletedAt ?? null
         }))
       }, null, 2),
       'utf-8'
     )
 
-    const notes = dbApi.listActiveNotes()
+    const notes = dbApi.listAllNotes()
     fs.writeFileSync(
       path.join(inkslateDir, 'notes.json'),
       JSON.stringify({
@@ -395,7 +410,9 @@ export class GitManager {
           icon: n.icon ?? null,
           created_at: n.createdAt,
           updated_at: n.updatedAt,
-          sort_order: n.sortOrder
+          sort_order: n.sortOrder,
+          is_deleted: n.isDeleted ? 1 : 0,
+          deleted_at: n.deletedAt ?? null
         }))
       }, null, 2),
       'utf-8'
@@ -456,12 +473,20 @@ export class GitManager {
     const notebooks = Array.isArray(nbData.notebooks) ? nbData.notebooks : []
     const notes = Array.isArray(noteData.notes) ? noteData.notes : []
 
-    // ⚠️ 防护：如果远端的 notes.json 是空的，但本地 DB 有笔记，
+    // 远端元数据拆成"活跃项" + "删除墓碑"（is_deleted=1）。
+    // 老版本元数据没有 is_deleted 字段 → 一律视为活跃，向后兼容。
+    const isDeletedFlag = (x: any) => x?.is_deleted === 1 || x?.is_deleted === true
+    const activeNotebooks = notebooks.filter((nb: any) => !isDeletedFlag(nb))
+    const tombstoneNotebookIds = notebooks.filter((nb: any) => isDeletedFlag(nb)).map((nb: any) => nb.id)
+    const activeNotes = notes.filter((n: any) => !isDeletedFlag(n))
+    const tombstoneNoteIds = notes.filter((n: any) => isDeletedFlag(n)).map((n: any) => n.id)
+
+    // ⚠️ 防护：如果远端的 notes.json 是空的（活跃 + 墓碑都没有），但本地 DB 有笔记，
     // 说明 notes.json 是本地 exportMetadata() 写的（git 还没同步或从未提交）。
     // 这种情况下不应该清空本地笔记——否则 git 还没同步时启动一次就会丢数据。
     // 场景：用户在 A 端写了很多笔记但还没 push，本地 .inkslate/notes.json 是空的，
     // 此时启动 app → exportMetadata() 写成空文件 → reconcileFromMetadata() → 全没了。
-    const localNoteCount = dbApi.listActiveNotes().length
+    const localNoteCount = dbApi.countAllNotes()
     if (notes.length === 0 && localNoteCount > 0) {
       console.warn(
         `[git] reconcile: notes.json is empty but local DB has ${localNoteCount} notes. ` +
@@ -473,7 +498,21 @@ export class GitManager {
 
     // 1. 增量合并 notebooks 表（绝不 DELETE 本地数据）
     //    mergeNotebooks 返回远端 id → 本地 id 的重定向映射（同名去重时用）
-    const notebookRemap = dbApi.mergeNotebooks(notebooks.map((nb: any) => ({
+    //    墓碑笔记本不参与合并（避免 is_deleted 被重置成 0 复活），单独应用软删除。
+    //    本地已删除、远端活跃的笔记本也不参与合并——只有当远端版本比本地删除更新时才激活，
+    //    否则"本地删除"优先，防止删除被另一端还没收到墓碑的旧数据复活。
+    const localDeletedNotebooks = new Map<string, number>()
+    for (const nb of dbApi.listAllNotebooks()) {
+      if (nb.isDeleted) localDeletedNotebooks.set(nb.id, nb.deletedAt ?? nb.updatedAt)
+    }
+    const mergeableNotebooks = activeNotebooks.filter((nb: any) => {
+      const deletedAt = localDeletedNotebooks.get(nb.id)
+      if (deletedAt == null) return true
+      // 老版本元数据没有 is_deleted 字段，无法表达"已删除"意图，不能凭它复活本地已删除的笔记本
+      if (!('is_deleted' in nb)) return false
+      return this.isRemoteNewerThanLocalDelete(nb.updated_at, deletedAt)
+    })
+    const notebookRemap = dbApi.mergeNotebooks(mergeableNotebooks.map((nb: any) => ({
       id: nb.id,
       name: nb.name,
       parentId: nb.parent_id ?? null,
@@ -482,7 +521,8 @@ export class GitManager {
       updatedAt: nb.updated_at,
       sortOrder: nb.sort_order
     })))
-    console.log(`[git] reconcile: merged ${notebooks.length} remote notebooks, remap:`, JSON.stringify(notebookRemap))
+    const appliedNotebookTombstones = dbApi.applyNotebookTombstones(tombstoneNotebookIds)
+    console.log(`[git] reconcile: merged ${mergeableNotebooks.length} remote notebooks (skipped ${activeNotebooks.length - mergeableNotebooks.length} locally-deleted), applied ${appliedNotebookTombstones} notebook tombstones, remap:`, JSON.stringify(notebookRemap))
     console.log(`[git] reconcile: local notebook count after merge: ${dbApi.listActiveNotebooks().length}`)
 
     // 2. 替换 notes 表
@@ -503,7 +543,23 @@ export class GitManager {
       }
     } catch {}
 
-    const finalNotes = notes.map((n: any) => {
+    // 本地已删除的笔记（is_deleted=1）在远端若仍显示活跃，默认不合并（保持删除，防复活）。
+    // 仅当远端的活跃版本确实比本地删除时间更新时才允许重新激活（此时远端是更新操作）。
+    const localDeletedNotes = new Map<string, number>()
+    try {
+      for (const en of dbApi.listAllNotes()) {
+        if (en.isDeleted) localDeletedNotes.set(en.id, en.deletedAt ?? en.updatedAt)
+      }
+    } catch {}
+    const mergeableActiveNotes = activeNotes.filter((n: any) => {
+      const deletedAt = localDeletedNotes.get(n.id)
+      if (deletedAt == null) return true
+      // 老版本元数据没有 is_deleted 字段，无法表达"已删除"意图，不能凭它复活本地已删除的笔记
+      if (!('is_deleted' in n)) return false
+      return this.isRemoteNewerThanLocalDelete(n.updated_at, deletedAt)
+    })
+
+    const finalNotes = mergeableActiveNotes.map((n: any) => {
       // 如果 notebook 被同名去重，把笔记的 notebook_id 重定向到本地 id
       const effectiveNotebookId = notebookRemap[n.notebook_id] ?? n.notebook_id
       const ext = n.format === 'html' ? 'html' : n.format === 'richtext' ? 'json' : n.format === 'code' ? 'code' : n.format === 'url' ? 'url' : n.format === 'file' ? 'file' : n.format === 'spreadsheet' ? 'sheet.json' : 'md'
@@ -606,7 +662,10 @@ export class GitManager {
       }
     })
     dbApi.mergeNotes(finalNotes)
-    console.log(`[git] reconcile: merged ${finalNotes.length} remote notes, local note count after: ${dbApi.listActiveNotes().length}`)
+    // 远端墓碑 → 本地对应活跃记录软删除（删除传播的关键：mergeNotes 是增量合并，绝不删本地，
+    // 只有显式墓碑才删除，且不误删本地独有的记录）
+    const appliedNoteTombstones = dbApi.applyNoteTombstones(tombstoneNoteIds)
+    console.log(`[git] reconcile: merged ${finalNotes.length} remote notes (skipped ${activeNotes.length - mergeableActiveNotes.length} locally-deleted), applied ${appliedNoteTombstones} note tombstones, local active note count after: ${dbApi.listActiveNotes().length}`)
 
     // 3. 闪念：增量合并（本地有远端无的保留，远端有本地无的新增，id 冲突用远端覆盖；
     //    远端标记 is_deleted 的作为墓碑同步删除本地副本，避免"删除复活"和跨设备重复）
@@ -635,6 +694,13 @@ export class GitManager {
             flashThoughtsApplied++
             continue
           }
+          // 本地已删除、远端活跃：只有当远端版本比本地删除时间更新时才激活，否则保持删除（防复活）。
+          // 场景：本端删了闪念，但另一端还没收到墓碑、仍把活跃版本推上来——不能因此复活。
+          if (!isDeleted && local && local.isDeleted) {
+            if (!this.isRemoteNewerThanLocalDelete(ft.updated_at, local.updatedAt)) {
+              continue
+            }
+          }
           dbApi.importFlashThought({
             id: ft.id,
             content: ft.content ?? '',
@@ -644,6 +710,10 @@ export class GitManager {
             doneAt: ft.done_at ?? undefined,
             isDeleted
           })
+          if (!isDeleted) {
+            // 本批已导入的内容也加入去重集合，防止远端已有重复时整批复制出一堆重复闪念
+            activeContentById.set(ft.content ?? '', ft.id)
+          }
           if (!localIds.has(ft.id)) flashThoughtsApplied++
         }
       } catch (e) {
@@ -684,7 +754,7 @@ export class GitManager {
     const notebooks = Array.isArray(nbData.notebooks) ? nbData.notebooks : []
     const notes = Array.isArray(noteData.notes) ? noteData.notes : []
 
-    // 1. 全量替换 notebooks 表
+    // 1. 全量替换 notebooks 表（墓碑用 is_deleted=1 导入，保持远端删除状态）
     dbApi.replaceNotebooks(notebooks.map((nb: any) => ({
       id: nb.id,
       name: nb.name,
@@ -692,7 +762,8 @@ export class GitManager {
       icon: nb.icon,
       createdAt: nb.created_at,
       updatedAt: nb.updated_at,
-      sortOrder: nb.sort_order
+      sortOrder: nb.sort_order,
+      isDeleted: nb.is_deleted === 1 || nb.is_deleted === true
     })))
 
     // 2. 全量替换 notes 表（路径策略同 reconcileFromMetadata）
@@ -778,7 +849,8 @@ export class GitManager {
         icon: n.icon,
         createdAt: n.created_at,
         updatedAt: n.updated_at,
-        sortOrder: n.sort_order
+        sortOrder: n.sort_order,
+        isDeleted: n.is_deleted === 1 || n.is_deleted === true
       }
     })
     dbApi.replaceNotes(finalNotes)
@@ -908,7 +980,7 @@ export class GitManager {
     //
     // 防护：若本地 DB 笔记数为 0 而 HEAD 元数据非空，先用 HEAD 元数据恢复本地 DB；
     //       若恢复后仍为空，则中止 sync，绝不把空数据推上远端。
-    const localNoteCount = dbApi.listActiveNotes().length
+    const localNoteCount = dbApi.countAllNotes()
     const headNoteCount = await this.countNotesInHead()
     if (localNoteCount === 0 && headNoteCount > 0) {
       console.warn(`[git] 空库防覆盖：本地 DB 有 ${localNoteCount} 条笔记，但 git HEAD 元数据有 ${headNoteCount} 条，先从元数据恢复本地 DB`)
@@ -919,7 +991,7 @@ export class GitManager {
       } catch (e) {
         console.error('[git] 空库防覆盖：恢复本地 DB 失败', e)
       }
-      const afterCount = dbApi.listActiveNotes().length
+      const afterCount = dbApi.countAllNotes()
       if (afterCount === 0) {
         phases.commit = 'failed'
         return {
@@ -1105,7 +1177,7 @@ export class GitManager {
         // 空库恢复：本地 DB 为空但 HEAD 元数据有数据时，直接从元数据恢复。
         // 覆盖"clone 成功后 DB 重建失败 / 新机器尚未同步"等场景 —— 此时即便没有新 commit，
         // 也必须把远端已有的数据补进本地 DB，否则 UI 一直显示"已是最新"却一个笔记都没有。
-        const localNoteCount = dbApi.listActiveNotes().length
+        const localNoteCount = dbApi.countAllNotes()
         const headNoteCount = await this.countNotesInHead()
         if (localNoteCount === 0 && headNoteCount > 0) {
           console.warn(`[git] pull: 本地 DB 为空（${localNoteCount} 条），HEAD 元数据有 ${headNoteCount} 条，先从元数据恢复本地 DB`)
@@ -1175,7 +1247,7 @@ export class GitManager {
       } catch {
         fetchHeadOid = await git.resolveRef({ fs, dir, ref: `refs/remotes/origin/${branch}` })
       }
-      const localNoteCount = dbApi.listActiveNotes().length
+      const localNoteCount = dbApi.countAllNotes()
       const localHeadNoteCount = await this.countNotesInHead()
       let remoteNoteCount = -1
       try {

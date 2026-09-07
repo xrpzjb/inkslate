@@ -600,6 +600,7 @@ function rowToNote(row: any, content: string = ''): Note {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     isDeleted: !!row.is_deleted,
+    deletedAt: row.deleted_at ?? undefined,
     icon: row.icon ?? undefined,
     sortOrder: row.sort_order ?? undefined,
     isEncrypted: row.is_encrypted === 1 || isEncryptedContent(content)
@@ -924,7 +925,11 @@ const dbMethods = {
    * 重要：磁盘文件保留不动，以便后续还原能完整恢复内容
    */
   deleteNote(id: string): void {
-    getDatabase().prepare('UPDATE notes SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), id)
+    // 关键：deleted_at 与 updated_at 必须用同一个时间戳。
+    // 否则 updated_at 会比 deleted_at 晚几毫秒，导致 git reconcile 的删除冲突裁决
+    // isRemoteNewerThanLocalDelete 误判"远端更新"而把删除复活（见 manager.ts）。
+    const now = Date.now()
+    getDatabase().prepare('UPDATE notes SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?').run(now, now, id)
   },
 
   moveNote(id: string, newNotebookId: string | null): void {
@@ -1164,6 +1169,32 @@ const dbMethods = {
     getDatabase().prepare('UPDATE flash_thoughts SET is_deleted = 1, updated_at = ? WHERE id = ?').run(Date.now(), id)
   },
 
+  /**
+   * 清理重复闪念：同一内容只保留最早创建的一条活跃记录，其余软删除（is_deleted=1）。
+   * 软删除会作为墓碑随下次 git 同步传播到所有设备，避免重复数据在整条链上复制。
+   * @returns 被清理（软删除）的条数
+   */
+  dedupeFlashThoughts(): number {
+    const d = getDatabase()
+    const rows = d.prepare('SELECT id, content, created_at FROM flash_thoughts WHERE is_deleted = 0 ORDER BY created_at ASC, id ASC').all() as any[]
+    const seen = new Set<string>()
+    const toDelete: string[] = []
+    for (const row of rows) {
+      const content = (row.content ?? '') as string
+      if (seen.has(content)) {
+        toDelete.push(row.id)
+      } else {
+        seen.add(content)
+      }
+    }
+    if (toDelete.length === 0) return 0
+    const now = Date.now()
+    const placeholders = toDelete.map(() => '?').join(',')
+    d.prepare(`UPDATE flash_thoughts SET is_deleted = 1, updated_at = ? WHERE id IN (${placeholders})`).run(now, ...toDelete)
+    console.log(`[db] dedupeFlashThoughts: soft-deleted ${toDelete.length} duplicate flash thoughts`)
+    return toDelete.length
+  },
+
   /** 物理删除全部闪念（git clone 全量替换用，不带墓碑） */
   purgeAllFlashThoughts(): void {
     getDatabase().prepare('DELETE FROM flash_thoughts').run()
@@ -1249,12 +1280,65 @@ const dbMethods = {
     return rows.map(rowToNotebook)
   },
 
+  /** 列出全部笔记本（含软删除的，用于导出删除墓碑到 .inkslate/notebooks.json） */
+  listAllNotebooks(): Notebook[] {
+    const rows = getDatabase()
+      .prepare('SELECT * FROM notebooks ORDER BY COALESCE(sort_order, created_at) ASC')
+      .all() as any[]
+    return rows.map(rowToNotebook)
+  },
+
   /** 列出全部活跃笔记（is_deleted=0），用于导出到 .inkslate/notes.json */
   listActiveNotes(): Note[] {
     const rows = getDatabase()
       .prepare('SELECT * FROM notes WHERE is_deleted = 0 ORDER BY COALESCE(sort_order, created_at) DESC')
       .all() as any[]
     return rows.map((row: any) => rowToNote(row))
+  },
+
+  /** 列出全部笔记（含软删除的，用于导出删除墓碑到 .inkslate/notes.json） */
+  listAllNotes(): Note[] {
+    const rows = getDatabase()
+      .prepare('SELECT * FROM notes ORDER BY COALESCE(sort_order, created_at) DESC')
+      .all() as any[]
+    return rows.map((row: any) => rowToNote(row))
+  },
+
+  /** 全部笔记条数（含软删除）——git 同步防覆盖基线用它，删除墓碑不会误判为"本地少笔记" */
+  countAllNotes(): number {
+    return (getDatabase().prepare('SELECT COUNT(*) as c FROM notes').get() as any).c
+  },
+
+  /**
+   * 按远端墓碑软删除本地笔记（Git 拉取后 reconcile 用）
+   * 仅处理本地存在且活跃的记录；本地没有的忽略（增量合并，绝不误删）。
+   * @returns 实际被标记删除的条数
+   */
+  applyNoteTombstones(ids: string[]): number {
+    if (ids.length === 0) return 0
+    const d = getDatabase()
+    const now = Date.now()
+    const placeholders = ids.map(() => '?').join(',')
+    const result = d.prepare(
+      `UPDATE notes SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND is_deleted = 0`
+    ).run(now, now, ...ids)
+    return result.changes
+  },
+
+  /**
+   * 按远端墓碑软删除本地笔记本（Git 拉取后 reconcile 用）
+   * 只软删除笔记本本身，不级联其下笔记（笔记删除状态由各自的墓碑决定，避免误删本地独有的笔记）。
+   * @returns 实际被标记删除的条数
+   */
+  applyNotebookTombstones(ids: string[]): number {
+    if (ids.length === 0) return 0
+    const d = getDatabase()
+    const now = Date.now()
+    const placeholders = ids.map(() => '?').join(',')
+    const result = d.prepare(
+      `UPDATE notebooks SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND is_deleted = 0`
+    ).run(now, now, ...ids)
+    return result.changes
   },
 
   /**
@@ -1275,6 +1359,7 @@ const dbMethods = {
     createdAt: number
     updatedAt: number
     sortOrder?: number
+    isDeleted?: boolean
   }>): void {
     const d = getDatabase()
     const ordered = sortNotebooksByParent(notebooks)
@@ -1282,12 +1367,12 @@ const dbMethods = {
       d.prepare('DELETE FROM notebooks WHERE is_deleted = 0').run()
       const stmt = d.prepare(`
         INSERT INTO notebooks (id, name, parent_id, created_at, updated_at, icon, is_deleted, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `)
       for (const nb of ordered) {
         stmt.run(
           nb.id, nb.name, nb.parentId, nb.createdAt, nb.updatedAt,
-          nb.icon ?? null, nb.sortOrder ?? nb.createdAt
+          nb.icon ?? null, nb.isDeleted === true ? 1 : 0, nb.sortOrder ?? nb.createdAt
         )
       }
     })
@@ -1318,6 +1403,7 @@ const dbMethods = {
     createdAt: number
     updatedAt: number
     sortOrder?: number
+    isDeleted?: boolean
   }>): void {
     const d = getDatabase()
     const tx = d.transaction(() => {
@@ -1329,7 +1415,7 @@ const dbMethods = {
       d.prepare('DELETE FROM notes WHERE is_deleted = 0').run()
       const stmt = d.prepare(`
         INSERT INTO notes (id, title, notebook_id, parent_id, path, format, language, url, file_path, file_name, file_size, file_ext, content, created_at, updated_at, icon, is_deleted, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       for (const n of notes) {
         stmt.run(
@@ -1337,7 +1423,7 @@ const dbMethods = {
           n.format, n.language ?? null, n.url ?? null,
           n.filePath ?? null, n.fileName ?? null, n.fileSize ?? null, n.fileExt ?? null,
           contentMap.get(n.id) ?? '',
-          n.createdAt, n.updatedAt, n.icon ?? null, n.sortOrder ?? n.createdAt
+          n.createdAt, n.updatedAt, n.icon ?? null, n.isDeleted === true ? 1 : 0, n.sortOrder ?? n.createdAt
         )
       }
     })
