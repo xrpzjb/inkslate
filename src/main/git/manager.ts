@@ -24,6 +24,19 @@ function findFileBySlug(dir: string, slug: string, ext: string): string | null {
   return null
 }
 
+/** 笔记 format → 磁盘内容文件扩展名（与 db.ts createNote/导出规则保持一致） */
+function noteFormatToExt(format: string): string {
+  switch (format) {
+    case 'html': return 'html'
+    case 'richtext': return 'json'
+    case 'code': return 'code'
+    case 'url': return 'url'
+    case 'file': return 'file'
+    case 'spreadsheet': return 'sheet.json'
+    default: return 'md'
+  }
+}
+
 /**
  * Git 同步管理器
  * - 单例
@@ -1107,7 +1120,7 @@ export class GitManager {
           allowUnrelatedHistories: true,
           author: this.author(),
           committer: this.committer(),
-          mergeDriver: this.getMergeDriver()
+          mergeDriver: this.getMergeDriver(branch, fetchHeadOid)
         })
       } catch (e: any) {
         // 残留冲突（delete/modify、add/add 等 mergeDriver 覆盖不到的）：
@@ -1123,7 +1136,7 @@ export class GitManager {
             allowUnrelatedHistories: true,
             author: this.author(),
             committer: this.committer(),
-            mergeDriver: this.getMergeDriver()
+            mergeDriver: this.getMergeDriver(branch, fetchHeadOid)
           })
         } else {
           throw e
@@ -1453,12 +1466,40 @@ export class GitManager {
    * 元数据（.inkslate/*.json）与笔记内容文件都适用；本地未提交的改动已由
    * backupWorkdirChanges 在合并前备份，这里只兜底已提交的本地版本。
    * 对笔记内容文件，额外收集本地版本，pull 完成后会生成"冲突副本"笔记。
+   *
+   * ⚠️ isomorphic-git 的 mergeTree 传给 mergeDriver 的 path 只是 basename
+   * （见 isomorphic-git 源码 mergeTree 的 map：`const path = basename(filepath)`）。
+   * 因此 `.inkslate/notes.json` 会以 `notes.json` 出现、`notes/xx/yy.md` 会以 `yy.md` 出现。
+   * 若直接用这个 basename 判断"是不是笔记内容文件"，会把 .inkslate 元数据误当成笔记、
+   * 且拿到错误的目录 —— 这就是历史 bug："notes - 冲突副本" 垃圾笔记 + 文件落到工作区根目录。
+   * 这里通过"blob 内容哈希 → 完整路径"反查：contents[1] 是本端（ours）文件内容，
+   * 哈希后在本端 HEAD 树里找唯一完整路径；歧义（如空文件）时再用 theirs 内容哈希对 FETCH_HEAD 树二次筛选。
    */
-  private getMergeDriver(): (args: { path: string; contents: string[] }) => { cleanMerge: boolean; mergedText: string } | Promise<{ cleanMerge: boolean; mergedText: string }> {
+  private getMergeDriver(oursRef: string, theirsRef: string): (args: { path: string; contents: string[] }) => Promise<{ cleanMerge: boolean; mergedText: string }> {
     const dir = this.getWorkDir()
     let backupDir: string | null = null
     this.lastMergeDriverBackupCount = 0
     this.lastNoteConflicts = []
+    let oursIndexPromise: Promise<Map<string, string[]>> | null = null
+    const getOursIndex = () => {
+      if (!oursIndexPromise) {
+        oursIndexPromise = this.buildBlobPathIndex(oursRef).catch(e => {
+          console.error('[git] buildBlobPathIndex(ours) failed:', e)
+          return new Map<string, string[]>()
+        })
+      }
+      return oursIndexPromise
+    }
+    let theirsIndexPromise: Promise<Map<string, string[]>> | null = null
+    const getTheirsIndex = () => {
+      if (!theirsIndexPromise) {
+        theirsIndexPromise = this.buildBlobPathIndex(theirsRef).catch(e => {
+          console.error('[git] buildBlobPathIndex(theirs) failed:', e)
+          return new Map<string, string[]>()
+        })
+      }
+      return theirsIndexPromise
+    }
     const ensureBackupDir = () => {
       if (!backupDir) {
         this.ensureSyncConflictsGitignored()
@@ -1468,11 +1509,19 @@ export class GitManager {
       }
       return backupDir
     }
-    return async ({ path: rel, contents }) => {
+    return async ({ path: baseName, contents }) => {
       // contents: [base, ours, theirs]
       const ours = contents[1] ?? ''
+      const theirs = contents[2] ?? ''
+      let rel = baseName
+      try {
+        rel = await this.resolveFullRelPath(baseName, ours, theirs, getOursIndex, getTheirsIndex)
+      } catch (e) {
+        console.error('[git] mergeDriver resolveFullRelPath failed (fallback to basename):', e)
+      }
       try {
         if (ours.length > 0) {
+          // 用还原出的完整路径做备份文件名，避免不同目录同名文件互相覆盖
           fs.writeFileSync(path.join(ensureBackupDir(), rel.replace(/[\\/:*?"<>|]/g, '_')), ours, 'utf-8')
           this.lastMergeDriverBackupCount++
           if (this.isNoteContentRelPath(rel)) {
@@ -1482,8 +1531,59 @@ export class GitManager {
       } catch (e) {
         console.error('[git] mergeDriver backup failed:', e)
       }
-      return { cleanMerge: true, mergedText: contents[2] ?? '' }
+      return { cleanMerge: true, mergedText: theirs }
     }
+  }
+
+  /** 遍历某棵 git 树，构建 "blob sha1 → 出现该 blob 的完整相对路径列表" 索引 */
+  private async buildBlobPathIndex(ref: string): Promise<Map<string, string[]>> {
+    const dir = this.getWorkDir()
+    const index = new Map<string, string[]>()
+    await git.walk({
+      fs, dir,
+      trees: [git.TREE({ ref })],
+      map: async (filepath: string, [entry]: any[]) => {
+        if (!entry || filepath === '.git' || filepath.startsWith('.git/')) return undefined
+        const type = await entry.type()
+        if (type === 'blob') {
+          const oid = await entry.oid()
+          const list = index.get(oid)
+          if (list) list.push(filepath)
+          else index.set(oid, [filepath])
+        }
+        return undefined // 不裁剪子树（_walk 只在返回 null 时裁剪），undefined 会继续遍历
+      }
+    })
+    return index
+  }
+
+  /**
+   * mergeDriver 拿到的 baseName 只有文件名，这里用内容哈希还原完整相对路径：
+   * 优先 ours（contents[1]）哈希命中；ours 为空（歧义：所有空文件同哈希）时用 theirs 哈希，
+   * 或对候选集按 basename 过滤 + 双方交集/排序收敛。全部失败则回退 baseName（旧行为）。
+   */
+  private async resolveFullRelPath(
+    baseName: string,
+    ours: string,
+    theirs: string,
+    getOursIndex: () => Promise<Map<string, string[]>>,
+    getTheirsIndex: () => Promise<Map<string, string[]>>
+  ): Promise<string> {
+    const byBase = (list: string[] | undefined) => (list ?? []).filter(p => path.posix.basename(p) === baseName).sort()
+    const oursHash = (await git.hashBlob({ object: ours })).oid
+    const ourCands = byBase((await getOursIndex()).get(oursHash))
+    if (ourCands.length === 1) return ourCands[0]
+    // ours 内容不唯一（典型：空文件）→ 用 theirs 的内容在 FETCH_HEAD 树里定位
+    if (theirs) {
+      const theirsHash = (await git.hashBlob({ object: theirs })).oid
+      const theirCands = byBase((await getTheirsIndex()).get(theirsHash))
+      if (theirCands.length === 1) return theirCands[0]
+      const intersect = ourCands.filter(p => theirCands.includes(p))
+      if (intersect.length === 1) return intersect[0]
+      if (intersect.length > 1) return intersect[0]
+    }
+    if (ourCands.length > 1) return ourCands[0]
+    return baseName
   }
 
   /**
@@ -1538,25 +1638,48 @@ export class GitManager {
     }
   }
 
+  /** 从 git 相对路径猜测笔记格式（base 笔记找不到时的兜底） */
+  private guessFormatFromRelPath(rel: string): Note['format'] {
+    const lower = rel.toLowerCase()
+    if (lower.endsWith('.sheet.json')) return 'spreadsheet'
+    const ext = path.extname(lower).slice(1)
+    if (ext === 'md') return 'markdown'
+    if (ext === 'html') return 'html'
+    if (ext === 'json') return 'richtext'
+    if (ext === 'code') return 'code'
+    if (ext === 'url') return 'url'
+    return 'markdown'
+  }
+
+  /** 文件名去掉与格式对应的扩展名得到"语义名"（"2026年9月.sheet.json" → "2026年9月"） */
+  private stemOfFileName(fileName: string, format: string): string {
+    const lower = fileName.toLowerCase()
+    if (format === 'spreadsheet' && lower.endsWith('.sheet.json')) return fileName.slice(0, -'.sheet.json'.length)
+    const ext = path.extname(fileName)
+    return ext ? fileName.slice(0, -ext.length) : fileName
+  }
+
   /**
    * merge 冲突完成后，把本地版本生成"冲突副本"笔记（可见、可手动删除）：
    * - 远端版本留在原路径（merge 已以 theirs 为准）
-   * - 本地版本写到同目录新文件，命名 "<原文件名>-冲突.<ext>"（getUniqueFileName 自动去重）
-   * - DB 插入一条新笔记（标题 "<原标题> - 冲突副本"，同 notebook），随下次同步推上远端
+   * - 本地版本写到原笔记同目录新文件，命名与原笔记标题一致："<原标题>-冲突N.<ext>"
+   * - DB 插入一条新笔记（标题 "<原标题>-冲突N"，同 notebook、同 format），随下次同步推上远端
+   *   format 从原笔记继承（智能表格副本打开后仍是表格，可直接对比/合并），编号 N 跨次同步连续递增，
+   *   若同笔记本已存在内容完全相同的冲突副本则跳过（防止每次同步反复生成重复副本）。
    * 返回生成的冲突副本标题列表（供 UI 提示用户手动删除）。
    *
    * 检测两类冲突（后者是主要场景）：
-   * 1. lastNoteConflicts：双方都已提交的冲突（mergeDriver 只在这种场景触发）
+   * 1. lastNoteConflicts：双方都已提交的冲突（mergeDriver 只在这种场景触发；relPath 已还原为完整路径）
    * 2. backupWorkdirChanges 备份的未提交本地改动，合并后被远端版本覆盖（文件最终内容 !== 本地备份内容）。
    *    —— 即"两端同时改了同一笔记，但本地还没提交"的常见情况，mergeDriver 不会触发。
    */
   private materializeNoteConflicts(changed: { relPath: string; status: string }[], backupDir: string): string[] {
     const dir = this.getWorkDir()
     const titles: string[] = []
-    // relPath -> 本地版本内容
+    // relPath -> 本地版本内容（relPath 是相对工作区的完整路径，如 .inkslate/notes.json 或 工作/xx/周报.md）
     const conflictMap = new Map<string, string>()
 
-    // 1. mergeDriver 收集的已提交冲突
+    // 1. mergeDriver 收集的已提交冲突（元数据 .inkslate/*.json 已被 isNoteContentRelPath 排除）
     for (const { relPath, content } of this.lastNoteConflicts) conflictMap.set(relPath, content)
     this.lastNoteConflicts = []
 
@@ -1582,36 +1705,70 @@ export class GitManager {
     if (conflictMap.size === 0) return titles
 
     // 原笔记路径 → 笔记 映射（此时 reconcile 已完成，远端版本已按原路径落库）
-    const noteByPath = new Map<string, ReturnType<typeof dbApi.listActiveNotes>[number]>()
-    for (const n of dbApi.listActiveNotes()) noteByPath.set(n.path, n)
+    const activeNotes = dbApi.listActiveNotes()
+    const noteByPath = new Map<string, typeof activeNotes[number]>()
+    for (const n of activeNotes) noteByPath.set(n.path, n)
+    const readText = (p: string): string | null => {
+      try { return fs.readFileSync(p, 'utf-8') } catch { return null }
+    }
 
     for (const [relPath, content] of conflictMap) {
       try {
         const absPath = path.join(dir, relPath)
         const nbDir = path.dirname(absPath)
-        const ext = path.extname(absPath).slice(1)
-        const stem = path.basename(absPath, path.extname(absPath))
-        const conflictName = getUniqueFileName(`${stem}-冲突`, ext, nbDir)
-        const conflictPath = path.join(nbDir, conflictName)
-        fs.mkdirSync(nbDir, { recursive: true })
-        fs.writeFileSync(conflictPath, content, 'utf-8')
-
         const base = noteByPath.get(absPath)
-        const fallbackNotebook = dbApi.listActiveNotebooks()[0]?.id ?? ''
-        const title = base ? `${base.title} - 冲突副本` : `${stem} - 冲突副本`
-        if (!base && !fallbackNotebook) {
+        const format = base?.format ?? this.guessFormatFromRelPath(relPath)
+        const ext = noteFormatToExt(format)
+        const notebookId = base?.notebookId ?? (dbApi.listActiveNotebooks()[0]?.id ?? '')
+        if (!base && !notebookId) {
           console.warn(`[git] materializeNoteConflicts: no notebook to attach conflict copy of ${relPath}, skipping`)
           continue
         }
+
+        // 标题基名：优先原笔记标题；找不到原笔记（孤立冲突文件）时用文件名去掉格式扩展名
+        const titleBase = base?.title ?? this.stemOfFileName(path.basename(absPath), format)
+        const slugBase = slugify(titleBase)
+
+        // 内容去重：同笔记本已存在内容完全相同的冲突副本 → 跳过，避免每次同步反复生成一堆重复副本
+        const dup = activeNotes.find(n =>
+          n.notebookId === notebookId &&
+          n.title.includes('-冲突') &&
+          n.path && fs.existsSync(n.path) &&
+          readText(n.path) === content
+        )
+        if (dup) {
+          console.log(`[git] conflict copy skipped for ${relPath}: identical content already kept as "${dup.title}"`)
+          continue
+        }
+
+        // 编号 -冲突1、-冲突2 … 连续递增：标题不与现存活跃笔记重复，文件不与磁盘已有文件冲突
+        let title = ''
+        let conflictPath = ''
+        for (let n = 1; n < 1000; n++) {
+          const candTitle = `${titleBase}-冲突${n}`
+          const candPath = path.join(nbDir, `${slugBase}-冲突${n}.${ext}`)
+          if (!activeNotes.some(x => x.title === candTitle) && !fs.existsSync(candPath)) {
+            title = candTitle
+            conflictPath = candPath
+            break
+          }
+        }
+        if (!title) {
+          console.error(`[git] materializeNoteConflicts: cannot find free name for ${relPath}`)
+          continue
+        }
+
+        fs.mkdirSync(nbDir, { recursive: true })
+        fs.writeFileSync(conflictPath, content, 'utf-8')
         dbApi.addConflictNote({
           title,
-          notebookId: base?.notebookId ?? fallbackNotebook,
+          notebookId,
           parentId: base?.parentId ?? null,
           path: conflictPath,
-          format: base?.format ?? 'markdown'
+          format
         })
         titles.push(title)
-        console.log(`[git] conflict note created: ${relPath} -> ${conflictName} (${title})`)
+        console.log(`[git] conflict note created: ${relPath} -> ${path.relative(dir, conflictPath)} (${title}, format=${format})`)
       } catch (e) {
         console.error(`[git] materializeNoteConflicts failed for ${relPath}:`, e)
       }

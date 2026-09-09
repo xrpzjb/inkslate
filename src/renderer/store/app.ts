@@ -720,6 +720,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   togglePreview: () => {
     const visible = !get().previewVisible
+    // 互斥逻辑：如果要关闭预览，检查编辑器是否可见，如果编辑器不可见，则不允许关闭预览
+    if (!visible && !get().editorVisible) {
+      // 预览关闭时编辑器不可见，不允许关闭预览（至少保持一个面板可见）
+      return
+    }
     set({ previewVisible: visible })
     // 保存到当前标签页布局
     const tabId = get().activeTabId
@@ -732,6 +737,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   toggleEditor: () => {
     const visible = !get().editorVisible
+    // 互斥逻辑：如果要关闭编辑器，检查预览是否可见，如果预览不可见，则不允许关闭编辑器
+    if (!visible && !get().previewVisible) {
+      // 编辑器关闭时预览不可见，不允许关闭编辑器（至少保持一个面板可见）
+      return
+    }
     set({ editorVisible: visible })
     // 保存到当前标签页布局
     const tabId = get().activeTabId

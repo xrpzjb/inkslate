@@ -17,7 +17,8 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-tertiary);
+  /* 笔记树底色比最左侧图标栏（.icon-sidebar，--bg-tertiary）浅一档，形成层次对比 */
+  background-color: var(--bg-sidebar);
   overflow: hidden;
   position: relative;
   border-right: 1px solid var(--border-color);
@@ -92,13 +93,14 @@
   left: 0;
 }
 
-/* 区域标题栏 - 无边框线，靠背景色自然分区 */
+/* 区域标题栏 - 无边框线，靠背景色自然分区（快速搜索栏、TOC 标题栏等） */
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 10px;
-  background-color: var(--bg-tertiary) !important;
+  /* 与笔记树面板底色统一，形成一个整体视觉区域 */
+  background-color: var(--bg-sidebar) !important;
   flex-shrink: 0;
   user-select: none;
   box-sizing: border-box;

@@ -3,7 +3,8 @@
   display: flex;
   align-items: stretch;
   height: 44px;
-  background-color: var(--bg-tertiary) !important;
+  /* 与笔记树面板底色统一，形成一个整体视觉区域 */
+  background-color: var(--bg-sidebar) !important;
   border-bottom: 1px solid var(--border-color);
   overflow: visible;
   flex-shrink: 0;

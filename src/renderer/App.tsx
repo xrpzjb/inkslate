@@ -340,7 +340,7 @@ export default function App() {
                 toast.success('已从远端更新')
                 if (r.conflicts > 0) {
                   const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
-                  toast.info(`检测到 ${r.conflicts} 个文件冲突，两份版本均已保留为笔记（标题含「- 冲突副本」），请手动删除不需要的一份${names}`, 6000)
+                  toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-冲突N」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
                 }
                 await useAppStore.getState().loadNotebooks()
                 await useAppStore.getState().loadNotes()
@@ -353,7 +353,7 @@ export default function App() {
                 toast.info('已是最新，无需更新')
                 if (r.conflicts > 0) {
                   const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
-                  toast.info(`检测到 ${r.conflicts} 个文件冲突，两份版本均已保留为笔记（标题含「- 冲突副本」），请手动删除不需要的一份${names}`, 6000)
+                  toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-冲突N」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
                 }
                 await refreshSyncStatus()
                 const cur = useAppStore.getState().settings
@@ -392,7 +392,7 @@ export default function App() {
               toast.success('同步成功')
               if (r.conflicts > 0) {
                 const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
-                toast.info(`检测到 ${r.conflicts} 个文件冲突，两份版本均已保留为笔记（标题含「- 冲突副本」），请手动删除不需要的一份${names}`, 6000)
+                toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-冲突N」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
               }
               // 如果 pull 阶段拉到了新数据，重建树
               if (r.pulled) {

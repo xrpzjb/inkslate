@@ -16,38 +16,40 @@
 }
 
 /* ============ 亮色主题（默认） ============ */
+/* 与 themes.ts 的 defaultLight 保持一致（auto 模式系统亮色 / 首屏也用这套）。
+   大面积灰为中性灰（无色相，不泛紫），蓝色只用于强调/选中 */
 :root,
 [data-theme='light'] {
   --bg-primary: #ffffff;
-  --bg-secondary: #f5f3ff;
-  --bg-tertiary: #faf9ff;
-  --bg-sidebar: #f8f7fc;
-  --bg-hover: #f0eafd;
-  --bg-active: #e9e0fc;
-  --bg-tabbar: #faf9ff;
-  --bg-preview: #faf9ff;
+  --bg-secondary: #f9fafb;
+  --bg-tertiary: #f3f4f6;
+  --bg-sidebar: #f9fafb;
+  --bg-hover: #eceef1;
+  --bg-active: #e8f0fe;
+  --bg-tabbar: #f9fafb;
+  --bg-preview: #ffffff;
 
-  --text-primary: #1f1f23;
-  --text-secondary: #5b5b66;
-  --text-tertiary: #8a8a96;
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
   --text-inverse: #ffffff;
 
-  --border-color: #ebe7f5;
-  --border-strong: #d4cceb;
-  --border-subtle: #f3eeff;
+  --border-color: #e5e7eb;
+  --border-strong: #d1d5db;
+  --border-subtle: #eef0f2;
 
-  --accent-color: #7c3aed;
-  --accent-hover: #6d28d9;
-  --accent-bg: #f3eeff;
+  --accent-color: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-bg: #e8f0fe;
 
-  --code-bg: #1e293b;
-  --code-text: #e2e8f0;
+  --code-bg: #212327;
+  --code-text: #e6e8eb;
 
-  --shadow-sm: 0 1px 2px rgba(124, 58, 237, 0.06);
-  --shadow-md: 0 4px 12px rgba(124, 58, 237, 0.10);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
 
-  --scrollbar-thumb: #d4cceb;
-  --scrollbar-thumb-hover: #b8a8de;
+  --scrollbar-thumb: #d3d6da;
+  --scrollbar-thumb-hover: #aeb3ba;
 
   color-scheme: light;
 }

@@ -351,27 +351,28 @@ export function StatusBar() {
         {showLayoutToggles && (
           <>
             <div style={{ width: 1, height: 14, background: 'var(--border-color)', margin: '0 4px' }} />
+            {/* 侧栏切换按钮已隐藏（用户要求暂时不显示） */}
             <button
               className="statusbar-btn"
-              style={btnStyle}
-              onClick={toggleSidebar}
-              title={sidebarVisible ? '隐藏侧栏' : '显示侧栏'}
-            >
-              {sidebarVisible ? <PanelLeftClose size={13} /> : <PanelLeftOpen size={13} />}
-            </button>
-            <button
-              className="statusbar-btn"
-              style={btnStyle}
+              style={{
+                ...btnStyle,
+                opacity: (editorVisible && !previewVisible) ? 0.3 : 1
+              }}
               onClick={toggleEditor}
-              title={editorVisible ? '隐藏编辑器' : '显示编辑器'}
+              title={editorVisible && !previewVisible ? '至少需要保留一个面板' : (editorVisible ? '隐藏编辑器' : '显示编辑器')}
+              disabled={editorVisible && !previewVisible}
             >
               {editorVisible ? <PanelRightClose size={13} /> : <PanelLeftOpen size={13} />}
             </button>
             <button
               className="statusbar-btn"
-              style={btnStyle}
+              style={{
+                ...btnStyle,
+                opacity: (previewVisible && !editorVisible) ? 0.3 : 1
+              }}
               onClick={togglePreview}
-              title={previewVisible ? '隐藏预览' : '显示预览'}
+              title={previewVisible && !editorVisible ? '至少需要保留一个面板' : (previewVisible ? '隐藏预览' : '显示预览')}
+              disabled={previewVisible && !editorVisible}
             >
               {previewVisible ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
             </button>

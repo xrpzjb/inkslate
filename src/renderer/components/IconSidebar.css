@@ -1,4 +1,5 @@
 /* ============ 左侧竖向图标菜单 ============ */
+/* 底色用 --bg-tertiary，比右侧笔记树（.layout-sidebar，--bg-sidebar）深一档，形成层次 */
 .icon-sidebar {
   width: 48px;
   flex-shrink: 0;
