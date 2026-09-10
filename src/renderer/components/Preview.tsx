@@ -15,7 +15,7 @@ import '../styles/preview.css'
 
 // mermaid 初始化（主题跟随全局主题，按需重新初始化以切换主题）
 function ensureMermaidTheme(theme: string) {
-  const mermaidTheme = (theme === 'dark' || theme === 'dracula' || theme === 'cyberpunk' || theme === 'forest') ? 'dark' : 'default'
+  const mermaidTheme = (theme === 'dark' || theme === 'dracula' || theme === 'forest') ? 'dark' : 'default'
   try {
     mermaid.initialize({
       startOnLoad: false,
@@ -170,7 +170,7 @@ export function Preview() {
   // highlight.js 主题跟随应用主题切换
   useEffect(() => {
     const theme = settings?.theme ?? 'light'
-    const isDark = theme === 'dark' || theme === 'dracula' || theme === 'cyberpunk' || theme === 'forest'
+    const isDark = theme === 'dark' || theme === 'dracula' || theme === 'forest'
     const css = isDark ? hljsDarkCss : hljsLightCss
     const styleId = 'hljs-theme'
     let styleEl = document.getElementById(styleId) as HTMLStyleElement | null

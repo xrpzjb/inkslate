@@ -218,14 +218,12 @@
 /* 暗黑主题下 katex 文字色适配 */
 [data-theme="dark"] .preview .katex,
 [data-theme="dracula"] .preview .katex,
-[data-theme="cyberpunk"] .preview .katex,
 [data-theme="forest"] .preview .katex {
   color: var(--text-primary);
 }
 
 [data-theme="dark"] .preview .katex .mord,
 [data-theme="dracula"] .preview .katex .mord,
-[data-theme="cyberpunk"] .preview .katex .mord,
 [data-theme="forest"] .preview .katex .mord {
   color: var(--text-primary);
 }
@@ -404,7 +402,6 @@
 [data-theme="dark"] .toc,
 [data-theme="dracula"] .toc,
 [data-theme="dune"] .toc,
-[data-theme="cyberpunk"] .toc,
 [data-theme="nordic"] .toc,
 [data-theme="forest"] .toc,
 [data-theme="sunset"] .toc,

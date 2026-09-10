@@ -221,27 +221,6 @@ const editorSolarizedExt = makeEditorTheme({
   },
 })
 
-const editorCyberpunkExt = makeEditorTheme({
-  isDark: true,
-  bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
-  caret: '#00f0ff', activeLine: 'var(--bg-hover)',
-  gutterBg: 'var(--bg-primary)', gutterFg: 'var(--text-tertiary)',
-  activeLineGutterFg: '#00f0ff',
-  selectionBg: '#ff00aa', selectionFg: '#ffffff',
-  c: {
-    keyword: '#ff00aa', comment: '#6b5b95', string: '#00f0ff',
-    number: '#fcee0a', bool: '#ff00aa', heading: '#00f0ff',
-    link: '#00f0ff', className: '#fcee0a', function: '#00f0ff',
-    typeName: '#fcee0a', propertyName: '#f0f0ff',
-    attributeName: '#fcee0a', attributeValue: '#00f0ff',
-    tagName: '#00f0ff', operator: '#ff00aa', punctuation: '#c4b5fd',
-    bracket: '#c4b5fd', list: '#ff00aa', meta: '#fcee0a',
-    angleBracket: '#c4b5fd', quote: '#6b5b95', emphasis: '#f0f0ff',
-    strong: '#f0f0ff', content: 'inherit', monospace: 'inherit',
-    processingInstruction: '#ff00aa',
-  },
-})
-
 const editorDraculaExt = makeEditorTheme({
   isDark: true,
   bg: 'var(--bg-primary)', fg: 'var(--text-primary)',
@@ -414,7 +393,6 @@ const editorThemes: Record<AppThemeId, () => Extension> = {
   'light': () => editorLightExt,
   'dark': () => editorDarkExt,
   'solarized': () => editorSolarizedExt,
-  'cyberpunk': () => editorCyberpunkExt,
   'dracula': () => editorDraculaExt,
   'dune': () => editorDuneExt,
   'monet': () => editorMonetExt,
@@ -429,7 +407,6 @@ const selectionColors: Record<AppThemeId, string> = {
   light:     '#0d47a1',
   dark:      '#1f6feb',
   solarized: '#b58900',
-  cyberpunk: '#ff00aa',
   dracula:   '#44475a',
   dune:      '#c87533',
   monet:     '#a48bd9',
@@ -469,7 +446,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   // 自动换行
   const wordWrap = useAppStore(s => s.settings?.wordWrap === true)
   const theme: AppThemeId = ((settingsTheme === 'auto' || !settingsTheme || !(settingsTheme in editorThemes)) ? 'light' : settingsTheme) as AppThemeId
-  const themeIsDark = selectionColors[theme] != null && ['dark', 'cyberpunk', 'dracula', 'forest'].includes(theme)
+  const themeIsDark = selectionColors[theme] != null && ['dark', 'dracula', 'forest'].includes(theme)
   const effectiveTheme: AppThemeId = (editorDark && !themeIsDark) ? 'dark' : theme
 
   useImperativeHandle(ref, () => ({

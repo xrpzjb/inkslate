@@ -150,6 +150,29 @@ const api = {
     }
   },
 
+  /** SSH 远程服务器（供 AI 写作的 SSH 工具使用） */
+  ssh: {
+    /** 保存 SSH 配置（password 为明文；留空则保留已存密码） */
+    configure: (config: { enabled: boolean; host: string; port: number; username: string; password?: string }): Promise<any> =>
+      ipcRenderer.invoke(IPC_CHANNELS.SSH_CONFIGURE, config),
+    /** 测试 SSH 连接 */
+    test: (): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.SSH_TEST),
+    /** 查询 SSH 状态 */
+    status: (): Promise<{ configured: boolean; enabled: boolean; connected: boolean }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.SSH_STATUS),
+    /** 订阅主进程的写操作确认请求，返回取消订阅函数 */
+    onConfirmRequest: (cb: (req: { id: string; action: string; path: string; detail?: string }) => void): (() => void) => {
+      const listener = (_: any, req: any) => cb(req)
+      ipcRenderer.on(IPC_CHANNELS.SSH_CONFIRM_REQUEST, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SSH_CONFIRM_REQUEST, listener)
+    },
+    /** 回传确认结果 */
+    respondConfirm: (id: string, ok: boolean): void => {
+      ipcRenderer.send(IPC_CHANNELS.SSH_CONFIRM_RESPONSE, { id, ok })
+    }
+  },
+
   recycleBin: {
     purgeExpired: (): Promise<{ notes: number; notebooks: number }> =>
       ipcRenderer.invoke(IPC_CHANNELS.RECYCLE_BIN_PURGE_EXPIRED),
@@ -216,10 +239,24 @@ const api = {
     write: (filePath: string, content: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, filePath, content),
     readAsBase64: (filePath: string): Promise<{ base64: string; mime: string }> =>
-      ipcRenderer.invoke(IPC_CHANNELS.FILE_READ_BASE64, filePath)
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_READ_BASE64, filePath),
+    saveAsset: (noteFilePath: string, sourceImagePath: string): Promise<string | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_SAVE_ASSET, noteFilePath, sourceImagePath)
   },
 
   getMenuData: (): Promise<any[]> => ipcRenderer.invoke('menu:get-data'),
+
+  // 窗口控制
+  minimize: (): void => { ipcRenderer.send('window:minimize') },
+  maximize: (): void => { ipcRenderer.send('window:maximize') },
+  close: (): void => { ipcRenderer.send('window:close') },
+  isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:is-maximized'),
+  onMaximizeChange: (callback: (maximized: boolean) => void): (() => void) => {
+    const handler = (_e: unknown, maximized: boolean) => callback(maximized)
+    ipcRenderer.on('window:maximize-change', handler)
+    return () => { ipcRenderer.removeListener('window:maximize-change', handler) }
+  },
+
   /** TitleBar 组件点菜单项时调，把点击派发给主进程的 handleMenuClick */
   clickMenu: (id: string, arg?: any): void => {
     ipcRenderer.send('menu:clicked', id, arg)

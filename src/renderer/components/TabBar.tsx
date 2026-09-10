@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Link2, Paperclip, Globe, ChevronDown } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import './TabBar.css'
@@ -160,11 +161,26 @@ export function TabBar() {
     if (id !== activeTabId) activateTab(id)
   }
 
-  /** 点击「更多」里的标签：移到最前 + 激活 + 关闭菜单 */
+  // 如果从树状图点击了被隐藏的标签，自动把它移到可见区域最右边
+  useEffect(() => {
+    if (!activeTabId || hiddenIds.length === 0) return
+    if (!hiddenIds.includes(activeTabId)) return
+    const visibleCount = tabs.length - hiddenIds.length
+    const filtered = openTabs.filter(t => t !== activeTabId)
+    const insertIdx = Math.max(0, Math.min(visibleCount - 1, filtered.length))
+    const newTabs = [...filtered.slice(0, insertIdx), activeTabId, ...filtered.slice(insertIdx)]
+    reorderTabs(newTabs)
+  }, [activeTabId, hiddenIds.length])
+
+  /** 点击「更多」里的标签：移到可见标签最右边 + 激活 + 关闭菜单 */
   const handleMoreTabClick = (id: string) => {
     setMoreOpen(false)
-    // 把该标签移到 openTabs 最前面
-    const newTabs = [id, ...openTabs.filter(t => t !== id)]
+    // 把点击的 tab 插到可见区域最后一个位置（溢出区之前一位）
+    const visibleCount = tabs.length - hiddenIds.length
+    const filtered = openTabs.filter(t => t !== id)
+    // 插到 visibleCount - 1 位置，使其成为最后一个可见标签
+    const insertIdx = Math.max(0, Math.min(visibleCount - 1, filtered.length))
+    const newTabs = [...filtered.slice(0, insertIdx), id, ...filtered.slice(insertIdx)]
     reorderTabs(newTabs)
     if (id !== activeTabId) activateTab(id)
   }
@@ -289,7 +305,7 @@ export function TabBar() {
           )}
         </div>
       )}
-      {ctxMenu && (
+      {ctxMenu && createPortal(
         <div className="tab-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
           <div className="tab-ctx-item" onClick={() => { closeTabsExcept(ctxMenu.id, 'left'); setCtxMenu(null) }}>
             关闭左侧
@@ -300,7 +316,8 @@ export function TabBar() {
           <div className="tab-ctx-item" onClick={() => { closeTabsExcept(ctxMenu.id, 'other'); setCtxMenu(null) }}>
             关闭其他标签
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

@@ -9,6 +9,9 @@ export interface AppThemePalette {
   'bg-secondary': string
   'bg-tertiary': string
   'bg-sidebar': string
+  'bg-titlebar': string
+  'bg-iconbar': string
+  'bg-tree-child': string
   'bg-hover': string
   'bg-active': string
   'bg-tabbar': string
@@ -38,6 +41,9 @@ const defaultLight: AppThemePalette = {
   'bg-secondary': '#f9fafb',
   'bg-tertiary': '#f3f4f6',
   'bg-sidebar': '#f9fafb',
+  'bg-titlebar': '#f9fafb',
+  'bg-iconbar': '#e8eaef8f',
+  'bg-tree-child': '#e2e5ea',
   'bg-hover': '#eceef1',
   'bg-active': '#e8f0fe',
   'bg-tabbar': '#f9fafb',
@@ -65,6 +71,9 @@ const darknight: AppThemePalette = {
   'bg-secondary': '#202020',
   'bg-tertiary': '#2a2a2b',
   'bg-sidebar': '#161616',
+  'bg-titlebar': '#111111',
+  'bg-iconbar': '#121212',
+  'bg-tree-child': '#1c1c1c',
   'bg-hover': '#2d2d2e',
   'bg-active': '#094771',
   'bg-tabbar': '#1a1a1a',
@@ -87,38 +96,15 @@ const darknight: AppThemePalette = {
   'color-scheme': 'dark',
 }
 
-const cyberpunk: AppThemePalette = {
-  'bg-primary': '#0d0221',
-  'bg-secondary': '#150734',
-  'bg-tertiary': '#1d0e4a',
-  'bg-sidebar': '#0a0118',
-  'bg-hover': '#240a5e',
-  'bg-active': '#3a1a7e',
-  'bg-tabbar': '#1a0e50',
-  'bg-preview': '#150734',
-  'text-primary': '#f0f0ff',
-  'text-secondary': '#c4b5fd',
-  'text-tertiary': '#8b7fc7',
-  'text-inverse': '#0d0221',
-  'border-color': '#ff00aa55',
-  'border-strong': '#ff00aa',
-  'accent-color': '#ff00aa',
-  'accent-hover': '#ff4dcd',
-  'accent-bg': '#2a0d52',
-  'code-bg': '#1a0a3e',
-  'code-text': '#f0f0ff',
-  'shadow-sm': '0 0 4px rgba(255, 0, 170, 0.3)',
-  'shadow-md': '0 0 12px rgba(255, 0, 170, 0.4)',
-  'scrollbar-thumb': '#ff00aa',
-  'scrollbar-thumb-hover': '#ff4dcd',
-  'color-scheme': 'dark',
-}
 
 const dracula: AppThemePalette = {
   'bg-primary': '#282a36',
   'bg-secondary': '#1c1c28',
   'bg-tertiary': '#343746',
   'bg-sidebar': '#21222c',
+  'bg-titlebar': '#1b1c26',
+  'bg-iconbar': '#1b1c26',
+  'bg-tree-child': '#282a36',
   'bg-hover': '#44475a',
   'bg-active': '#44475a',
   'bg-tabbar': '#343746',
@@ -146,6 +132,9 @@ const dune: AppThemePalette = {
   'bg-secondary': '#d9c896',
   'bg-tertiary': '#efe0c0',
   'bg-sidebar': '#e6d3a3',
+  'bg-titlebar': '#dcc592',
+  'bg-iconbar': '#d9c490',
+  'bg-tree-child': '#e6d3a3',
   'bg-hover': '#d9c088',
   'bg-active': '#c9a96e',
   'bg-tabbar': '#e0cba0',
@@ -173,6 +162,9 @@ const monet: AppThemePalette = {
   'bg-secondary': '#dcd2ef',
   'bg-tertiary': '#f0eaf9',
   'bg-sidebar': '#ebe4f7',
+  'bg-titlebar': '#e0d8f2',
+  'bg-iconbar': '#dfd5ee',
+  'bg-tree-child': '#ebe4f7',
   'bg-hover': '#ddd0ec',
   'bg-active': '#cab8e0',
   'bg-tabbar': '#e0d8f2',
@@ -201,6 +193,9 @@ const newspaper: AppThemePalette = {
   'bg-secondary': '#d4c8a0',
   'bg-tertiary': '#eee2c8',
   'bg-sidebar': '#e8dec0',
+  'bg-titlebar': '#dfd0b0',
+  'bg-iconbar': '#dcd0b0',
+  'bg-tree-child': '#e8dec0',
   'bg-hover': '#d9caa0',
   'bg-active': '#c9b888',
   'bg-tabbar': '#e0d4b0',
@@ -228,6 +223,9 @@ const forest: AppThemePalette = {
   'bg-secondary': '#243a2e',
   'bg-tertiary': '#2d4638',
   'bg-sidebar': '#1f2e25',
+  'bg-titlebar': '#182319',
+  'bg-iconbar': '#1a2720',
+  'bg-tree-child': '#243a2e',
   'bg-hover': '#345a45',
   'bg-active': '#467057',
   'bg-tabbar': '#2d4638',
@@ -255,6 +253,9 @@ const sunset: AppThemePalette = {
   'bg-secondary': '#ffe0c8',
   'bg-tertiary': '#ffe8d5',
   'bg-sidebar': '#ffe0c8',
+  'bg-titlebar': '#ffd4b5',
+  'bg-iconbar': '#ffd4b5',
+  'bg-tree-child': '#ffe0c8',
   'bg-hover': '#ffcca8',
   'bg-active': '#ffb088',
   'bg-tabbar': '#ffd8b8',
@@ -282,6 +283,9 @@ const nordic: AppThemePalette = {
   'bg-secondary': '#d4dce6',
   'bg-tertiary': '#eef1f5',
   'bg-sidebar': '#e8ecf1',
+  'bg-titlebar': '#dde2e9',
+  'bg-iconbar': '#dde2e9',
+  'bg-tree-child': '#e8ecf1',
   'bg-hover': '#d8dfe6',
   'bg-active': '#c0cad4',
   'bg-tabbar': '#e0e6ec',
@@ -309,6 +313,9 @@ const pastoral: AppThemePalette = {
   'bg-secondary': '#d4d8b8',
   'bg-tertiary': '#eef0d8',
   'bg-sidebar': '#e8ecd0',
+  'bg-titlebar': '#dce0c2',
+  'bg-iconbar': '#dce0c2',
+  'bg-tree-child': '#e8ecd0',
   'bg-hover': '#d8dcb0',
   'bg-active': '#c0c890',
   'bg-tabbar': '#e2e6c0',
@@ -335,7 +342,6 @@ const pastoral: AppThemePalette = {
 export type AppThemeId =
   | 'light'        // 默认
   | 'dark'         // 暗黑
-  | 'cyberpunk'    // 赛博朋克
   | 'dracula'      // 德古拉
   | 'dune'         // 沙丘
   | 'monet'        // 莫奈（待做）
@@ -349,7 +355,6 @@ export type AppThemeId =
 export const appThemes: Record<AppThemeId, AppThemePalette> = {
   'light': defaultLight,
   'dark': darknight,
-  'cyberpunk': cyberpunk,
   'dracula': dracula,
   'dune': dune,
   'monet': monet,
@@ -359,27 +364,32 @@ export const appThemes: Record<AppThemeId, AppThemePalette> = {
   'nordic': nordic,
   'pastoral': pastoral,
     'solarized': {
+    // Solarized Light 标准色板：base3 #fdf6e3（主背景）、base2 #eee8d5（次背景）
+    // 不用随机棕灰色，保持干净的米黄暖色调
     'bg-primary': '#fdf6e3',
-    'bg-secondary': '#d8d0b0',
-    'bg-tertiary': '#f5efd8',
-    'bg-sidebar': '#d8d2bc',
-    'bg-hover': '#e3dfc8',
-    'bg-active': '#d8d1ba',
-    'bg-tabbar': '#e5e0c8',
-    'bg-preview': '#f0e8d2',
+    'bg-secondary': '#eee8d5',
+    'bg-tertiary': '#eee8d5',
+    'bg-sidebar': '#eee8d5',
+    'bg-titlebar': '#e5dec8',
+    'bg-iconbar': '#eee8d5',
+    'bg-tree-child': '#fdf6e3',
+    'bg-hover': '#d6cdb7',
+    'bg-active': '#c8c0aa',
+    'bg-tabbar': '#eee8d5',
+    'bg-preview': '#fdf6e3',
     'text-primary': '#586e75',
     'text-secondary': '#657b83',
     'text-tertiary': '#93a1a1',
     'text-inverse': '#fdf6e3',
-    'border-color': '#d8d1ba',
+    'border-color': '#d6cdb7',
     'border-strong': '#c0b894',
     'accent-color': '#268bd2',
     'accent-hover': '#1a6cb0',
     'accent-bg': '#eee8d5',
     'code-bg': '#eee8d5',
     'code-text': '#586e75',
-    'shadow-sm': '0 1px 2px rgba(0,0,0,0.05)',
-    'shadow-md': '0 4px 12px rgba(0,0,0,0.08)',
+    'shadow-sm': '0 1px 2px rgba(0, 0, 0, 0.05)',
+    'shadow-md': '0 4px 12px rgba(0, 0, 0, 0.08)',
     'scrollbar-thumb': '#c0b894',
     'scrollbar-thumb-hover': '#93a1a1',
     'color-scheme': 'light',
@@ -389,7 +399,6 @@ export const appThemes: Record<AppThemeId, AppThemePalette> = {
 export const appThemeLabels: Record<AppThemeId, string> = {
   'light': '默认主题',
   'dark': '暗黑',
-  'cyberpunk': '赛博朋克',
   'dracula': '德古拉',
   'dune': '沙丘',
   'monet': '莫奈',

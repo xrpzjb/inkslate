@@ -268,6 +268,97 @@ export function Sidebar() {
     renamingRef.current = renaming
   }, [renaming])
 
+  // 监听「定位当前笔记」事件：展开所属笔记本 → 滚动到该笔记行
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const noteId = detail?.noteId
+      if (!noteId) return
+      const note = notes.find(n => n.id === noteId)
+      if (!note) return
+      const nbId = note.notebookId
+      if (nbId && !expanded.has(nbId)) {
+        setExpanded(prev => {
+          const next = new Set(prev)
+          next.add(nbId)
+          setExpandedNotebook(nbId, true)
+          return next
+        })
+      }
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-note-id="${noteId}"]`)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+    }
+    window.addEventListener('inkslate:sidebar-locate-note', handler)
+    return () => window.removeEventListener('inkslate:sidebar-locate-note', handler)
+  }, [notes, expanded])
+
+  // 监听「定位到某个节点」事件（面包屑逐级点击）：笔记本 → 展开其所有祖先并滚动；笔记 → 展开所属笔记本并滚动
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const id = detail?.id as string | undefined
+      const type = detail?.type as 'notebook' | 'note' | undefined
+      if (!id) return
+
+      if (type === 'notebook') {
+        // 展开自身及所有祖先笔记本
+        setExpanded(prev => {
+          const next = new Set(prev)
+          const seen = new Set<string>()
+          let cur: string | null = id
+          while (cur && !seen.has(cur)) {
+            seen.add(cur)
+            next.add(cur)
+            setExpandedNotebook(cur, true)
+            cur = notebooks.find(n => n.id === cur)?.parentId ?? null
+          }
+          return next
+        })
+        requestAnimationFrame(() => {
+          const el = document.querySelector(`[data-notebook-id="${id}"]`)
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        })
+        return
+      }
+
+      // 笔记：展开所属笔记本后滚动到该行
+      const note = notes.find(n => n.id === id)
+      if (!note) return
+      const nbId = note.notebookId
+      if (nbId && !expanded.has(nbId)) {
+        setExpanded(prev => {
+          const next = new Set(prev)
+          next.add(nbId)
+          setExpandedNotebook(nbId, true)
+          return next
+        })
+      }
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-note-id="${id}"]`)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+    }
+    window.addEventListener('inkslate:sidebar-locate-node', handler)
+    return () => window.removeEventListener('inkslate:sidebar-locate-node', handler)
+  }, [notes, notebooks, expanded])
+
+  // 监听「展开/折叠全部」事件
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const shouldExpand = detail?.expanded
+      const allIds = notebooks.map(n => n.id)
+      setExpanded(shouldExpand ? new Set(allIds) : new Set())
+      // 持久化
+      const next = shouldExpand ? allIds : []
+      window.inkslateApi.settings.update({ expandedNotebooks: next }).catch(() => {})
+    }
+    window.addEventListener('inkslate:sidebar-expand-all', handler)
+    return () => window.removeEventListener('inkslate:sidebar-expand-all', handler)
+  }, [notebooks])
+
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -289,8 +380,7 @@ export function Sidebar() {
   const closeContextMenu = () => setContextMenu(null)
 
   const ensureNotebook = async (): Promise<string> => {
-    const nbs = storeNotebooksRef.current
-    if (nbs.length > 0) return nbs[0].id
+    if (notebooks.length > 0) return notebooks[0].id
     const nb = await createNotebook('我的笔记', null)
     return nb.id
   }
@@ -714,9 +804,23 @@ export function Sidebar() {
     window.dispatchEvent(new CustomEvent('inkslate:open-ai-panel'))
   }
 
-  const renderNode = (node: NoteTreeNode, depth: number = 0) => {
+  /** 打开指定笔记的 Git 历史快照：先选中（HistoryPanel 读的是 currentNote），再打开面板 */
+  const handleOpenHistory = async (nodeId: string) => {
+    closeContextMenu()
+    try {
+      if (selectedNoteId !== nodeId) {
+        await selectNote(nodeId)
+      }
+    } catch (e) {
+      console.error('[sidebar] selectNote for git history failed:', e)
+    }
+    window.dispatchEvent(new CustomEvent('inkslate:open-history'))
+  }
+
+  const renderNode = (node: NoteTreeNode, depth: number = 0, parentSelected: boolean = false) => {
     const isExpanded = expanded.has(node.id)
     const isSelected = selectedNoteId === node.id || selectedNotebookId === node.id
+    const isChildOfSelected = parentSelected && !isSelected
     const isRenaming = renaming?.id === node.id
 
     if (node.type === 'notebook') {
@@ -733,9 +837,10 @@ export function Sidebar() {
           }
         : {}
       return (
-        <div key={node.id} style={{ position: 'relative' }}>
+        <div key={node.id} className={isSelected ? 'tree-group-selected' : ''} style={{ position: 'relative' }}>
           <div
-            className={`tree-row ${isSelected ? 'selected' : ''}`}
+            className={`tree-row ${isSelected ? 'selected' : ''} ${isChildOfSelected ? 'child-of-selected' : ''}`}
+            data-notebook-id={node.id}
             style={{ paddingLeft: 4 + depth * 10 }}
             onClick={() => { setRenaming(null); selectNotebook(node.id) }}
             onContextMenu={(e) => handleContextMenu(e, node)}
@@ -772,7 +877,7 @@ export function Sidebar() {
             )}
           </div>
           {isDragOver && <div style={dropLineStyle} />}
-          {isExpanded && node.children.map(child => renderNode(child, depth + 1))}
+          {isExpanded && node.children.map(child => renderNode(child, depth + 1, isSelected))}
         </div>
       )
     }
@@ -804,9 +909,10 @@ export function Sidebar() {
         }
       : {}
     return (
-      <div key={node.id} style={{ position: 'relative' }}>
+      <div key={node.id} className={isSelected ? 'tree-group-selected' : ''} style={{ position: 'relative' }}>
         <div
-          className={`tree-row ${isSelected ? 'selected' : ''}`}
+          className={`tree-row ${isSelected ? 'selected' : ''} ${isChildOfSelected ? 'child-of-selected' : ''}`}
+          data-note-id={node.id}
           style={{ paddingLeft: 4 + depth * 10 }}
           onClick={() => {
             setRenaming(null)
@@ -1031,9 +1137,7 @@ export function Sidebar() {
                       label="Git 历史快照"
                       onClick={() => {
                         const nodeId = contextMenu.node!.id
-                        const nodeType = contextMenu.node!.type
-                        setContextMenu(null)
-                        setGitHistory({ noteId: nodeType === 'note' ? nodeId : undefined, notebookId: nodeType === 'notebook' ? nodeId : undefined })
+                        handleOpenHistory(nodeId)
                       }}
                     />
                   )}
@@ -1097,9 +1201,19 @@ export function Sidebar() {
         .tree-row:hover {
           background-color: var(--bg-hover);
         }
-        .tree-row.selected {
+        .tree-group-selected {
           background-color: var(--bg-primary);
-          box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.08);
+          border-radius: 6px;
+          margin: 2px 4px;
+          position: relative;
+          z-index: 1;
+        }
+        .tree-row.selected {
+          background-color: transparent;
+        }
+        .tree-row.child-of-selected {
+          background-color: transparent;
         }
         .tree-label {
           flex: 1;

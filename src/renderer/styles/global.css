@@ -10,7 +10,7 @@
 
   /* 尺寸 */
   --sidebar-width: 260px;
-  --header-height: 40px;
+  --header-height: 36px;
   --border-radius: 4px;
   --transition: 150ms ease;
 }
@@ -24,6 +24,9 @@
   --bg-secondary: #f9fafb;
   --bg-tertiary: #f3f4f6;
   --bg-sidebar: #f9fafb;
+  --bg-titlebar: #f9fafb;
+  --bg-iconbar: #e8eaef8f;
+  --bg-tree-child: #e2e5ea;
   --bg-hover: #eceef1;
   --bg-active: #e8f0fe;
   --bg-tabbar: #f9fafb;
@@ -60,6 +63,9 @@
   --bg-secondary: #252526;
   --bg-tertiary: #252525;
   --bg-sidebar: #1c1c1c;
+  --bg-titlebar: #171717;
+  --bg-iconbar: #161616;
+  --bg-tree-child: #1c1c1c;
   --bg-hover: #2d2d2e;
   --bg-active: #094771;
   --bg-tabbar: #202020;
@@ -93,20 +99,23 @@
 /* ============ 护眼米黄（Solarized Light） ============ */
 [data-theme='solarized'] {
   --bg-primary: #fdf6e3;
-  --bg-secondary: #e0d9c2;
-  --bg-tertiary: #f5efd8;
-  --bg-sidebar: #d8d2bc;
-  --bg-hover: #e3dfc8;
-  --bg-active: #d8d1ba;
-  --bg-tabbar: #e0d9c2;
-  --bg-preview: #eee8d5;
+  --bg-secondary: #eee8d5;
+  --bg-tertiary: #eee8d5;
+  --bg-sidebar: #eee8d5;
+  --bg-titlebar: #e5dec8;
+  --bg-iconbar: #eee8d5;
+  --bg-tree-child: #fdf6e3;
+  --bg-hover: #d6cdb7;
+  --bg-active: #c8c0aa;
+  --bg-tabbar: #eee8d5;
+  --bg-preview: #fdf6e3;
 
   --text-primary: #586e75;
   --text-secondary: #657b83;
   --text-tertiary: #93a1a1;
   --text-inverse: #fdf6e3;
 
-  --border-color: #d8d1ba;
+  --border-color: #d6cdb7;
   --border-strong: #c0b894;
   --border-subtle: #e3dfc8;
 
@@ -133,6 +142,9 @@
     --bg-secondary: #252526;
   --bg-tertiary: #252525;
   --bg-sidebar: #1c1c1c;
+  --bg-titlebar: #171717;
+  --bg-iconbar: #161616;
+  --bg-tree-child: #1c1c1c;
   --bg-hover: #2d2d2e;
   --bg-active: #094771;
   --bg-tabbar: #202020;

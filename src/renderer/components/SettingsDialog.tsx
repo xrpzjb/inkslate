@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, Settings as SettingsIcon, Type, Keyboard, Info, Bot, Loader2 } from 'lucide-react'
+import { X, Settings as SettingsIcon, Type, Keyboard, Info, Bot, Loader2, Server } from 'lucide-react'
 import { useAppStore } from '../store/app'
 import { toast } from './Toast'
 
@@ -98,6 +98,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [aiProxyUrl, setAiProxyUrl] = useState(settings?.ai?.proxyUrl ?? '')
   const [aiTesting, setAiTesting] = useState(false)
 
+  // SSH 远程服务器设置（供 AI 写作的 SSH 工具使用）
+  const [sshEnabled, setSshEnabled] = useState(settings?.ssh?.enabled ?? false)
+  const [sshHost, setSshHost] = useState(settings?.ssh?.host ?? '')
+  const [sshPort, setSshPort] = useState(String(settings?.ssh?.port ?? 22))
+  const [sshUser, setSshUser] = useState(settings?.ssh?.username ?? '')
+  const [sshPassword, setSshPassword] = useState('')
+  const [sshTesting, setSshTesting] = useState(false)
+  const [sshConfigured, setSshConfigured] = useState(!!settings?.ssh?.configured)
+
   const persist = (patch: Record<string, unknown>) => {
     const cur = useAppStore.getState().settings
     if (cur) useAppStore.setState({ settings: { ...cur, ...patch } })
@@ -155,6 +164,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     const ai = { provider: aiProvider, apiUrl: aiUrl, model: aiModel, apiKey: aiKey, proxyUrl: aiProxyUrl, configured: !!(aiUrl && aiKey) } as any
     persist({ ai })
     window.inkslateApi.ai.configure(ai).catch(() => {})
+  }
+
+  /** 保存 SSH 配置：密码交给主进程用 safeStorage 加密；返回保存后的配置 */
+  const applySshConfig = async (): Promise<any> => {
+    const sshApi = (window as any).inkslateApi?.ssh
+    if (!sshApi?.configure) {
+      toast.error('SSH 功能需要重启应用后生效')
+      return null
+    }
+    const payload = {
+      enabled: sshEnabled,
+      host: sshHost.trim(),
+      port: Number(sshPort) || 22,
+      username: sshUser.trim(),
+      password: sshPassword || undefined
+    }
+    const saved = await sshApi.configure(payload).catch(() => null)
+    if (saved) {
+      setSshConfigured(!!saved.configured)
+      persist({ ssh: saved })
+    }
+    setSshPassword('')
+    return saved
   }
 
   const openShortcuts = () => {
@@ -297,6 +329,91 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 {aiTesting ? '测试中…' : '测试连接'}
               </button>
               <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>支持 DeepSeek / 通义千问 / GLM / Kimi 等国内大模型</span>
+            </div>
+          </div>
+
+          {/* SSH 远程服务器 */}
+          <div className="settings-section">
+            <h3 className="shortcuts-group-title"><Server size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />SSH 远程（AI 读写服务器文件）</h3>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 10, color: 'var(--text-primary)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={sshEnabled} onChange={(e) => setSshEnabled(e.target.checked)} />
+              启用 SSH 工具（AI 可读取 / 写入远程文件）
+            </label>
+            <input
+              value={sshHost}
+              onChange={(e) => setSshHost(e.target.value)}
+              placeholder="主机地址，如 192.168.1.10 或 example.com"
+              autoComplete="off"
+              style={aiInputStyle}
+            />
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <input
+                value={sshPort}
+                onChange={(e) => setSshPort(e.target.value)}
+                placeholder="端口"
+                autoComplete="off"
+                style={{ ...aiInputStyle, flex: '0 0 90px', marginBottom: 0 }}
+              />
+              <input
+                value={sshUser}
+                onChange={(e) => setSshUser(e.target.value)}
+                placeholder="用户名，如 root"
+                autoComplete="off"
+                style={{ ...aiInputStyle, flex: 1, marginBottom: 0 }}
+              />
+            </div>
+            <input
+              value={sshPassword}
+              onChange={(e) => setSshPassword(e.target.value)}
+              placeholder={sshConfigured ? '密码（已保存，留空则不修改）' : '登录密码'}
+              type="password"
+              autoComplete="off"
+              style={aiInputStyle}
+            />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: -4 }}>
+              <button
+                onClick={async () => { await applySshConfig(); toast.success('SSH 配置已保存') }}
+                style={{
+                  padding: '6px 14px', borderRadius: 4, border: '1px solid var(--border-color)',
+                  background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, cursor: 'pointer'
+                }}
+              >
+                保存
+              </button>
+              <button
+                onClick={async () => {
+                  setSshTesting(true)
+                  try {
+                    await applySshConfig()
+                    const sshApi = (window as any).inkslateApi?.ssh
+                    if (!sshApi?.test) { toast.error('SSH 功能需要重启应用后生效'); return }
+                    const res = await sshApi.test()
+                    if (res.ok) toast.success(res.message || '连接成功')
+                    else toast.error('连接失败: ' + (res.message || '未知错误'))
+                  } catch (e: any) {
+                    toast.error('连接失败: ' + (e?.message || '未知错误'))
+                  } finally {
+                    setSshTesting(false)
+                  }
+                }}
+                disabled={sshTesting}
+                style={{
+                  padding: '6px 14px', borderRadius: 4, border: '1px solid var(--border-color)',
+                  background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13,
+                  cursor: sshTesting ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  opacity: sshTesting ? 0.6 : 1
+                }}
+              >
+                {sshTesting && <Loader2 size={14} className="spin" />}
+                {sshTesting ? '测试中…' : '测试连接'}
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                {sshConfigured ? (sshEnabled ? '已配置并启用' : '已配置（未启用）') : '未配置'}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+              只读操作（列目录 / 读文件）自动执行；写入文件前会弹出确认框。密码使用系统安全存储加密保存。
             </div>
           </div>
 

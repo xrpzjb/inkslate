@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAppStore } from '../store/app'
 import { getThemeLabel } from '@shared/themeLabels'
-import { Cloud, CloudOff, CloudUpload, Loader2, CheckCircle2, AlertCircle, Save, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, FileText, GitBranch, Upload, Download, RefreshCw, Settings } from 'lucide-react'
+import { Cloud, CloudOff, CloudUpload, Loader2, CheckCircle2, AlertCircle, Save, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, GitBranch, Upload, Download, RefreshCw, Settings } from 'lucide-react'
 import { alert } from './AlertDialog'
 
 function formatTime(ts: number): string {
@@ -64,7 +64,6 @@ function syncLabelCompact(v: SyncVisual): string {
 export function StatusBar() {
   const syncStatus = useAppStore(s => s.syncStatus)
   const theme = useAppStore(s => s.theme)
-  const notes = useAppStore(s => s.notes)
   const currentNote = useAppStore(s => s.currentNote)
   const updateNote = useAppStore(s => s.updateNote)
   const saveStatus = useAppStore(s => s.saveStatus)
@@ -248,21 +247,18 @@ export function StatusBar() {
 
   return (
     <div style={{
-      height: 24,
+      height: 26,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       padding: '0 12px',
-      backgroundColor: 'var(--bg-tertiary)',
+      borderTop: '1px solid var(--border-color)',
+      backgroundColor: 'var(--bg-primary)',
       fontSize: 11,
       color: 'var(--text-tertiary)',
       userSelect: 'none'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <FileText size={11} />
-          笔记 {notes.length} 条
-        </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <Save size={11} />
           {saveStatus.saving

@@ -94,6 +94,13 @@ export function IconSidebar() {
   const [popover, setPopover] = useState<null | 'new' | 'sync' | 'theme' | 'menu'>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+
+  // 监听外部搜索事件（工具栏搜索按钮触发）
+  useEffect(() => {
+    const handler = () => setSearchOpen(true)
+    window.addEventListener('inkslate:open-search', handler)
+    return () => window.removeEventListener('inkslate:open-search', handler)
+  }, [])
   const newBtnRef = useRef<HTMLButtonElement>(null)
   const syncBtnRef = useRef<HTMLButtonElement>(null)
   const themeBtnRef = useRef<HTMLButtonElement>(null)

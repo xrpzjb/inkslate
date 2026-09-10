@@ -2,14 +2,16 @@
 .tab-bar {
   display: flex;
   align-items: stretch;
-  height: 44px;
+  height: 36px;
   /* 与笔记树面板底色统一，形成一个整体视觉区域 */
   background-color: var(--bg-sidebar) !important;
-  border-bottom: 1px solid var(--border-color);
   overflow: visible;
   flex-shrink: 0;
   user-select: none;
   position: relative;
+  /* 高于编辑器标题栏 .panel-header（z-index: 2），
+     否则 tab 内的「更多」下拉会被标题栏盖住 */
+  z-index: 30;
 }
 
 /* 可横向滚动的标签区（隐藏滚动条），溢出到两侧的标签归入「更多」 */
@@ -55,11 +57,13 @@
   color: var(--text-primary);
 }
 
-/* 激活 tab：与编辑器/预览面板同色 */
+/* 激活 tab：与编辑器/预览面板同色，并加一点阴影做出凸起效果 */
 .tab-item.active {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-weight: 500;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  z-index: 1;
 }
 
 /* 拖动中 */

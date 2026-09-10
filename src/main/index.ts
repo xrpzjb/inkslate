@@ -22,7 +22,7 @@ function createMainWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
-    frame: true,
+    frame: false,
     backgroundColor: '#ffffff',
     title: '墨与石板',
     icon: iconPath,
@@ -134,6 +134,18 @@ async function bootstrap(): Promise<void> {
   ipcMain.on('menu:theme-changed', (_e, id: string) => {
     setMenuThemeId(id)
   })
+
+  // 窗口控制
+  ipcMain.on('window:minimize', () => { mainWindow?.minimize() })
+  ipcMain.on('window:maximize', () => {
+    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
+    else mainWindow?.maximize()
+  })
+  ipcMain.on('window:close', () => { mainWindow?.close() })
+  ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false)
+  // 通知渲染进程最大化状态变化
+  mainWindow?.on('maximize', () => { mainWindow?.webContents.send('window:maximize-change', true) })
+  mainWindow?.on('unmaximize', () => { mainWindow?.webContents.send('window:maximize-change', false) })
 }
 
 app.whenReady().then(bootstrap).catch((err) => {

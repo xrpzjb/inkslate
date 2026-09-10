@@ -1,4 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { Minus, Square, X, Copy } from 'lucide-react'
+import { useAppStore } from '../store/app'
 import './TitleBar.css'
 
 interface MenuItem {
@@ -31,6 +33,14 @@ export function TitleBar() {
   const [path, setPath] = useState<MenuPathItem[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isMaximized, setIsMaximized] = useState(false)
+  const currentNoteTitle = useAppStore(s => s.currentNote?.title)
+
+  useEffect(() => {
+    window.inkslateApi.isMaximized?.().then(setIsMaximized)
+    const cleanup = window.inkslateApi.onMaximizeChange?.(setIsMaximized)
+    return () => { cleanup?.() }
+  }, [])
 
   // 加载菜单数据
   useEffect(() => {
@@ -202,19 +212,31 @@ export function TitleBar() {
       className="titlebar"
       onMouseLeave={scheduleClose}
     >
-      <div className="titlebar-menus">
-        {menus.map((m, i) => (
-          <div
-            key={i}
-            className={'titlebar-top-item' + (openIndex === i ? ' open' : '')}
-            onMouseEnter={() => openMenu(i)}
-            onClick={() => (openIndex === i ? closeAll() : openMenu(i))}
-          >
-            {m.label}
-          </div>
-        ))}
+      {/* 可拖拽区域 */}
+      <div className="titlebar-drag" />
+      {/* Logo + 应用名 */}
+      <div className="titlebar-brand">
+        <img src="icon.png" alt="" className="titlebar-logo" />
+        <span className="titlebar-brand-name">墨与石板</span>
+      </div>
+      {/* 当前笔记标题（居中） */}
+      <div className="titlebar-note-title">
+        {currentNoteTitle}
       </div>
       <div className="titlebar-spacer" />
+
+      {/* 窗口控制按钮 */}
+      <div className="titlebar-window-controls">
+        <button className="titlebar-ctrl-btn" onClick={() => window.inkslateApi.minimize?.()} title="最小化">
+          <Minus size={14} />
+        </button>
+        <button className="titlebar-ctrl-btn" onClick={() => window.inkslateApi.maximize?.()} title={isMaximized ? '还原' : '最大化'}>
+          {isMaximized ? <Copy size={12} /> : <Square size={12} />}
+        </button>
+        <button className="titlebar-ctrl-btn titlebar-close-btn" onClick={() => window.inkslateApi.close?.()} title="关闭">
+          <X size={14} />
+        </button>
+      </div>
 
       {openIndex !== null && (
         <>

@@ -902,6 +902,7 @@ export function Editor() {
             onChange={setContent}
             fontSize={fontSize}
             editorDark={shadowDark}
+            noteFilePath={currentNote.path}
           />
         </div>
       ) : (
@@ -934,7 +935,8 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
   onChange: (v: string) => void
   fontSize: number
   editorDark: boolean
-}>(function RichTextEditor({ value, onChange, fontSize, editorDark }, ref) {
+  noteFilePath?: string
+}>(function RichTextEditor({ value, onChange, fontSize, editorDark, noteFilePath }, ref) {
   const editorRef = useRef<HTMLDivElement>(null)
   const isInternalUpdate = useRef(false)
 
@@ -950,7 +952,7 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
 
   // 弹窗状态
   const [linkDlg, setLinkDlg] = useState({ open: false, url: '', text: '' })
-  const [imageDlg, setImageDlg] = useState({ open: false, url: '', alt: '', busy: false })
+  const [imageDlg, setImageDlg] = useState<{ open: boolean; url: string; alt: string; busy: boolean; sourcePath?: string }>({ open: false, url: '', alt: '', busy: false })
   const [tableDlg, setTableDlg] = useState({ open: false, rows: 3, cols: 3 })
 
   // 鎶?JSON 杞垚 HTML 鐢ㄤ簬鏄剧ず
@@ -999,9 +1001,17 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
           return `<div class="rt-code-block">${escapeHtml(text)}</div>`
         }
         if (node.type === 'image') {
-          const src = escapeHtml(node.attrs?.src || '')
+          const rawSrc = node.attrs?.src || ''
           const alt = escapeHtml(node.attrs?.alt || '')
-          return `<img src="${src}" alt="${alt}" data-richtext-image="1" style="max-width: 100%;">`
+          // 相对路径（assets/xxx.png）→ 解析为 file:// 绝对路径用于显示
+          let src: string
+          if (rawSrc && !rawSrc.startsWith('data:') && !rawSrc.startsWith('http') && !rawSrc.startsWith('file:') && noteFilePath) {
+            const noteDir = noteFilePath.replace(/[\\/][^\\/]+$/, '')
+            src = `file:///${noteDir.replace(/\\/g, '/')}/${rawSrc.replace(/\\/g, '/')}`
+          } else {
+            src = escapeHtml(rawSrc)
+          }
+          return `<img src="${src}" alt="${alt}" data-richtext-image="1" data-richtext-src="${escapeHtml(rawSrc)}" style="max-width: 100%;">`
         }
         if (node.type === 'table') {
           return `<table data-richtext-table="1" style="border-collapse: collapse; width: 100%;">${(node.content || []).map(renderNode).join('')}</table>`
@@ -1033,10 +1043,12 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
       const tag = el.tagName?.toLowerCase()
       const className = el.className || ''
       if (tag === 'img') {
+        // 优先取 data-richtext-src（原始相对路径），否则用 src
+        const src = el.getAttribute('data-richtext-src') || el.getAttribute('src') || ''
         return {
           type: 'image',
           attrs: {
-            src: el.getAttribute('src') || '',
+            src,
             alt: el.getAttribute('alt') || ''
           }
         }
@@ -1196,17 +1208,31 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
     setImageDlg(d => ({ ...d, busy: true }))
     try {
       const { base64, mime } = await window.inkslateApi.file.readAsBase64(filePath)
-      setImageDlg(d => ({ ...d, url: `data:${mime};base64,${base64}`, busy: false }))
+      setImageDlg(d => ({ ...d, url: `data:${mime};base64,${base64}`, sourcePath: filePath, busy: false }))
     } catch (e) {
       toast.error('读取图片失败：' + (e as Error).message)
       setImageDlg(d => ({ ...d, busy: false }))
     }
   }
 
-  const confirmImage = () => {
+  const confirmImage = async () => {
     if (!imageDlg.url) return
     const alt = imageDlg.alt || 'image'
-    exec('insertHTML', `<img src="${escapeHtml(imageDlg.url)}" alt="${escapeHtml(alt)}" data-richtext-image="1" style="max-width: 100%;">`)
+    let imgSrc = imageDlg.url
+
+    // 本地图片：复制到笔记的 assets 目录，存储相对路径
+    if (imageDlg.sourcePath && noteFilePath) {
+      try {
+        const relativePath = await window.inkslateApi.file.saveAsset(noteFilePath, imageDlg.sourcePath)
+        if (relativePath) {
+          imgSrc = relativePath  // 存相对路径如 assets/img-xxx.png
+        }
+      } catch (e) {
+        console.error('[editor] saveAsset failed, fallback to data URL:', e)
+      }
+    }
+
+    exec('insertHTML', `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" data-richtext-image="1" style="max-width: 100%;">`)
     setImageDlg(d => ({ ...d, open: false }))
   }
 
@@ -1852,6 +1878,8 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
   // 实时进度：主进程在工具调用/请求阶段推送的进度文案（方案C）
   const [progress, setProgress] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  // SSH 工具是否启用（启用后向模型追加 SSH 远程文件工具的说明）
+  const sshEnabled = useAppStore(s => s.settings?.ssh?.enabled ?? false)
 
   useEffect(() => {
     taRef.current?.focus()
@@ -1903,9 +1931,21 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
         : noteFormat === 'spreadsheet' ? '注意：content 必须是 Markdown 表格格式，首行为表头，每行用 | 分隔单元格，不要用 ``` 包裹，不要输出 JSON、代码块或解释文字。示例：\n| 日期 | 任务 | 状态 |\n| --- | --- | --- |\n| 2026-09-01 | 需求评审 | 完成 |'
         : ''
 
+      const sshHint = sshEnabled
+        ? `
+
+## SSH 远程工具（已启用）
+除本地工具外，你还能通过 SSH 访问一台远程服务器，可用工具：
+- ssh_list_dir(path)：列出远程目录内容
+- ssh_read_file(path)：读取远程文件文本
+- ssh_write_file(path, content)：写入远程文件（系统会先弹出确认框请用户批准，用户拒绝则不会写入）
+
+远程路径请使用绝对路径，例如 /etc/nginx/nginx.conf。只在确有必要时才访问远程服务器。`
+        : ''
+
       const systemMsg = {
         role: 'system',
-        content: `你是 Inkslate 的 AI 笔记编辑助手。你有 scan_dir、read_file、grep_dir 三个工具。
+        content: `你是 Inkslate 的 AI 笔记编辑助手。你有 scan_dir、read_file、grep_dir 三个工具。${sshHint}
 
 ## 工作流程
 1. 先用工具获取信息（scan_dir / read_file / grep_dir），可以多次、反复调用工具直到信息齐全

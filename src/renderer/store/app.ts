@@ -4,8 +4,8 @@ import { matchNotebookIcon } from '@shared/notebookIcons'
 
 interface AppState {
   // 涓婚
-  theme: 'light' | 'dark' | 'auto' | 'solarized' | 'cyberpunk' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral'
-  setTheme: (theme: 'light' | 'dark' | 'auto' | 'solarized' | 'cyberpunk' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral') => void
+  theme: 'light' | 'dark' | 'auto' | 'solarized' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral'
+  setTheme: (theme: 'light' | 'dark' | 'auto' | 'solarized' | 'dracula' | 'dune' | 'monet' | 'newspaper' | 'forest' | 'sunset' | 'nordic' | 'pastoral') => void
 
   // 璁剧疆
   settings: AppSettings | null
@@ -36,6 +36,8 @@ interface AppState {
   expandedNotebooks: string[]
   /** 切换笔记本展开状态，并持久化 */
   setExpandedNotebook: (id: string, expanded: boolean) => void
+  /** 展开或折叠全部笔记本 */
+  setAllNotebooksExpanded: (expanded: boolean) => void
   loadNotebooks: () => Promise<void>
   loadNotes: () => Promise<void>
   selectNote: (id: string | null) => Promise<void>
@@ -212,11 +214,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       notes: state.notes.map((n) => (n.id === note.id ? note : n))
     }))
     // 多标签页：维护 openTabs + activeTabId
-    //  - 笔记已在 openTabs 里：保持位置不变，仅激活（不重排，避免手动切换时标签跳动）
     //  - 笔记不在：追加到末尾 + 激活，并初始化布局
+    //  - 笔记已在 openTabs 里：保持位置不变，仅激活（重排由 TabBar 的 handleMoreTabClick 处理）
     const tabs = get().openTabs
     const existingIdx = tabs.indexOf(id)
     const isNewTab = existingIdx < 0
+    // 切换前记录上一个激活标签（必须在 set 之前取，否则拿到的是刚写入的新值）
+    const prevTabId = get().activeTabId
     const newTabs = isNewTab
       ? [...tabs, id]
       : tabs
@@ -228,8 +232,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         layout: { ...layout, openTabs: newTabs, activeTabId: id }
       }).catch(() => {})
     }
-    // 多标签页布局：切换前保存当前 tab 的布局状态
-    const prevTabId = get().activeTabId
+    // 多标签页布局：切换前保存上一个 tab 的布局状态
     if (prevTabId && prevTabId !== id) {
       const layouts = { ...get().tabLayouts }
       layouts[prevTabId] = {
@@ -708,6 +711,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       : current.filter(x => x !== id)
     set({ expandedNotebooks: next })
     // 持久化（fire-and-forget；空数组也存，覆盖老值）
+    const settings = get().settings
+    if (settings) {
+      window.inkslateApi.settings.update({ expandedNotebooks: next }).catch(() => {})
+    }
+  },
+  setAllNotebooksExpanded: (expanded: boolean) => {
+    const ids = get().notebooks.map(n => n.id)
+    const next = expanded ? ids : []
+    set({ expandedNotebooks: next })
     const settings = get().settings
     if (settings) {
       window.inkslateApi.settings.update({ expandedNotebooks: next }).catch(() => {})

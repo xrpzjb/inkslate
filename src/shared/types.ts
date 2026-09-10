@@ -161,6 +161,21 @@ export interface AppSettings {
     /** 代理地址（可选，如 http://127.0.0.1:7890） */
     proxyUrl: string
   }
+  /** SSH 远程服务器配置（供 AI 写作的 SSH 工具使用） */
+  ssh?: {
+    /** 是否启用 SSH 工具 */
+    enabled: boolean
+    /** 主机地址（IP 或域名） */
+    host: string
+    /** 端口，默认 22 */
+    port: number
+    /** 登录用户名 */
+    username: string
+    /** 登录密码，用 safeStorage 加密后存 encryptedPassword */
+    encryptedPassword?: string
+    /** 是否已配置完成（host + username + 密码 都填了） */
+    configured: boolean
+  }
 }
 
 export interface SyncStatus {
@@ -248,6 +263,7 @@ export const IPC_CHANNELS = {
   FILE_EXPORT_XLSX: 'file:export-xlsx',
   FILE_WRITE: 'file:write',
   FILE_READ_BASE64: 'file:read-base64',
+  FILE_SAVE_ASSET: 'file:save-asset',
 
   // 鑿滃崟浜嬩欢
   MENU_NEW_NOTE: 'menu:new-note',
@@ -301,5 +317,13 @@ export const IPC_CHANNELS = {
   AI_CHAT_PROGRESS: 'ai:chat:progress',
   AI_CONVERSATION_GET: 'ai:conversation:get',
   AI_CONVERSATION_SET: 'ai:conversation:set',
-  AI_CONVERSATION_CLEAR: 'ai:conversation:clear'
+  AI_CONVERSATION_CLEAR: 'ai:conversation:clear',
+  // SSH 远程服务器（供 AI 写作的 SSH 工具使用）
+  SSH_CONFIGURE: 'ssh:configure',
+  SSH_TEST: 'ssh:test',
+  SSH_STATUS: 'ssh:status',
+  /** 主进程向渲染端发起写操作确认请求（主进程 → 渲染端，单向事件） */
+  SSH_CONFIRM_REQUEST: 'ssh:confirm:request',
+  /** 渲染端回传确认结果（渲染端 → 主进程，单向事件） */
+  SSH_CONFIRM_RESPONSE: 'ssh:confirm:response'
 } as const

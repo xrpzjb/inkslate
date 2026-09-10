@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useAppStore } from './store/app'
 import { appThemes } from './themes'
 import { Layout } from './components/Layout'
+import { TitleBar } from './components/TitleBar'
 import { StatusBar } from './components/StatusBar'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { SettingsDialog } from './components/SettingsDialog'
@@ -11,6 +12,7 @@ import { RecycleBinSettingsDialog } from './components/RecycleBinSettingsDialog'
 import { GitSettingsDialog } from './components/GitSettingsDialog'
 import { ToastContainer, toast } from './components/Toast'
 import { ConfirmDialogManager } from './components/ConfirmDialog'
+import { SshConfirmManager } from './components/SshConfirmManager'
 import { AlertDialogManager, alert } from './components/AlertDialog'
 import { UrlNoteDialog } from './components/UrlNoteDialog'
 import { FlashThoughtDialog } from './components/FlashThoughtDialog'
@@ -584,12 +586,14 @@ export default function App() {
 
   return (
     <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <TitleBar />
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <Layout />
       </div>
       <StatusBar />
       <ToastContainer />
       <ConfirmDialogManager />
+      <SshConfirmManager />
       <AlertDialogManager />
       {gitDialogOpen && createPortal(
         <GitSettingsDialog onClose={() => setGitDialogOpen(false)} />,

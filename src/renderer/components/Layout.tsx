@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store/app'
 import { Sidebar } from './Sidebar'
 import { Editor, AIDialog } from './Editor'
@@ -7,8 +7,8 @@ import { RecycleBinView } from './RecycleBinView'
 import { FlashThoughtView } from './FlashThoughtView'
 import { IconSidebar } from './IconSidebar'
 import { TabBar } from './TabBar'
-import { Search, X } from 'lucide-react'
-import { Note } from '@shared/types'
+import { Crosshair, ChevronsDownUp, ChevronsUpDown, Home } from 'lucide-react'
+
 import '../styles/layout.css'
 
 /** 侧栏 / 编辑器 / 预览 之间的水平拖拽 resize */
@@ -100,6 +100,8 @@ export function Layout() {
   const toggleEditor = useAppStore(s => s.toggleEditor)
   const settings = useAppStore(s => s.settings)
   const currentNote = useAppStore(s => s.currentNote)
+  const notes = useAppStore(s => s.notes)
+  const notebooks = useAppStore(s => s.notebooks)
   const viewMode = useAppStore(s => s.viewMode)
   const isRecycleBin = viewMode === 'recycle-bin'
   const isFlashThoughts = viewMode === 'flash-thoughts'
@@ -152,49 +154,19 @@ export function Layout() {
   const previewDividerRef = useRef<HTMLDivElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
 
-  // 搜索状态
-  const notes = useAppStore(s => s.notes)
-  const notebooks = useAppStore(s => s.notebooks)
-  const selectNote = useAppStore(s => s.selectNote)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<Note[]>([])
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const searchPopupRef = useRef<HTMLDivElement>(null)
+  // 侧栏工具栏
+  const currentNoteId = useAppStore(s => s.selectedNoteId)
 
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (searchPopupRef.current && searchPopupRef.current.contains(e.target as Node)) return
-      if (searchInputRef.current && searchInputRef.current.contains(e.target as Node)) return
-      setSearchResults([])
+  const handleLocateNote = () => {
+    if (currentNoteId) {
+      window.dispatchEvent(new CustomEvent('inkslate:sidebar-locate-note', { detail: { noteId: currentNoteId } }))
     }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [])
-
-  const doSearch = (q: string) => {
-    if (!q.trim()) { setSearchResults([]); return }
-    const lower = q.trim().toLowerCase()
-    setSearchResults(notes.filter(n =>
-      n.title.toLowerCase().includes(lower) ||
-      n.content.toLowerCase().includes(lower)
-    ))
   }
-
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const q = e.target.value
-    setSearchQuery(q)
-    doSearch(q)
+  const handleCollapseAll = () => {
+    window.dispatchEvent(new CustomEvent('inkslate:sidebar-expand-all', { detail: { expanded: false } }))
   }
-
-  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') { setSearchQuery(''); setSearchResults([]); return }
-    if (e.key === 'Enter') doSearch(searchQuery)
-  }
-
-  const handleResultClick = (noteId: string) => {
-    setSearchQuery('')
-    setSearchResults([])
-    selectNote(noteId)
+  const handleExpandAll = () => {
+    window.dispatchEvent(new CustomEvent('inkslate:sidebar-expand-all', { detail: { expanded: true } }))
   }
 
   useEffect(() => {
@@ -256,6 +228,33 @@ export function Layout() {
     }
   }, [settings])
 
+  // 当前笔记的层级路径（笔记本 › 子笔记本 › 父笔记 › 当前笔记）
+  // 与 buildNoteTree 一致：note 的 parentId 为空时视为挂在 notebookId 下
+  // 每一项带上 id/type，供面包屑逐级点击定位
+  type Crumb = { id: string; name: string; type: 'notebook' | 'note' }
+  const breadcrumb = useMemo<Crumb[]>(() => {
+    if (!currentNote) return []
+    const nodeMap = new Map<string, { name: string; parentId: string | null; type: 'notebook' | 'note' }>()
+    for (const nb of notebooks) nodeMap.set(nb.id, { name: nb.name, parentId: nb.parentId, type: 'notebook' })
+    for (const n of notes) nodeMap.set(n.id, { name: n.title, parentId: n.parentId ?? n.notebookId, type: 'note' })
+    const chain: Crumb[] = []
+    const seen = new Set<string>()
+    let cur: string | null = currentNote.id
+    while (cur && !seen.has(cur)) {
+      seen.add(cur)
+      const node = nodeMap.get(cur)
+      if (!node) break
+      chain.unshift({ id: cur, name: node.name, type: node.type })
+      cur = node.parentId
+    }
+    return chain
+  }, [currentNote, notes, notebooks])
+
+  // 逐级定位：点击面包屑某一段 → 在树中展开并滚动到该节点
+  const locateNode = (id: string, type: 'notebook' | 'note') => {
+    window.dispatchEvent(new CustomEvent('inkslate:sidebar-locate-node', { detail: { id, type } }))
+  }
+
   return (
     <div className="layout-body" style={{ height: '100%', width: '100%' }}>
       <IconSidebar />
@@ -264,103 +263,80 @@ export function Layout() {
         className={`layout-sidebar ${!sidebarVisible && !aiPanelOpen ? 'collapsed' : ''}`}
         style={{ width: sidebarVisible ? sidebarWidth : 0 }}
       >
-        <div className="panel-header" ref={sidebarHeaderRef} style={{ position: 'relative', padding: '4px 10px' }}>
-          {/* 搜索框：直接作为 panel-header 内容，高度撑满 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', padding: '0 4px', flex: 1, height: 36, boxSizing: 'border-box' }}>
-            <input
-              ref={searchInputRef}
-              value={searchQuery}
-              onChange={handleSearchChange}
-              onKeyDown={handleSearchKeyDown}
-              placeholder="快速搜索"
-              style={{
-                flex: 1,
-                border: 'none',
-                background: 'transparent',
-                padding: '5px 0',
-                fontSize: 13,
-                color: 'var(--text-primary)',
-                outline: 'none',
-                minWidth: 0
-              }}
-            />
-            {searchQuery ? (
-              <X
-                size={14}
-                style={{ color: 'var(--text-tertiary)', cursor: 'pointer', flexShrink: 0 }}
-                onClick={() => { setSearchQuery(''); setSearchResults([]) }}
-              />
-            ) : (
-              <Search size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
-            )}
-          </div>
-          {/* 搜索结果弹窗：居中显示 */}
-          {searchResults.length > 0 && (
-            <div
-              ref={searchPopupRef}
-              style={{
-                position: 'absolute',
-                top: '100%',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                width: 'calc(100% - 8px)',
-                background: 'var(--bg-primary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 6,
-                boxShadow: 'var(--shadow-md)',
-                zIndex: 1000,
-                maxHeight: 400,
-                overflowY: 'auto',
-                padding: '4px 0'
-              }}
-            >
-              <div style={{ padding: '4px 10px 6px', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
-                快速搜索: {searchResults.length} 条结果
+        <div className="panel-header" ref={sidebarHeaderRef} style={{ position: 'relative', padding: '2px 6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%', height: '100%' }}>
+            {/* 左侧：当前笔记所属层级路径（不含笔记自身名称），每一级都可单独点击定位 */}
+            {breadcrumb.length > 1 ? (
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  padding: '0 2px',
+                  color: 'var(--text-tertiary)',
+                  fontSize: 12,
+                  userSelect: 'none',
+                  overflow: 'hidden'
+                }}
+              >
+                <Home size={13} style={{ flexShrink: 0 }} />
+                {breadcrumb.slice(0, -1).map((seg, i, arr) => (
+                  <span key={seg.id} style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0 }}>
+                    {i > 0 && <span style={{ margin: '0 2px', opacity: 0.5, flexShrink: 0 }}>›</span>}
+                    <span
+                      onClick={() => locateNode(seg.id, seg.type)}
+                      title={`定位到「${seg.name}」`}
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        padding: '0 4px',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        color: i === arr.length - 1 ? 'var(--text-secondary)' : 'inherit'
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                    >
+                      {seg.name}
+                    </span>
+                  </span>
+                ))}
               </div>
-              {searchResults.map(note => {
-                const notebook = notebooks.find(nb => nb.id === note.notebookId)
-                const formatColors: Record<string, string> = {
-                  markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6',
-                  code: '#4a90e2', url: '#0ea5e9', file: '#16a34a', spreadsheet: '#f59e0b'
-                }
-                // 提取内容匹配片段
-                const q = searchQuery.trim()
-                let snippet = ''
-                if (note.content && q) {
-                  const idx = note.content.toLowerCase().indexOf(q.toLowerCase())
-                  if (idx >= 0) {
-                    const start = Math.max(0, idx - 20)
-                    const end = Math.min(note.content.length, idx + q.length + 40)
-                    snippet = (start > 0 ? '…' : '') + note.content.slice(start, end).replace(/\n/g, ' ') + (end < note.content.length ? '…' : '')
-                  }
-                }
-                return (
-                  <div
-                    key={note.id}
-                    onClick={() => handleResultClick(note.id)}
-                    style={{
-                      padding: '6px 10px', cursor: 'pointer', fontSize: 13,
-                      color: 'var(--text-primary)', borderRadius: 4, margin: '0 4px',
-                      display: 'flex', alignItems: 'flex-start', gap: 6, flexDirection: 'column'
-                    }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-                      <span style={{ color: formatColors[note.format] ?? '#7d8590', flexShrink: 0, fontSize: 12 }}>●</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontWeight: 500 }}>{note.title}</span>
-                      {notebook && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', flexShrink: 0 }}>{notebook.name}</span>}
-                    </div>
-                    {snippet && (
-                      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', paddingLeft: 18, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {snippet}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
+            ) : (
+              <div style={{ flex: 1 }} />
+            )}
+            {/* 右侧：树状图工具 */}
+            <button
+              onClick={handleLocateNote}
+              title="定位当前笔记"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 3, borderRadius: 4, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+            >
+              <Crosshair size={14} />
+            </button>
+            <button
+              onClick={handleCollapseAll}
+              title="折叠全部笔记本"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 3, borderRadius: 4, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+            >
+              <ChevronsDownUp size={14} />
+            </button>
+            <button
+              onClick={handleExpandAll}
+              title="展开全部笔记本"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 3, borderRadius: 4, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+            >
+              <ChevronsUpDown size={14} />
+            </button>
+          </div>
         </div>
         {aiPanelOpen ? (
           <AIDialog

@@ -64,6 +64,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sql-formatter": "^15.8.1",
+    "ssh2": "^1.17.0",
     "x-data-spreadsheet": "^1.1.9",
     "zustand": "^5.0.1"
   },

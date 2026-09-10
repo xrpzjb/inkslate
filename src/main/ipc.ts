@@ -10,6 +10,7 @@ import { exportNoteToWord } from './export/docx'
 import { exportSpreadsheetToXlsx } from './export/xlsx'
 import { addPdfOutline } from './export/pdfOutline'
 import { resolveHeadingPages } from './export/pdfPages'
+import * as sshMgr from './ssh/manager'
 
 let ProxyAgent: any = undefined
 try {
@@ -491,6 +492,27 @@ ${watermarkHtml}
     return { base64: buffer.toString('base64'), mime }
   })
 
+  /**
+   * 保存本地图片到笔记的 assets 目录（与笔记文件同级的 assets/ 文件夹）。
+   * 返回相对路径（如 assets/img-xxx.png），供 HTML 内容引用。
+   * noteFilePath: 笔记文件的绝对路径（如 /data/notes/MyNote/MyNote.md）
+   * sourceImagePath: 用户本地图片的绝对路径
+   */
+  ipcMain.handle(IPC_CHANNELS.FILE_SAVE_ASSET, async (_, noteFilePath: string, sourceImagePath: string): Promise<string | null> => {
+    const fs = require('node:fs')
+    const pathMod = require('node:path')
+    if (!fs.existsSync(sourceImagePath)) return null
+    const noteDir = pathMod.dirname(noteFilePath)
+    const assetsDir = pathMod.join(noteDir, 'assets')
+    fs.mkdirSync(assetsDir, { recursive: true })
+    // 用时间戳+随机数生成唯一文件名，保留原扩展名
+    const ext = pathMod.extname(sourceImagePath).toLowerCase() || '.png'
+    const fileName = `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}${ext}`
+    const destPath = pathMod.join(assetsDir, fileName)
+    await fs.promises.copyFile(sourceImagePath, destPath)
+    return `assets/${fileName}`
+  })
+
   // ============ 文件笔记 ============
   /**
    * 创建文件笔记：把用户选的源文件复制到 app data/notes/files/{noteId}.{ext}，
@@ -704,6 +726,96 @@ ${watermarkHtml}
     return gitMgr.inspectRemote()
   })
 
+  // ============ SSH（AI 写作的远程文件工具） ============
+  /** 待用户确认的 SSH 写操作：id → resolve */
+  const pendingSshConfirms = new Map<string, (ok: boolean) => void>()
+
+  /** 向渲染端发起写操作确认请求，等待用户点击（超时 5 分钟视为拒绝） */
+  const requestSshConfirm = (
+    event: Electron.IpcMainInvokeEvent,
+    payload: { action: string; path: string; host?: string; detail?: string }
+  ): Promise<boolean> => {
+    const id = `ssh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    return new Promise<boolean>((resolve) => {
+      pendingSshConfirms.set(id, resolve)
+      try {
+        event.sender.send(IPC_CHANNELS.SSH_CONFIRM_REQUEST, { id, ...payload })
+      } catch {
+        pendingSshConfirms.delete(id)
+        resolve(false)
+        return
+      }
+      setTimeout(() => {
+        if (pendingSshConfirms.has(id)) {
+          pendingSshConfirms.delete(id)
+          resolve(false)
+        }
+      }, 5 * 60 * 1000)
+    })
+  }
+
+  ipcMain.on(IPC_CHANNELS.SSH_CONFIRM_RESPONSE, (_e, payload: { id: string; ok: boolean }) => {
+    const resolve = payload?.id ? pendingSshConfirms.get(payload.id) : undefined
+    if (resolve) {
+      pendingSshConfirms.delete(payload.id)
+      resolve(!!payload.ok)
+    }
+  })
+
+  /** 当前 SSH 配置（未配置返回 undefined） */
+  const getSshConfig = (): AppSettings['ssh'] | undefined => {
+    const cfg = dbApi.getSettings().ssh
+    if (!cfg?.host || !cfg?.username || !cfg?.encryptedPassword) return undefined
+    return cfg
+  }
+
+  /** SSH 工具定义：只读（list/read）自动执行，写（write）执行前需用户确认 */
+  const sshTools = [
+    {
+      type: 'function',
+      function: {
+        name: 'ssh_list_dir',
+        description: '列出远程服务器上指定目录的内容（只读，自动执行）',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: '远程目录绝对路径，如 /etc/nginx' }
+          },
+          required: ['path']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ssh_read_file',
+        description: '读取远程服务器上指定文件的文本内容（只读，自动执行）',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: '远程文件绝对路径' }
+          },
+          required: ['path']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ssh_write_file',
+        description: '把内容写入远程服务器上的文件（覆盖写入）。属于危险操作，执行前会先请求用户确认',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: '远程文件绝对路径' },
+            content: { type: 'string', description: '要写入的完整文本内容' }
+          },
+          required: ['path', 'content']
+        }
+      }
+    }
+  ]
+
   // ============ AI ============
   const aiTools = [
     {
@@ -751,7 +863,7 @@ ${watermarkHtml}
     }
   ]
 
-  const execAiTool = (name: string, args: any): string => {
+  const execAiTool = async (name: string, args: any, event: Electron.IpcMainInvokeEvent): Promise<string> => {
     switch (name) {
       case 'scan_dir': {
         const dir = args.path || getFilesDir()
@@ -802,6 +914,45 @@ ${watermarkHtml}
           return `搜索失败: ${e.message}`
         }
       }
+      // ===== SSH 远程文件（只读自动执行）=====
+      case 'ssh_list_dir': {
+        const cfg = getSshConfig()
+        if (!cfg) return 'SSH 未配置：请在 设置 → SSH 远程 中填写主机/用户名/密码并启用'
+        try {
+          return await sshMgr.listDir(cfg, args.path || '.')
+        } catch (e: any) {
+          return `远程列目录失败: ${e.message}`
+        }
+      }
+      case 'ssh_read_file': {
+        const cfg = getSshConfig()
+        if (!cfg) return 'SSH 未配置：请在 设置 → SSH 远程 中填写主机/用户名/密码并启用'
+        try {
+          return await sshMgr.readFile(cfg, args.path)
+        } catch (e: any) {
+          return `远程读取失败: ${e.message}`
+        }
+      }
+      // ===== SSH 远程写入（危险操作，先请求用户确认）=====
+      case 'ssh_write_file': {
+        const cfg = getSshConfig()
+        if (!cfg) return 'SSH 未配置：请在 设置 → SSH 远程 中填写主机/用户名/密码并启用'
+        const content: string = args.content ?? ''
+        const preview = content.length > 400 ? content.slice(0, 400) + '\n…（已截断预览）' : content
+        const ok = await requestSshConfirm(event, {
+          action: '写入远程文件',
+          path: args.path,
+          host: cfg.host,
+          detail: preview
+        })
+        if (!ok) return '用户拒绝了该写操作，文件未修改。'
+        try {
+          await sshMgr.writeFile(cfg, args.path, content)
+          return `已写入远程文件: ${args.path}（${content.length} 字符）`
+        } catch (e: any) {
+          return `远程写入失败: ${e.message}`
+        }
+      }
       default:
         return `未知工具: ${name}`
     }
@@ -811,7 +962,7 @@ ${watermarkHtml}
     const results: Array<{ name: string; args: any }> = []
     // 匹配 scan_dir("...")、read_file("...")、grep_dir("...", "...")
     // 支持双引号、单引号、反引号
-    const re = /(scan_dir|read_file|grep_dir)\s*\(\s*["'`]([^"'`]*)["'`](?:\s*,\s*["'`]([^"'`]*)["'`])?\s*\)/g
+    const re = /(scan_dir|read_file|grep_dir|ssh_list_dir|ssh_read_file|ssh_write_file)\s*\(\s*["'`]([^"'`]*)["'`](?:\s*,\s*["'`]([^"'`]*)["'`])?\s*\)/g
     let m
     while ((m = re.exec(text)) !== null) {
       const name = m[1]
@@ -819,10 +970,12 @@ ${watermarkHtml}
       const arg2 = m[3]
       if (name === 'grep_dir') {
         results.push({ name, args: { path: arg1, pattern: arg2 || '.' } })
+      } else if (name === 'ssh_write_file') {
+        results.push({ name, args: { path: arg1, content: arg2 || '' } })
       } else if (name === 'generate_image') {
         results.push({ name, args: { prompt: arg1 } })
       } else {
-        results.push({ name, args: name === 'scan_dir' ? { path: arg1 } : { path: arg1 } })
+        results.push({ name, args: { path: arg1 } })
       }
     }
     return results
@@ -882,6 +1035,9 @@ ${watermarkHtml}
         case 'scan_dir': return `📁 正在扫描目录 ${p(args.path)}`
         case 'read_file': return `📄 正在读取文件 ${p(args.path)}`
         case 'grep_dir': return `🔍 正在搜索 ${p(args.pattern)} @ ${p(args.path)}`
+        case 'ssh_list_dir': return `🖥️ 正在列出远程目录 ${p(args.path)}`
+        case 'ssh_read_file': return `🖥️ 正在读取远程文件 ${p(args.path)}`
+        case 'ssh_write_file': return `🖥️ 正在写入远程文件 ${p(args.path)}`
         default: return `⚙️ 正在执行 ${name}`
       }
     }
@@ -890,6 +1046,8 @@ ${watermarkHtml}
       let currentMessages = [...messages]
       pushProgress('正在连接 AI 模型…')
       const isAnthropic = ai.apiUrl.includes('/messages')
+      // SSH 已启用且配置完整时，才向模型暴露 SSH 工具
+      const sshConfigured = !!getSshConfig()?.enabled
       let dispatcher: any = undefined
       if (ai.proxyUrl && ProxyAgent) {
         try { dispatcher = new ProxyAgent({ uri: ai.proxyUrl }) } catch {}
@@ -923,6 +1081,8 @@ ${watermarkHtml}
         } else {
           // MiMo API 不支持 tools/function calling，跳过
           const supportsTools = !ai.apiUrl.includes('xiaomimimo.com')
+          // SSH 已配置并启用时才挂载 SSH 工具
+          const activeTools = sshConfigured ? [...aiTools, ...sshTools] : aiTools
           resp = await fetch(ai.apiUrl, {
             ...fetchOpts,
             signal: ac.signal,
@@ -934,7 +1094,7 @@ ${watermarkHtml}
             body: JSON.stringify({
               model: ai.model || 'deepseek-v4-flash',
               messages: currentMessages,
-              ...(supportsTools ? { tools: aiTools, tool_choice: 'auto' } : {}),
+              ...(supportsTools ? { tools: activeTools, tool_choice: 'auto' } : {}),
               stream: false
             })
           })
@@ -984,7 +1144,7 @@ ${watermarkHtml}
             let args: any = {}
             try { args = JSON.parse(fn.arguments || '{}') } catch {}
             pushProgress(describeTool(fn.name, args))
-            const result = execAiTool(fn.name, args)
+            const result = await execAiTool(fn.name, args, event)
             currentMessages.push({
               role: 'tool',
               tool_call_id: tc.id,
@@ -1000,7 +1160,7 @@ ${watermarkHtml}
           currentMessages.push(msg)
           for (const tc of textCalls) {
             pushProgress(describeTool(tc.name, tc.args || {}))
-            const result = execAiTool(tc.name, tc.args || {})
+            const result = await execAiTool(tc.name, tc.args || {}, event)
             currentMessages.push({
               role: 'tool',
               tool_call_id: `text_${tc.name}`,
@@ -1043,6 +1203,53 @@ ${watermarkHtml}
 
   ipcMain.handle(IPC_CHANNELS.AI_CONFIGURE, async (_, config: AppSettings['ai']): Promise<void> => {
     await dbApi.updateSettings({ ai: config } as any)
+  })
+
+  // ============ SSH 远程服务器（供 AI 写作的 SSH 工具使用） ============
+  /** 保存 SSH 配置：password 为明文时加密后存，为空则保留旧密码 */
+  ipcMain.handle(IPC_CHANNELS.SSH_CONFIGURE, async (_, config: any): Promise<AppSettings['ssh']> => {
+    const current = dbApi.getSettings().ssh
+    const next: NonNullable<AppSettings['ssh']> = {
+      enabled: !!config?.enabled,
+      host: (config?.host ?? '').trim(),
+      port: Number(config?.port) || 22,
+      username: (config?.username ?? '').trim(),
+      encryptedPassword: current?.encryptedPassword,
+      configured: false
+    }
+    if (typeof config?.password === 'string' && config.password.length > 0) {
+      next.encryptedPassword = sshMgr.encryptPassword(config.password)
+    }
+    next.configured = !!(next.host && next.username && next.encryptedPassword)
+    await dbApi.updateSettings({ ssh: next } as any)
+    // 配置变化后断开旧连接，下次使用时按新配置重连
+    sshMgr.closeClient()
+    return next
+  })
+
+  /** 测试 SSH 连接 */
+  ipcMain.handle(IPC_CHANNELS.SSH_TEST, async (): Promise<{ ok: boolean; message: string }> => {
+    const cfg = dbApi.getSettings().ssh
+    if (!cfg?.host || !cfg?.username || !cfg?.encryptedPassword) {
+      return { ok: false, message: 'SSH 未配置完整（需要主机、用户名、密码）' }
+    }
+    try {
+      sshMgr.closeClient()
+      await sshMgr.testConnection(cfg)
+      return { ok: true, message: '连接成功' }
+    } catch (e: any) {
+      return { ok: false, message: e?.message || '连接失败' }
+    }
+  })
+
+  /** 查询 SSH 当前状态 */
+  ipcMain.handle(IPC_CHANNELS.SSH_STATUS, async (): Promise<{ configured: boolean; enabled: boolean; connected: boolean }> => {
+    const cfg = dbApi.getSettings().ssh
+    return {
+      configured: !!cfg?.configured,
+      enabled: !!cfg?.enabled,
+      connected: sshMgr.isConnected()
+    }
   })
 
   // ============ AI 写作对话历史（仅存本地数据库，不参与 git 同步） ============

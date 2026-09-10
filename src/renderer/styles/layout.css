@@ -101,6 +101,12 @@
   padding: 0 10px;
   /* 与笔记树面板底色统一，形成一个整体视觉区域 */
   background-color: var(--bg-sidebar) !important;
+  /* 与多标签页 TabBar 高度保持一致（36px） */
+  height: 36px;
+  /* 底部淡阴影，替代分隔线做出层次感 */
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  z-index: 2;
   flex-shrink: 0;
   user-select: none;
   box-sizing: border-box;
