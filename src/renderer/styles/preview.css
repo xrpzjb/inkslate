@@ -495,3 +495,84 @@ mark.preview-search-mark.preview-search-active {
 .spreadsheet-view .x-spreadsheet-toolbar {
   width: 100% !important;
 }
+
+/* ========== 智能表格配色跟随主题（框架部分）
+ * 网格单元格本身由库用 canvas 绘制（硬编码浅色），CSS 无法重绘；
+ * 这里把外层框架（工具栏 / 底部栏 / 菜单 / 弹窗 / 输入框）切到主题变量。 */
+.spreadsheet-view .x-spreadsheet,
+.spreadsheet-view .x-spreadsheet-toolbar,
+.spreadsheet-view .x-spreadsheet-bottombar {
+  background-color: var(--bg-sidebar);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-toolbar {
+  border-bottom: 1px solid var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-bottombar {
+  border-top: 1px solid var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-toolbar .x-spreadsheet-toolbar-divider {
+  border-right-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-menu > li {
+  color: var(--text-secondary);
+}
+.spreadsheet-view .x-spreadsheet-menu > li.active {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+.spreadsheet-view .x-spreadsheet-toolbar .x-spreadsheet-toolbar-btn:hover,
+.spreadsheet-view .x-spreadsheet-toolbar .x-spreadsheet-toolbar-btn.active {
+  background: var(--bg-hover);
+}
+.spreadsheet-view .x-spreadsheet-contextmenu,
+.spreadsheet-view .x-spreadsheet-dropdown .x-spreadsheet-dropdown-content,
+.spreadsheet-view .x-spreadsheet-sort-filter,
+.spreadsheet-view .x-spreadsheet-modal,
+.spreadsheet-view .x-spreadsheet-color-palette table,
+.spreadsheet-view .x-spreadsheet-border-palette table,
+.spreadsheet-view .x-spreadsheet-suggest {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-contextmenu .x-spreadsheet-item,
+.spreadsheet-view .x-spreadsheet-dropdown .x-spreadsheet-item,
+.spreadsheet-view .x-spreadsheet-menu .x-spreadsheet-dropdown .x-spreadsheet-item {
+  color: var(--text-primary);
+}
+.spreadsheet-view .x-spreadsheet-item:hover,
+.spreadsheet-view .x-spreadsheet-item.active,
+.spreadsheet-view .x-spreadsheet-dropdown .x-spreadsheet-item:hover,
+.spreadsheet-view .x-spreadsheet-menu .x-spreadsheet-dropdown .x-spreadsheet-item:hover {
+  background: var(--bg-hover);
+}
+.spreadsheet-view .x-spreadsheet-item.divider,
+.spreadsheet-view .x-spreadsheet-dropdown .x-spreadsheet-dropdown-divider {
+  border-bottom-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-filter {
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-filter .x-spreadsheet-header {
+  background: var(--bg-hover);
+  border-bottom-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-input,
+.spreadsheet-view .x-spreadsheet-form-field,
+.spreadsheet-view .x-spreadsheet-select {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-modal-header {
+  background: var(--bg-hover);
+  border-bottom-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-scrollbar {
+  background-color: var(--bg-hover);
+}
+.spreadsheet-view .x-spreadsheet-scrollbar > div {
+  background: var(--text-tertiary);
+}

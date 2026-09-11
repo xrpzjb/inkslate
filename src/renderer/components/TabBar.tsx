@@ -161,28 +161,28 @@ export function TabBar() {
     if (id !== activeTabId) activateTab(id)
   }
 
-  // 如果从树状图点击了被隐藏的标签，自动把它移到可见区域最右边
+  // 从树状图 / 其它地方激活了标签时，把 tab-scroll 滚到让该标签可见。
+  // 用滚动而不是 reorderTabs：滚动不改变用户排好的标签顺序，也避免
+  // reorderTabs 用旧闭包里的 openTabs 写库，把"已关闭的标签"又写回设置里，
+  // 导致重启后标签又恢复。
   useEffect(() => {
-    if (!activeTabId || hiddenIds.length === 0) return
-    if (!hiddenIds.includes(activeTabId)) return
-    const visibleCount = tabs.length - hiddenIds.length
-    const filtered = openTabs.filter(t => t !== activeTabId)
-    const insertIdx = Math.max(0, Math.min(visibleCount - 1, filtered.length))
-    const newTabs = [...filtered.slice(0, insertIdx), activeTabId, ...filtered.slice(insertIdx)]
-    reorderTabs(newTabs)
-  }, [activeTabId, hiddenIds.length])
+    if (!activeTabId) return
+    const el = barRef.current
+    if (!el) return
+    const tabEl = el.querySelector<HTMLElement>(`[data-tab-id="${activeTabId}"]`)
+    if (tabEl) tabEl.scrollIntoView({ behavior: 'auto', inline: 'nearest', block: 'nearest' })
+  }, [activeTabId])
 
-  /** 点击「更多」里的标签：移到可见标签最右边 + 激活 + 关闭菜单 */
+  /** 点击「更多」里的标签：激活 + 滚动到可见区域（不重排序，避免写库竞态） */
   const handleMoreTabClick = (id: string) => {
     setMoreOpen(false)
-    // 把点击的 tab 插到可见区域最后一个位置（溢出区之前一位）
-    const visibleCount = tabs.length - hiddenIds.length
-    const filtered = openTabs.filter(t => t !== id)
-    // 插到 visibleCount - 1 位置，使其成为最后一个可见标签
-    const insertIdx = Math.max(0, Math.min(visibleCount - 1, filtered.length))
-    const newTabs = [...filtered.slice(0, insertIdx), id, ...filtered.slice(insertIdx)]
-    reorderTabs(newTabs)
     if (id !== activeTabId) activateTab(id)
+    // 即使已是激活标签也滚动一下（scrollIntoView nearest 对已可见标签无副作用）
+    requestAnimationFrame(() => {
+      const el = barRef.current
+      const tabEl = el?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)
+      tabEl?.scrollIntoView({ behavior: 'auto', inline: 'nearest', block: 'nearest' })
+    })
   }
 
   const handleCtxMenu = (e: React.MouseEvent, id: string) => {

@@ -54,6 +54,8 @@ export interface Notebook {
   deletedAt?: number
   /** 用户手动拖动排序的稳定顺序 */
   sortOrder?: number
+  /** 是否受密码保护（自身或祖先设置了密码） */
+  passwordProtected?: boolean
 }
 
 export interface NoteTreeNode {
@@ -66,7 +68,8 @@ export interface NoteTreeNode {
   updatedAt?: number
   createdAt?: number
   sortOrder?: number
-  isExpanded?: boolean
+  /** 笔记本是否受密码保护（自身或祖先设置了密码） */
+  passwordProtected?: boolean
 }
 
 export interface GitCommitEntry {
@@ -160,21 +163,6 @@ export interface AppSettings {
     configured: boolean
     /** 代理地址（可选，如 http://127.0.0.1:7890） */
     proxyUrl: string
-  }
-  /** SSH 远程服务器配置（供 AI 写作的 SSH 工具使用） */
-  ssh?: {
-    /** 是否启用 SSH 工具 */
-    enabled: boolean
-    /** 主机地址（IP 或域名） */
-    host: string
-    /** 端口，默认 22 */
-    port: number
-    /** 登录用户名 */
-    username: string
-    /** 登录密码，用 safeStorage 加密后存 encryptedPassword */
-    encryptedPassword?: string
-    /** 是否已配置完成（host + username + 密码 都填了） */
-    configured: boolean
   }
 }
 
@@ -318,10 +306,7 @@ export const IPC_CHANNELS = {
   AI_CONVERSATION_GET: 'ai:conversation:get',
   AI_CONVERSATION_SET: 'ai:conversation:set',
   AI_CONVERSATION_CLEAR: 'ai:conversation:clear',
-  // SSH 远程服务器（供 AI 写作的 SSH 工具使用）
-  SSH_CONFIGURE: 'ssh:configure',
-  SSH_TEST: 'ssh:test',
-  SSH_STATUS: 'ssh:status',
+  // SSH 远程文件（供 AI 写作的 SSH 工具使用）
   /** 主进程向渲染端发起写操作确认请求（主进程 → 渲染端，单向事件） */
   SSH_CONFIRM_REQUEST: 'ssh:confirm:request',
   /** 渲染端回传确认结果（渲染端 → 主进程，单向事件） */

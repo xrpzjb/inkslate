@@ -1,14 +1,18 @@
 /**
  * SSH 远程服务器管理器
  * - 供 AI 写作的 SSH 工具使用（读写远程文件）
- * - 密码用 safeStorage 加密存储（encryptedPassword），运行时解密
- * - 连接复用：配置（host/port/username）变化时自动重建
+ * - 凭据由 AI 每次调用时通过工具参数传入（支持访问多台服务器），不在本地保存
+ * - 连接复用：host/port/username 相同时复用连接
  */
 import type { Client } from 'ssh2'
-import { safeStorage } from 'electron'
-import type { AppSettings } from '../../shared/types'
 
-export type SshConfig = NonNullable<AppSettings['ssh']>
+/** 单次 SSH 连接所需凭据（由 AI 工具调用参数提供） */
+export interface SshConnection {
+  host: string
+  port: number
+  username: string
+  password: string
+}
 
 let client: Client | null = null
 let connectedKey = ''
@@ -25,39 +29,12 @@ function getClientCtor(): new () => Client {
   return ClientCtor as new () => Client
 }
 
-/** 用 safeStorage 加密密码 */
-export function encryptPassword(plain: string): string | undefined {
-  if (!plain) return undefined
-  try {
-    if (!safeStorage.isEncryptionAvailable()) return undefined
-    return safeStorage.encryptString(plain).toString('base64')
-  } catch {
-    return undefined
-  }
-}
-
-/** 解密密码；失败返回 null */
-export function decryptPassword(cfg: SshConfig): string | null {
-  if (!cfg.encryptedPassword) return null
-  try {
-    if (!safeStorage.isEncryptionAvailable()) return null
-    return safeStorage.decryptString(Buffer.from(cfg.encryptedPassword, 'base64'))
-  } catch {
-    return null
-  }
-}
-
-function connKey(cfg: SshConfig): string {
+function connKey(cfg: SshConnection): string {
   return `${cfg.host}:${cfg.port || 22}:${cfg.username}`
 }
 
-function connect(cfg: SshConfig): Promise<Client> {
+function connect(cfg: SshConnection): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const password = decryptPassword(cfg)
-    if (password == null) {
-      reject(new Error('SSH 密码未配置或无法解密，请在设置中重新填写'))
-      return
-    }
     const Ctor = getClientCtor()
     const c = new Ctor()
     let settled = false
@@ -84,7 +61,7 @@ function connect(cfg: SshConfig): Promise<Client> {
         host: cfg.host,
         port: cfg.port || 22,
         username: cfg.username,
-        password,
+        password: cfg.password,
         readyTimeout: 15000,
         keepaliveInterval: 15000
       })
@@ -95,7 +72,7 @@ function connect(cfg: SshConfig): Promise<Client> {
 }
 
 /** 获取（必要时建立）连接 */
-export async function getClient(cfg: SshConfig): Promise<Client> {
+export async function getClient(cfg: SshConnection): Promise<Client> {
   const key = connKey(cfg)
   if (client && connectedKey === key) return client
   if (client) {
@@ -131,7 +108,7 @@ function withSftp<T>(c: Client, fn: (sftp: any) => Promise<T>): Promise<T> {
 }
 
 /** 测试连接 */
-export async function testConnection(cfg: SshConfig): Promise<void> {
+export async function testConnection(cfg: SshConnection): Promise<void> {
   const c = await getClient(cfg)
   await new Promise<void>((resolve, reject) => {
     c.exec('echo ok', (err: Error | undefined) => {
@@ -142,7 +119,7 @@ export async function testConnection(cfg: SshConfig): Promise<void> {
 }
 
 /** 列出远程目录内容 */
-export async function listDir(cfg: SshConfig, dir: string): Promise<string> {
+export async function listDir(cfg: SshConnection, dir: string): Promise<string> {
   const c = await getClient(cfg)
   return withSftp(c, (sftp) => new Promise<string>((resolve, reject) => {
     sftp.readdir(dir || '.', (err: Error | undefined, list: any[]) => {
@@ -163,7 +140,7 @@ export async function listDir(cfg: SshConfig, dir: string): Promise<string> {
 }
 
 /** 读取远程文件（文本） */
-export async function readFile(cfg: SshConfig, file: string): Promise<string> {
+export async function readFile(cfg: SshConnection, file: string): Promise<string> {
   const c = await getClient(cfg)
   return withSftp(c, (sftp) => new Promise<string>((resolve, reject) => {
     sftp.readFile(file, (err: Error | undefined, buf: Buffer) => {
@@ -179,7 +156,7 @@ export async function readFile(cfg: SshConfig, file: string): Promise<string> {
 }
 
 /** 写入远程文件（覆盖） */
-export async function writeFile(cfg: SshConfig, file: string, content: string): Promise<void> {
+export async function writeFile(cfg: SshConnection, file: string, content: string): Promise<void> {
   const c = await getClient(cfg)
   return withSftp(c, (sftp) => new Promise<void>((resolve, reject) => {
     sftp.writeFile(file, content, (err: Error | undefined) => {

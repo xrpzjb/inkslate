@@ -1,0 +1,122 @@
+/* ============ 智能表格 (x-data-spreadsheet) 跟随应用主题 ============
+ * 库自带的是固定浅色样式，这里用当前主题的 CSS 变量覆盖其外围界面
+ * （工具栏 / 底部工作表栏 / 菜单 / 下拉 / 弹窗等），让它随主题切换。
+ * 表格画布（单元格底色、文字、表头、网格线）的颜色在 SpreadsheetEditor
+ * 里通过默认 style + 主进程补丁读取 --bg-primary / --text-primary 等变量。
+ */
+
+.spreadsheet-view {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.spreadsheet-view .x-spreadsheet {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* 工具栏 / 底部工作表栏 */
+.spreadsheet-view .x-spreadsheet-toolbar,
+.spreadsheet-view .x-spreadsheet-bottombar {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+}
+
+.spreadsheet-view .x-spreadsheet-toolbar-btn:hover,
+.spreadsheet-view .x-spreadsheet-toolbar-btn.active {
+  background: var(--bg-hover);
+}
+
+.spreadsheet-view .x-spreadsheet-toolbar-divider {
+  border-color: var(--border-color);
+}
+
+/* 底部 sheet 标签 */
+.spreadsheet-view .x-spreadsheet-bottombar .x-spreadsheet-menu > li {
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-bottombar .x-spreadsheet-menu > li:hover {
+  background: var(--bg-hover);
+}
+.spreadsheet-view .x-spreadsheet-bottombar .x-spreadsheet-menu > li.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* 下拉 / 右键菜单 / 建议 / 筛选 */
+.spreadsheet-view .x-spreadsheet-dropdown-content,
+.spreadsheet-view .x-spreadsheet-contextmenu,
+.spreadsheet-view .x-spreadsheet-suggest,
+.spreadsheet-view .x-spreadsheet-sort-filter {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-md);
+}
+
+.spreadsheet-view .x-spreadsheet-item {
+  color: var(--text-primary);
+}
+.spreadsheet-view .x-spreadsheet-item:hover,
+.spreadsheet-view .x-spreadsheet-item.active {
+  background: var(--bg-hover);
+}
+
+/* 筛选面板 */
+.spreadsheet-view .x-spreadsheet-filter {
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-filter .x-spreadsheet-header {
+  background: var(--bg-secondary);
+  border-bottom-color: var(--border-color);
+}
+
+/* 输入框 / 下拉选择 */
+.spreadsheet-view .x-spreadsheet-form-input,
+.spreadsheet-view .x-spreadsheet-form-select {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+/* 按钮 */
+.spreadsheet-view .x-spreadsheet-button {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* 单元格编辑框（textbox 覆盖层） */
+.spreadsheet-view .x-spreadsheet-editor textarea {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+/* 日历 / 日期选择器 */
+.spreadsheet-view .x-spreadsheet-calendar {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.spreadsheet-view .x-spreadsheet-calendar .calendar-header {
+  background: var(--bg-secondary);
+}
+.spreadsheet-view .x-spreadsheet-calendar td > .cell:hover,
+.spreadsheet-view .x-spreadsheet-calendar td > .cell.active,
+.spreadsheet-view .x-spreadsheet-calendar td > .cell.active:hover {
+  background: var(--accent-bg);
+  color: var(--accent-color);
+}
+
+/* 打印预览 */
+.spreadsheet-view .x-spreadsheet-print {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.spreadsheet-view .x-spreadsheet-canvas-card {
+  background: var(--bg-primary);
+}
+
+/* 暗色主题下把工具栏图标反色（sprite 是黑色线条） */
+.spreadsheet-view[data-xspreadsheet-dark='true'] .x-spreadsheet-icon-img {
+  filter: invert(1);
+}

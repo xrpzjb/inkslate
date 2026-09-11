@@ -150,17 +150,8 @@ const api = {
     }
   },
 
-  /** SSH 远程服务器（供 AI 写作的 SSH 工具使用） */
+  /** SSH 远程文件写操作确认（供 AI 写作的 SSH 工具使用） */
   ssh: {
-    /** 保存 SSH 配置（password 为明文；留空则保留已存密码） */
-    configure: (config: { enabled: boolean; host: string; port: number; username: string; password?: string }): Promise<any> =>
-      ipcRenderer.invoke(IPC_CHANNELS.SSH_CONFIGURE, config),
-    /** 测试 SSH 连接 */
-    test: (): Promise<{ ok: boolean; message: string }> =>
-      ipcRenderer.invoke(IPC_CHANNELS.SSH_TEST),
-    /** 查询 SSH 状态 */
-    status: (): Promise<{ configured: boolean; enabled: boolean; connected: boolean }> =>
-      ipcRenderer.invoke(IPC_CHANNELS.SSH_STATUS),
     /** 订阅主进程的写操作确认请求，返回取消订阅函数 */
     onConfirmRequest: (cb: (req: { id: string; action: string; path: string; detail?: string }) => void): (() => void) => {
       const listener = (_: any, req: any) => cb(req)

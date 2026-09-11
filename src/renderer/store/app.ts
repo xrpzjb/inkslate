@@ -226,10 +226,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       : tabs
     set({ openTabs: newTabs, activeTabId: id })
     // 持久化 tabs（防抖到 settings.layout.openTabs）
+    // 注意：只写变化的字段（openTabs/activeTabId），不要展开本地缓存的 layout ——
+    // 缓存可能是过期的，展开会把其它写操作（如关闭标签 / 重排序）的结果覆盖掉，
+    // 导致重启后"已关闭的标签又回来了 / 新点开的标签没保留"。
     const layout = get().settings?.layout
     if (layout && (layout.openTabs?.join(',') !== newTabs.join(',') || layout.activeTabId !== id)) {
       window.inkslateApi.settings.update({
-        layout: { ...layout, openTabs: newTabs, activeTabId: id }
+        layout: { openTabs: newTabs, activeTabId: id }
       }).catch(() => {})
     }
     // 多标签页布局：切换前保存上一个 tab 的布局状态
@@ -248,27 +251,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     //  - 其他格式：仅对新打开的标签页做布局初始化
     if (note && (note.format === 'code' || note.format === 'richtext' || note.format === 'spreadsheet')) {
       if (layout && layout.previewVisible) {
-        get().updateSettings({ layout: { ...layout, previewVisible: false } })
+        get().updateSettings({ layout: { previewVisible: false } })
       }
       set({ previewVisible: false })
       if (!get().editorVisible) {
         set({ editorVisible: true })
         if (layout) {
-          get().updateSettings({ layout: { ...layout, editorVisible: true } })
+          get().updateSettings({ layout: { editorVisible: true } })
         }
       }
     } else if (note && isNewTab) {
       // 代码/富文本笔记不需要预览面板：选中的瞬间自动收起
       if (note.format === 'code' || note.format === 'richtext' || note.format === 'spreadsheet') {
         if (layout && layout.previewVisible) {
-          get().updateSettings({ layout: { ...layout, previewVisible: false } })
+          get().updateSettings({ layout: { previewVisible: false } })
         }
         set({ previewVisible: false })
         // 代码/富文本笔记没有预览可用，必须确保 editor 显示 —— 否则整个右半空白
         if (!get().editorVisible) {
           set({ editorVisible: true })
           if (layout) {
-            get().updateSettings({ layout: { ...layout, editorVisible: true } })
+            get().updateSettings({ layout: { editorVisible: true } })
           }
         }
       }
@@ -279,13 +282,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (get().editorVisible) {
           set({ editorVisible: false })
           if (layout) {
-            get().updateSettings({ layout: { ...layout, editorVisible: false } })
+            get().updateSettings({ layout: { editorVisible: false } })
           }
         }
         if (!get().previewVisible) {
           set({ previewVisible: true })
           if (layout) {
-            get().updateSettings({ layout: { ...layout, previewVisible: true } })
+            get().updateSettings({ layout: { previewVisible: true } })
           }
         }
       }
@@ -294,13 +297,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (!get().previewVisible) {
           set({ previewVisible: true })
           if (layout) {
-            get().updateSettings({ layout: { ...layout, previewVisible: true } })
+            get().updateSettings({ layout: { previewVisible: true } })
           }
         }
         if (get().editorVisible) {
           set({ editorVisible: false })
           if (layout) {
-            get().updateSettings({ layout: { ...layout, editorVisible: false } })
+            get().updateSettings({ layout: { editorVisible: false } })
           }
         }
       }
@@ -323,13 +326,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (get().editorVisible) {
           set({ editorVisible: false })
           if (layout) {
-            get().updateSettings({ layout: { ...layout, editorVisible: false } })
+            get().updateSettings({ layout: { editorVisible: false } })
           }
         }
         if (!get().previewVisible) {
           set({ previewVisible: true })
           if (layout) {
-            get().updateSettings({ layout: { ...layout, previewVisible: true } })
+            get().updateSettings({ layout: { previewVisible: true } })
           }
         }
       }
@@ -394,7 +397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const layout = get().settings?.layout
     if (layout) {
       window.inkslateApi.settings.update({
-        layout: { ...layout, openTabs: newTabs, activeTabId: newActive }
+        layout: { openTabs: newTabs, activeTabId: newActive }
       }).catch(() => {})
     }
   },
@@ -403,7 +406,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const layout = get().settings?.layout
     if (layout) {
       window.inkslateApi.settings.update({
-        layout: { ...layout, openTabs: orderedIds }
+        layout: { openTabs: orderedIds }
       }).catch(() => {})
     }
   },
@@ -441,7 +444,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const layout = get().settings?.layout
     if (layout) {
       window.inkslateApi.settings.update({
-        layout: { ...layout, openTabs: newTabs, activeTabId: newActive }
+        layout: { openTabs: newTabs, activeTabId: newActive }
       }).catch(() => {})
     }
   },
@@ -466,7 +469,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const layout = get().settings?.layout
       set({ editorVisible: true })
       if (layout) {
-        get().updateSettings({ layout: { ...layout, editorVisible: true } })
+        get().updateSettings({ layout: { editorVisible: true } })
       }
       // 保存到 tabLayouts
       set(state => ({
@@ -572,7 +575,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const layout = get().settings?.layout
       if (layout) {
         window.inkslateApi.settings.update({
-          layout: { ...layout, openTabs: newTabs, activeTabId: newActive }
+          layout: { openTabs: newTabs, activeTabId: newActive }
         }).catch(() => {})
       }
       // 切换到新激活笔记（如果有）
@@ -728,7 +731,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleSidebar: () => {
     const visible = !get().sidebarVisible
     set({ sidebarVisible: visible })
-    get().updateSettings({ layout: { ...get().settings!.layout, sidebarVisible: visible } })
+    get().updateSettings({ layout: { sidebarVisible: visible } })
   },
   togglePreview: () => {
     const visible = !get().previewVisible
@@ -745,7 +748,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       layouts[tabId] = { ...(layouts[tabId] || {}), previewVisible: visible }
       set({ tabLayouts: layouts })
     }
-    get().updateSettings({ layout: { ...get().settings!.layout, previewVisible: visible } })
+    get().updateSettings({ layout: { previewVisible: visible } })
   },
   toggleEditor: () => {
     const visible = !get().editorVisible
@@ -762,7 +765,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       layouts[tabId] = { ...(layouts[tabId] || {}), editorVisible: visible }
       set({ tabLayouts: layouts })
     }
-    get().updateSettings({ layout: { ...get().settings!.layout, editorVisible: visible } })
+    get().updateSettings({ layout: { editorVisible: visible } })
   },
 
   viewMode: 'notes',
@@ -871,7 +874,8 @@ export function buildNoteTree(notebooks: Notebook[], notes: Note[]): NoteTreeNod
       updatedAt: nb.updatedAt,
       createdAt: nb.createdAt,
       sortOrder: nb.sortOrder,
-      isExpanded: true
+      isExpanded: true,
+      passwordProtected: !!nb.passwordProtected
     })
   }
   for (const note of notes) {

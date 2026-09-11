@@ -531,6 +531,10 @@ export default function App() {
         e.preventDefault()
         toggleEditor()
       }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('inkslate:open-search'))
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)

@@ -584,6 +584,22 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       search(),
       highlightSelectionMatches(),
       keymap.of(searchKeymap),
+      // 搜索面板中文化（CodeMirror 官方面板默认英文，通过 phrases facet 翻译）
+      EditorState.phrases.of({
+        'Find': '查找',
+        'Replace': '替换为',
+        'next': '下一个',
+        'previous': '上一个',
+        'all': '全部',
+        'match case': '区分大小写',
+        'regexp': '正则',
+        'by word': '全词',
+        'replace': '替换',
+        'replace all': '全部替换',
+        'close': '关闭',
+        'Go to line': '跳转到行',
+        'go': '跳转',
+      }),
       // 双击选中时裁掉行尾换行符，避免光标落到下一行导致下一行高亮
       EditorState.transactionFilter.of(tr => {
         if (!tr.selection) return tr

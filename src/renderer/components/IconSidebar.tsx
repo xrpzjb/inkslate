@@ -338,8 +338,6 @@ export function IconSidebar() {
           <Search size={20} />
         </button>
 
-        <div className="icon-sidebar-sep" />
-
         {/* ===== Group: 创建 ===== */}
         <button
           ref={newBtnRef}
@@ -357,8 +355,6 @@ export function IconSidebar() {
         >
           <Lightbulb size={20} />
         </button>
-
-        <div className="icon-sidebar-sep" />
 
         {/* ===== Group: 文件（已移除保存按钮，自动保存即可） ===== */}
 
@@ -381,8 +377,6 @@ export function IconSidebar() {
           ) : null}
         </button>
 
-        <div className="icon-sidebar-sep" />
-
         {/* ===== Group: 视图 ===== */}
         <button
           ref={themeBtnRef}
@@ -390,7 +384,7 @@ export function IconSidebar() {
           onClick={() => setPopover(popover === 'theme' ? null : 'theme')}
           title="主题"
         >
-          <Palette size={20} />
+<Palette size={20} />
         </button>
 
         <div className="icon-sidebar-spacer" />
@@ -404,8 +398,6 @@ export function IconSidebar() {
           <Trash2 size={20} />
         </button>
 
-        <div className="icon-sidebar-sep" />
-
         {/* ===== Group: 帮助 ===== */}
         <button
           className="icon-sidebar-btn"
@@ -414,8 +406,6 @@ export function IconSidebar() {
         >
           <Settings size={20} />
         </button>
-
-        <div className="icon-sidebar-sep" />
 
         {/* ===== 底部：切换树状图 ===== */}
         <button

@@ -1878,8 +1878,6 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
   // 实时进度：主进程在工具调用/请求阶段推送的进度文案（方案C）
   const [progress, setProgress] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
-  // SSH 工具是否启用（启用后向模型追加 SSH 远程文件工具的说明）
-  const sshEnabled = useAppStore(s => s.settings?.ssh?.enabled ?? false)
 
   useEffect(() => {
     taRef.current?.focus()
@@ -1931,17 +1929,15 @@ export function AIDialog({ mode = 'modal', noteId, noteTitle, noteContent, noteF
         : noteFormat === 'spreadsheet' ? '注意：content 必须是 Markdown 表格格式，首行为表头，每行用 | 分隔单元格，不要用 ``` 包裹，不要输出 JSON、代码块或解释文字。示例：\n| 日期 | 任务 | 状态 |\n| --- | --- | --- |\n| 2026-09-01 | 需求评审 | 完成 |'
         : ''
 
-      const sshHint = sshEnabled
-        ? `
+      const sshHint = `
 
-## SSH 远程工具（已启用）
-除本地工具外，你还能通过 SSH 访问一台远程服务器，可用工具：
-- ssh_list_dir(path)：列出远程目录内容
-- ssh_read_file(path)：读取远程文件文本
-- ssh_write_file(path, content)：写入远程文件（系统会先弹出确认框请用户批准，用户拒绝则不会写入）
+## SSH 远程工具
+除本地工具外，你还能通过 SSH 访问远程服务器（凭据由你提供，可访问多台服务器），可用工具：
+- ssh_list_dir(host, username, password, path, port?): 列出远程目录内容
+- ssh_read_file(host, username, password, path, port?): 读取远程文件文本
+- ssh_write_file(host, username, password, path, content, port?): 写入远程文件（系统会先弹出确认框请用户批准，用户拒绝则不会写入）
 
-远程路径请使用绝对路径，例如 /etc/nginx/nginx.conf。只在确有必要时才访问远程服务器。`
-        : ''
+调用 ssh_* 工具时必须携带 host / username / password。远程路径请使用绝对路径，例如 /etc/nginx/nginx.conf。只在确有必要时才访问远程服务器。`
 
       const systemMsg = {
         role: 'system',

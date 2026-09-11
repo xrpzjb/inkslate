@@ -1,8 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 // x-data-spreadsheet 主入口是 ESM，自带 less（Vite + less 编译）
 import Spreadsheet from 'x-data-spreadsheet'
 import zhCN from 'x-data-spreadsheet/src/locale/zh-cn'
 import { SpreadsheetData } from '@shared/types'
+import { useAppStore } from '../store/app'
+import '../styles/spreadsheet.css'
 
 // 启用中文界面（右键菜单 / 工具栏 / 弹窗等）
 try { Spreadsheet.locale('zh-cn', zhCN) } catch {}
@@ -130,6 +132,26 @@ export function SpreadsheetEditor({
   // 首次加载时的非空行数（防误覆盖：初始有数据时，突然全空视为异常，禁止写盘）
   const initialRowsRef = useRef(0)
 
+  // ===== 跟随应用主题 =====
+  const theme = useAppStore(s => s.theme)
+  const [systemDark, setSystemDark] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  // 有效明暗：显式暗色主题 + auto 跟随系统
+  const isDark =
+    theme === 'dark' || theme === 'dracula' || theme === 'forest' || (theme === 'auto' && systemDark)
+  // 读取当前主题的 CSS 变量（各主题都会注入 --bg-primary / --text-primary 等）
+  const readThemeColor = (name: string, fallback: string): string => {
+    if (typeof document === 'undefined') return fallback
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+  }
+
   onChangeRef.current = onChange
 
   // 统计数据的非空行数（排除 len 这类结构字段）
@@ -170,6 +192,18 @@ export function SpreadsheetEditor({
       view: {
         height: () => container.clientHeight,
         width: () => container.clientWidth
+      },
+      // 默认单元格样式跟随主题（底色/文字色），表头与网格线颜色由
+      // scripts/patch-xspreadsheet.js 补丁在渲染时读取同一批 CSS 变量
+      style: {
+        bgcolor: readThemeColor('--bg-primary', '#ffffff'),
+        color: readThemeColor('--text-primary', '#111827'),
+        align: 'left',
+        valign: 'middle',
+        textwrap: false,
+        strike: false,
+        underline: false,
+        font: { name: 'Helvetica', size: 10, bold: false, italic: false }
       }
     })
 
@@ -244,6 +278,29 @@ export function SpreadsheetEditor({
       container.innerHTML = ''
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId, theme, systemDark])
+
+  // 容器尺寸变化时（预览面板收起/展开的过渡动画、侧栏开关、窗口宽度变化等）
+  // 触发 x-data-spreadsheet 重新测量并重排。库默认只在 window resize 时 reload，
+  // 若面板在过渡中（容器还处于半宽）挂载，表格会停留在半宽、右侧留白。
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      if (raf) cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        try {
+          ;(sheetRef.current as any)?.sheet?.reload?.()
+        } catch {}
+      })
+    })
+    ro.observe(container)
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
   }, [noteId])
 
   // 外部内容变化（切笔记 / 回滚 / 恢复草稿 / AI 替换）时重新加载。
@@ -268,9 +325,13 @@ export function SpreadsheetEditor({
     }
   }, [value, noteId])
 
-  return (
-    <div className="spreadsheet-view" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div ref={containerRef} style={{ flex: 1, minHeight: 0, background: '#fff' }} />
+return (
+    <div
+      className="spreadsheet-view"
+      data-xspreadsheet-dark={isDark ? 'true' : 'false'}
+      style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+    >
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
     </div>
   )
 }

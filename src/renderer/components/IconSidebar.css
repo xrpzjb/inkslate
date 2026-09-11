@@ -93,13 +93,6 @@
   transition-delay: 300ms;
 }
 
-.icon-sidebar-sep {
-  /* 分组之间用空白间距自然分隔，去掉横线 */
-  width: 24px;
-  height: 0;
-  margin: 3px 0;
-}
-
 .icon-sidebar-spacer {
   flex: 1;
   min-height: 12px;

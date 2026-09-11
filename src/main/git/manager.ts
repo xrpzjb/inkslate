@@ -2,8 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { app, safeStorage } from 'electron'
 import * as git from 'isomorphic-git'
-// @ts-ignore - isomorphic-git/http/node 无类型声明
-import http from 'isomorphic-git/http/node'
+import { gitHttp as http } from './httpClient'
 import { AppSettings, Note } from '../../shared/types'
 import { dbApi, getNotesDir, getNotebookPath, getNotebookFilePath, slugify, getUniqueFileName, findFileRecursively } from '../db'
 

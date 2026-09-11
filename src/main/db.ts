@@ -3,7 +3,7 @@ import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { Notebook, Note, AppSettings, FlashThought } from '../shared/types'
-import { isEncryptedContent, decryptWithCachedKey, encryptNoteContent, decryptNoteContent, hasCachedKey, getCachedKey, cacheKey, removeCachedKey } from './crypto'
+import { isEncryptedContent, decryptWithCachedPassword, encryptNoteContent, decryptNoteContent, hasCachedPassword, cachePassword, removeCachedPassword } from './crypto'
 
 // 类型已经在函数内部使用，下面是接口占位
 export type { Notebook, Note, AppSettings, FlashThought }
@@ -578,7 +578,8 @@ function rowToNotebook(row: any): Notebook {
     icon: row.icon,
     isDeleted: !!row.is_deleted,
     deletedAt: row.deleted_at ?? undefined,
-    sortOrder: row.sort_order ?? row.created_at
+    sortOrder: row.sort_order ?? row.created_at,
+    passwordProtected: !!row.password_protected
   }
 }
 
@@ -759,9 +760,9 @@ const dbMethods = {
       } catch {}
     }
     const note = rowToNote(row, content)
-    // 尝试用缓存 key 解密
-    if (note.isEncrypted && hasCachedKey(row.notebook_id)) {
-      const decrypted = decryptWithCachedKey(content, row.notebook_id)
+    // 尝试用缓存的密码解密（按笔记自身 salt 派生密钥，可解密笔记本内任意笔记）
+    if (note.isEncrypted && hasCachedPassword(row.notebook_id)) {
+      const decrypted = decryptWithCachedPassword(content, row.notebook_id)
       if (decrypted !== null) note.content = decrypted
     }
     return note
@@ -1577,19 +1578,48 @@ const dbMethods = {
     return { id, title: opts.title, content: '', format: opts.format, notebookId: opts.notebookId, parentId: opts.parentId, path: opts.path, createdAt: now, updatedAt: now, isDeleted: false }
   },
 
-  /** 检查笔记本是否受密码保护 */
+  /** 检查笔记本是否受密码保护（含祖先笔记本：祖先设密则整个子树都受保护） */
   isNotebookProtected(notebookId: string): boolean {
-    const row = getDatabase().prepare('SELECT password_protected FROM notebooks WHERE id = ?').get(notebookId) as any
-    if (row?.password_protected) return true
-    // 兜底：检查笔记是否已加密
-    const count = getDatabase().prepare('SELECT COUNT(*) as c FROM notes WHERE notebook_id = ? AND is_encrypted = 1 AND is_deleted = 0').get(notebookId) as any
+    const d = getDatabase()
+    let cur: string | null = notebookId
+    const seen = new Set<string>()
+    while (cur && !seen.has(cur)) {
+      seen.add(cur)
+      const row = d.prepare('SELECT password_protected FROM notebooks WHERE id = ?').get(cur) as any
+      if (row?.password_protected) return true
+      cur = row?.parent_id ?? null
+    }
+    // 兜底：检查该笔记本下是否有已加密笔记
+    const count = d.prepare('SELECT COUNT(*) as c FROM notes WHERE notebook_id = ? AND is_encrypted = 1 AND is_deleted = 0').get(notebookId) as any
     return (count?.c ?? 0) > 0
   },
 
-  /** 给笔记本设置密码：加密所有笔记内容 */
+  /** 收集笔记本自身及所有后代笔记本 id */
+  notebookSubtreeIds(notebookId: string): string[] {
+    const d = getDatabase()
+    const all = d.prepare('SELECT id, parent_id FROM notebooks WHERE is_deleted = 0').all() as any[]
+    const children = new Map<string | null, string[]>()
+    for (const r of all) {
+      const p = r.parent_id ?? null
+      if (!children.has(p)) children.set(p, [])
+      children.get(p)!.push(r.id)
+    }
+    const result: string[] = []
+    const stack = [notebookId]
+    while (stack.length) {
+      const cur = stack.pop()!
+      result.push(cur)
+      for (const child of children.get(cur) ?? []) stack.push(child)
+    }
+    return result
+  },
+
+  /** 给笔记本设置密码：加密自身及所有子笔记本下的笔记 */
   setNotebookPassword(notebookId: string, password: string): void {
     const d = getDatabase()
-    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all(notebookId) as any[]
+    const ids = this.notebookSubtreeIds(notebookId)
+    const ph = ids.map(() => '?').join(',')
+    const notes = d.prepare(`SELECT * FROM notes WHERE notebook_id IN (${ph}) AND is_deleted = 0`).all(...ids) as any[]
     for (const row of notes) {
       const { content } = resolveNoteContent(row)
       if (!content || isEncryptedContent(content)) continue
@@ -1600,19 +1630,17 @@ const dbMethods = {
       }
       d.prepare('UPDATE notes SET content = ?, is_encrypted = 1 WHERE id = ?').run(encrypted, row.id)
     }
-    d.prepare('UPDATE notebooks SET password_protected = 1 WHERE id = ?').run(notebookId)
-    // 缓存 key
-    const firstNote = d.prepare('SELECT content FROM notes WHERE notebook_id = ? AND is_encrypted = 1 AND is_deleted = 0 LIMIT 1').get(notebookId) as any
-    if (firstNote?.content) {
-      const obj = JSON.parse(firstNote.content)
-      cacheKey(notebookId, password, obj.salt)
-    }
+    d.prepare(`UPDATE notebooks SET password_protected = 1 WHERE id IN (${ph})`).run(...ids)
+    // 缓存密码（整棵子树共享，解锁任意笔记后整棵子树都能解密）
+    for (const id of ids) cachePassword(id, password)
   },
 
-  /** 移除笔记本密码：解密所有笔记内容 */
+  /** 移除笔记本密码：解密自身及所有子笔记本下的笔记 */
   removeNotebookPassword(notebookId: string, password: string): boolean {
     const d = getDatabase()
-    const notes = d.prepare('SELECT * FROM notes WHERE notebook_id = ? AND is_deleted = 0').all(notebookId) as any[]
+    const ids = this.notebookSubtreeIds(notebookId)
+    const ph = ids.map(() => '?').join(',')
+    const notes = d.prepare(`SELECT * FROM notes WHERE notebook_id IN (${ph}) AND is_deleted = 0`).all(...ids) as any[]
     for (const row of notes) {
       const { content } = resolveNoteContent(row)
       if (!content || !isEncryptedContent(content)) continue
@@ -1623,25 +1651,23 @@ const dbMethods = {
       }
       d.prepare('UPDATE notes SET content = ?, is_encrypted = 0 WHERE id = ?').run(decrypted, row.id)
     }
-    d.prepare('UPDATE notebooks SET password_protected = 0 WHERE id = ?').run(notebookId)
-    removeCachedKey(notebookId)
+    d.prepare(`UPDATE notebooks SET password_protected = 0 WHERE id IN (${ph})`).run(...ids)
+    for (const id of ids) removeCachedPassword(id)
     return true
   },
 
-  /** 验证密码并缓存 key（供查看笔记时解密用） */
+  /** 验证密码并缓存密码（供查看笔记时解密用） */
   unlockNotebook(notebookId: string, password: string): boolean {
-    const row = getDatabase().prepare('SELECT content FROM notes WHERE notebook_id = ? AND is_encrypted = 1 AND is_deleted = 0 LIMIT 1').get(notebookId) as any
+    const ids = this.notebookSubtreeIds(notebookId)
+    const ph = ids.map(() => '?').join(',')
+    const row = getDatabase().prepare(`SELECT content FROM notes WHERE notebook_id IN (${ph}) AND is_encrypted = 1 AND is_deleted = 0 LIMIT 1`).get(...ids) as any
     if (!row?.content) return false
     try {
-      const obj = JSON.parse(row.content)
-      if (!obj.salt) return false
-      cacheKey(notebookId, password, obj.salt)
       // 验证：尝试解密
       const test = decryptNoteContent(row.content, password)
-      if (test === null) {
-        removeCachedKey(notebookId)
-        return false
-      }
+      if (test === null) return false
+      // 缓存密码（整棵子树共享）
+      for (const id of ids) cachePassword(id, password)
       return true
     } catch {
       return false
@@ -1732,6 +1758,11 @@ function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
 
   // 文件读取失败（或没有文件）时回退到 SQLite 中的 content
   if (!content && row.content) {
+    content = row.content
+  }
+  // 加密笔记：磁盘文件可能是旧明文（设密后一次陈旧自动保存覆盖过），
+  // 此时以 DB 中的加密内容为准，保证锁屏生效、真实内容不外泄
+  if (row.is_encrypted === 1 && row.content && isEncryptedContent(row.content) && !isEncryptedContent(content)) {
     content = row.content
   }
   return { content, fixedPath }

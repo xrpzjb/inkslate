@@ -23,14 +23,18 @@ export async function exportSpreadsheetToXlsx(title: string, content: string): P
   const wb = new ExcelJS.Workbook()
   wb.creator = '墨与石板 (Inkslate)'
   wb.title = title
+  // 显式设置工作簿视图：默认选中第一个工作表
+  wb.views = [{ x: 0, y: 0, width: 0, height: 0, firstSheet: 0, activeTab: 0, visibility: 'visible' }]
 
   if (!data || data.length === 0) {
-    wb.addWorksheet('Sheet1')
+    const ws = wb.addWorksheet('Sheet1')
+    applyDefaultSheetView(ws)
     return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>
   }
 
   for (const sheetData of data) {
     const ws = wb.addWorksheet(sheetData?.name || 'Sheet1')
+    applyDefaultSheetView(ws)
     const styles = sheetData?.styles || []
 
     const rows = sheetData?.rows || {}
@@ -83,4 +87,19 @@ export async function exportSpreadsheetToXlsx(title: string, content: string): P
   }
 
   return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>
+}
+
+/**
+ * 给工作表设置标准的、可交互的视图（网格线 + 行/列标题 + 正常选中）。
+ * exceljs 默认不写 <sheetView>，且 pageSetup 默认 showGridLines/showRowColHeaders 为 false，
+ * 部分表格软件（如 WPS）打开这类文件时会退化成"无法选中单元格"的状态，这里显式写全。
+ */
+function applyDefaultSheetView(ws: ExcelJS.Worksheet): void {
+  ws.views = [{ state: 'normal', showGridLines: true, showRowColHeaders: true }]
+  ws.pageSetup = {
+    orientation: 'portrait',
+    fitToPage: false,
+    showGridLines: true,
+    showRowColHeaders: true,
+  }
 }

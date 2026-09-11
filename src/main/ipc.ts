@@ -5,7 +5,7 @@ import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult } from '..
 import { dbApi, getFilesDir, slugify, getUniqueFileName } from './db'
 import { OssManager } from './oss/manager'
 import { GitManager } from './git/manager'
-import { encryptWithCachedKey, hasCachedKey } from './crypto'
+import { encryptWithCachedPassword, hasCachedPassword } from './crypto'
 import { exportNoteToWord } from './export/docx'
 import { exportSpreadsheetToXlsx } from './export/xlsx'
 import { addPdfOutline } from './export/pdfOutline'
@@ -119,9 +119,9 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.NOTE_CREATE, async (_, title: string, notebookId: string, parentId: string | null, icon?: string, format: 'markdown' | 'html' | 'richtext' | 'code' | 'url' = 'markdown', language?: string, url?: string): Promise<Note> => {
     const result = dbApi.createNote(title, notebookId, parentId, icon, format, language, url)
-    // 如果笔记本受密码保护且有缓存 key，自动加密新笔记
-    if (result && hasCachedKey(notebookId)) {
-      const encrypted = encryptWithCachedKey(result.content, notebookId)
+    // 如果笔记本受密码保护且有缓存密码，自动加密新笔记
+    if (result && hasCachedPassword(notebookId)) {
+      const encrypted = encryptWithCachedPassword(result.content, notebookId)
       if (encrypted) {
         dbApi.updateNote(result.id, { content: encrypted } as any)
         dbApi.getNote(result.id)!.content = encrypted // force re-read
@@ -131,13 +131,19 @@ export function setupIpcHandlers(): void {
     return dbApi.getNote(result.id)!
   })
 
-  ipcMain.handle(IPC_CHANNELS.NOTE_UPDATE, async (_, id: string, updates: Partial<Note>): Promise<Note> => {
-    // 如果内容被更新且笔记本受保护，加密内容
+ipcMain.handle(IPC_CHANNELS.NOTE_UPDATE, async (_, id: string, updates: Partial<Note>): Promise<Note> => {
+    // 加密笔记的内容写入防护：
+    //  - 已解锁（缓存了密码）→ 写入前加密
+    //  - 未解锁 → 忽略内容写入，防止陈旧自动保存把明文覆盖到加密内容上
     if (updates.content !== undefined) {
       const note = dbApi.getNote(id)
-      if (note && hasCachedKey(note.notebookId)) {
-        const encrypted = encryptWithCachedKey(updates.content, note.notebookId)
-        if (encrypted) updates.content = encrypted
+      if (note && note.isEncrypted) {
+        if (hasCachedPassword(note.notebookId)) {
+          const encrypted = encryptWithCachedPassword(updates.content, note.notebookId)
+          if (encrypted) updates.content = encrypted
+        } else {
+          delete updates.content
+        }
       }
     }
     const result = dbApi.updateNote(id, updates)
@@ -762,26 +768,32 @@ ${watermarkHtml}
     }
   })
 
-  /** 当前 SSH 配置（未配置返回 undefined） */
-  const getSshConfig = (): AppSettings['ssh'] | undefined => {
-    const cfg = dbApi.getSettings().ssh
-    if (!cfg?.host || !cfg?.username || !cfg?.encryptedPassword) return undefined
-    return cfg
+  /** 从 AI 工具参数中提取 SSH 连接凭据；缺任一字段返回 null */
+  const sshConnFromArgs = (args: any): import('./ssh/manager').SshConnection | null => {
+    const host = typeof args?.host === 'string' ? args.host.trim() : ''
+    const username = typeof args?.username === 'string' ? args.username.trim() : ''
+    const password = typeof args?.password === 'string' ? args.password : ''
+    if (!host || !username || !password) return null
+    return { host, port: Number(args?.port) || 22, username, password }
   }
 
-  /** SSH 工具定义：只读（list/read）自动执行，写（write）执行前需用户确认 */
+  /** SSH 工具定义：凭据由 AI 每次调用时传入（可访问多台服务器）。只读（list/read）自动执行，写（write）执行前需用户确认 */
   const sshTools = [
     {
       type: 'function',
       function: {
         name: 'ssh_list_dir',
-        description: '列出远程服务器上指定目录的内容（只读，自动执行）',
+        description: '列出远程服务器上指定目录的内容。凭据（host/username/password）每次调用时由你提供（只读，自动执行）',
         parameters: {
           type: 'object',
           properties: {
+            host: { type: 'string', description: '远程服务器主机地址（IP 或域名）' },
+            port: { type: 'number', description: 'SSH 端口，默认 22' },
+            username: { type: 'string', description: 'SSH 登录用户名' },
+            password: { type: 'string', description: 'SSH 登录密码' },
             path: { type: 'string', description: '远程目录绝对路径，如 /etc/nginx' }
           },
-          required: ['path']
+          required: ['host', 'username', 'password', 'path']
         }
       }
     },
@@ -789,13 +801,17 @@ ${watermarkHtml}
       type: 'function',
       function: {
         name: 'ssh_read_file',
-        description: '读取远程服务器上指定文件的文本内容（只读，自动执行）',
+        description: '读取远程服务器上指定文件的文本内容。凭据（host/username/password）每次调用时由你提供（只读，自动执行）',
         parameters: {
           type: 'object',
           properties: {
+            host: { type: 'string', description: '远程服务器主机地址（IP 或域名）' },
+            port: { type: 'number', description: 'SSH 端口，默认 22' },
+            username: { type: 'string', description: 'SSH 登录用户名' },
+            password: { type: 'string', description: 'SSH 登录密码' },
             path: { type: 'string', description: '远程文件绝对路径' }
           },
-          required: ['path']
+          required: ['host', 'username', 'password', 'path']
         }
       }
     },
@@ -803,14 +819,18 @@ ${watermarkHtml}
       type: 'function',
       function: {
         name: 'ssh_write_file',
-        description: '把内容写入远程服务器上的文件（覆盖写入）。属于危险操作，执行前会先请求用户确认',
+        description: '把内容写入远程服务器上的文件（覆盖写入）。凭据（host/username/password）每次调用时由你提供。属于危险操作，执行前会先请求用户确认',
         parameters: {
           type: 'object',
           properties: {
+            host: { type: 'string', description: '远程服务器主机地址（IP 或域名）' },
+            port: { type: 'number', description: 'SSH 端口，默认 22' },
+            username: { type: 'string', description: 'SSH 登录用户名' },
+            password: { type: 'string', description: 'SSH 登录密码' },
             path: { type: 'string', description: '远程文件绝对路径' },
             content: { type: 'string', description: '要写入的完整文本内容' }
           },
-          required: ['path', 'content']
+          required: ['host', 'username', 'password', 'path', 'content']
         }
       }
     }
@@ -914,40 +934,33 @@ ${watermarkHtml}
           return `搜索失败: ${e.message}`
         }
       }
-      // ===== SSH 远程文件（只读自动执行）=====
-      case 'ssh_list_dir': {
-        const cfg = getSshConfig()
-        if (!cfg) return 'SSH 未配置：请在 设置 → SSH 远程 中填写主机/用户名/密码并启用'
-        try {
-          return await sshMgr.listDir(cfg, args.path || '.')
-        } catch (e: any) {
-          return `远程列目录失败: ${e.message}`
-        }
-      }
+      // ===== SSH 远程文件（凭据由 AI 每次调用传入，支持多台服务器；只读自动执行）=====
+      case 'ssh_list_dir':
       case 'ssh_read_file': {
-        const cfg = getSshConfig()
-        if (!cfg) return 'SSH 未配置：请在 设置 → SSH 远程 中填写主机/用户名/密码并启用'
+        const conn = sshConnFromArgs(args)
+        if (!conn) return 'SSH 参数缺失：请提供 host / username / password（AI 调用 ssh_* 工具时必须携带凭据）'
         try {
-          return await sshMgr.readFile(cfg, args.path)
+          if (name === 'ssh_list_dir') return await sshMgr.listDir(conn, args.path || '.')
+          return await sshMgr.readFile(conn, args.path)
         } catch (e: any) {
-          return `远程读取失败: ${e.message}`
+          return `远程操作失败: ${e.message}`
         }
       }
       // ===== SSH 远程写入（危险操作，先请求用户确认）=====
       case 'ssh_write_file': {
-        const cfg = getSshConfig()
-        if (!cfg) return 'SSH 未配置：请在 设置 → SSH 远程 中填写主机/用户名/密码并启用'
+        const conn = sshConnFromArgs(args)
+        if (!conn) return 'SSH 参数缺失：请提供 host / username / password（AI 调用 ssh_* 工具时必须携带凭据）'
         const content: string = args.content ?? ''
         const preview = content.length > 400 ? content.slice(0, 400) + '\n…（已截断预览）' : content
         const ok = await requestSshConfirm(event, {
           action: '写入远程文件',
           path: args.path,
-          host: cfg.host,
+          host: conn.host,
           detail: preview
         })
         if (!ok) return '用户拒绝了该写操作，文件未修改。'
         try {
-          await sshMgr.writeFile(cfg, args.path, content)
+          await sshMgr.writeFile(conn, args.path, content)
           return `已写入远程文件: ${args.path}（${content.length} 字符）`
         } catch (e: any) {
           return `远程写入失败: ${e.message}`
@@ -1046,8 +1059,6 @@ ${watermarkHtml}
       let currentMessages = [...messages]
       pushProgress('正在连接 AI 模型…')
       const isAnthropic = ai.apiUrl.includes('/messages')
-      // SSH 已启用且配置完整时，才向模型暴露 SSH 工具
-      const sshConfigured = !!getSshConfig()?.enabled
       let dispatcher: any = undefined
       if (ai.proxyUrl && ProxyAgent) {
         try { dispatcher = new ProxyAgent({ uri: ai.proxyUrl }) } catch {}
@@ -1081,8 +1092,8 @@ ${watermarkHtml}
         } else {
           // MiMo API 不支持 tools/function calling，跳过
           const supportsTools = !ai.apiUrl.includes('xiaomimimo.com')
-          // SSH 已配置并启用时才挂载 SSH 工具
-          const activeTools = sshConfigured ? [...aiTools, ...sshTools] : aiTools
+          // 本地工具 + SSH 远程文件工具（凭据由 AI 每次调用时传入）
+          const activeTools = [...aiTools, ...sshTools]
           resp = await fetch(ai.apiUrl, {
             ...fetchOpts,
             signal: ac.signal,
@@ -1203,53 +1214,6 @@ ${watermarkHtml}
 
   ipcMain.handle(IPC_CHANNELS.AI_CONFIGURE, async (_, config: AppSettings['ai']): Promise<void> => {
     await dbApi.updateSettings({ ai: config } as any)
-  })
-
-  // ============ SSH 远程服务器（供 AI 写作的 SSH 工具使用） ============
-  /** 保存 SSH 配置：password 为明文时加密后存，为空则保留旧密码 */
-  ipcMain.handle(IPC_CHANNELS.SSH_CONFIGURE, async (_, config: any): Promise<AppSettings['ssh']> => {
-    const current = dbApi.getSettings().ssh
-    const next: NonNullable<AppSettings['ssh']> = {
-      enabled: !!config?.enabled,
-      host: (config?.host ?? '').trim(),
-      port: Number(config?.port) || 22,
-      username: (config?.username ?? '').trim(),
-      encryptedPassword: current?.encryptedPassword,
-      configured: false
-    }
-    if (typeof config?.password === 'string' && config.password.length > 0) {
-      next.encryptedPassword = sshMgr.encryptPassword(config.password)
-    }
-    next.configured = !!(next.host && next.username && next.encryptedPassword)
-    await dbApi.updateSettings({ ssh: next } as any)
-    // 配置变化后断开旧连接，下次使用时按新配置重连
-    sshMgr.closeClient()
-    return next
-  })
-
-  /** 测试 SSH 连接 */
-  ipcMain.handle(IPC_CHANNELS.SSH_TEST, async (): Promise<{ ok: boolean; message: string }> => {
-    const cfg = dbApi.getSettings().ssh
-    if (!cfg?.host || !cfg?.username || !cfg?.encryptedPassword) {
-      return { ok: false, message: 'SSH 未配置完整（需要主机、用户名、密码）' }
-    }
-    try {
-      sshMgr.closeClient()
-      await sshMgr.testConnection(cfg)
-      return { ok: true, message: '连接成功' }
-    } catch (e: any) {
-      return { ok: false, message: e?.message || '连接失败' }
-    }
-  })
-
-  /** 查询 SSH 当前状态 */
-  ipcMain.handle(IPC_CHANNELS.SSH_STATUS, async (): Promise<{ configured: boolean; enabled: boolean; connected: boolean }> => {
-    const cfg = dbApi.getSettings().ssh
-    return {
-      configured: !!cfg?.configured,
-      enabled: !!cfg?.enabled,
-      connected: sshMgr.isConnected()
-    }
   })
 
   // ============ AI 写作对话历史（仅存本地数据库，不参与 git 同步） ============

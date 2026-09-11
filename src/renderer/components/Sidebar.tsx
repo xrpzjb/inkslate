@@ -269,7 +269,7 @@ export function Sidebar() {
     renamingRef.current = renaming
   }, [renaming])
 
-  // 监听「定位当前笔记」事件：展开所属笔记本 → 滚动到该笔记行
+  // 监听「定位当前笔记」事件：展开所属笔记本及其所有祖先 → 滚动到该笔记行
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
@@ -277,23 +277,34 @@ export function Sidebar() {
       if (!noteId) return
       const note = notes.find(n => n.id === noteId)
       if (!note) return
+      // 展开所属笔记本及全部祖先（嵌套树全收起时也能逐级张开）
       const nbId = note.notebookId
-      if (nbId && !expanded.has(nbId)) {
+      if (nbId) {
         setExpanded(prev => {
           const next = new Set(prev)
-          next.add(nbId)
-          setExpandedNotebook(nbId, true)
+          const seen = new Set<string>()
+          let cur: string | null = nbId
+          while (cur && !seen.has(cur)) {
+            seen.add(cur)
+            next.add(cur)
+            setExpandedNotebook(cur, true)
+            cur = notebooks.find(n => n.id === cur)?.parentId ?? null
+          }
           return next
         })
       }
-      requestAnimationFrame(() => {
+      // 等展开渲染完成后滚动定位（多次 rAF，避免 React 还没提交时元素不存在）
+      let tries = 0
+      const tryScroll = () => {
         const el = document.querySelector(`[data-note-id="${noteId}"]`)
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      })
+        else if (++tries < 10) requestAnimationFrame(tryScroll)
+      }
+      requestAnimationFrame(tryScroll)
     }
     window.addEventListener('inkslate:sidebar-locate-note', handler)
     return () => window.removeEventListener('inkslate:sidebar-locate-note', handler)
-  }, [notes, expanded])
+  }, [notes, notebooks, expanded])
 
   // 监听「定位到某个节点」事件（面包屑逐级点击）：笔记本 → 展开其所有祖先并滚动；笔记 → 展开所属笔记本并滚动
   useEffect(() => {
@@ -317,29 +328,41 @@ export function Sidebar() {
           }
           return next
         })
-        requestAnimationFrame(() => {
+        let tries = 0
+        const tryScroll = () => {
           const el = document.querySelector(`[data-notebook-id="${id}"]`)
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        })
+          else if (++tries < 10) requestAnimationFrame(tryScroll)
+        }
+        requestAnimationFrame(tryScroll)
         return
       }
 
-      // 笔记：展开所属笔记本后滚动到该行
+      // 笔记：展开所属笔记本及全部祖先后滚动到该行
       const note = notes.find(n => n.id === id)
       if (!note) return
       const nbId = note.notebookId
-      if (nbId && !expanded.has(nbId)) {
+      if (nbId) {
         setExpanded(prev => {
           const next = new Set(prev)
-          next.add(nbId)
-          setExpandedNotebook(nbId, true)
+          const seen = new Set<string>()
+          let cur: string | null = nbId
+          while (cur && !seen.has(cur)) {
+            seen.add(cur)
+            next.add(cur)
+            setExpandedNotebook(cur, true)
+            cur = notebooks.find(n => n.id === cur)?.parentId ?? null
+          }
           return next
         })
       }
-      requestAnimationFrame(() => {
+      let tries = 0
+      const tryScroll = () => {
         const el = document.querySelector(`[data-note-id="${id}"]`)
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      })
+        else if (++tries < 10) requestAnimationFrame(tryScroll)
+      }
+      requestAnimationFrame(tryScroll)
     }
     window.addEventListener('inkslate:sidebar-locate-node', handler)
     return () => window.removeEventListener('inkslate:sidebar-locate-node', handler)
@@ -895,6 +918,7 @@ export function Sidebar() {
             ) : (
               <>
                 <span className="tree-label">{node.name}</span>
+                {node.passwordProtected && <Lock size={11} className="tree-lock" style={{ color: 'var(--text-tertiary)', flexShrink: 0, marginLeft: 6 }} />}
                 {showTreeCount && <span className="tree-count">{node.children.length}</span>}
               </>
             )}
@@ -1228,7 +1252,7 @@ export function Sidebar() {
           background-color: var(--bg-primary);
           box-shadow: 0 4px 12px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.08);
           border-radius: 6px;
-          margin: 2px 4px;
+          /* 不用 margin，避免选中时整组偏移、笔记名称与同级不对齐 */
           position: relative;
           z-index: 1;
         }

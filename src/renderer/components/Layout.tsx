@@ -22,49 +22,51 @@ function useHorizontalResize(
 ) {
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
-  const refWidthDuringDrag = useRef(0)
   const onCommitRef = useRef(onCommit)
+  const directionRef = useRef(direction)
+  const minRef = useRef(minWidth)
+  const maxRef = useRef(maxWidth)
 
-  useEffect(() => { onCommitRef.current = onCommit }, [onCommit])
+  useEffect(() => { onCommitRef.current = onCommit })
+  useEffect(() => { directionRef.current = direction })
+  useEffect(() => { minRef.current = minWidth })
+  useEffect(() => { maxRef.current = maxWidth })
 
   useEffect(() => {
     const divider = dividerRef.current
     const target = targetRef.current
     if (!divider || !target) return
 
-    const onMouseDown = (e: PointerEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
       e.preventDefault()
       e.stopPropagation()
       startXRef.current = e.clientX
       startWidthRef.current = target.offsetWidth
       document.body.style.userSelect = 'none'
-      divider.setPointerCapture(e.pointerId)
+      // 拖动期间把事件挂到 document 上，避免鼠标移出 divider 后收不到 move/up
+      document.addEventListener('pointermove', onPointerMove)
+      document.addEventListener('pointerup', onPointerUp)
+      try { divider.setPointerCapture(e.pointerId) } catch {}
     }
 
-    const onMouseMove = (e: PointerEvent) => {
+    const onPointerMove = (e: PointerEvent) => {
       if (startXRef.current === 0) return
       const delta = e.clientX - startXRef.current
-      const effectiveDelta = direction === 'right' ? delta : -delta
-      const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidthRef.current + effectiveDelta))
-      // 直接走 React state（通过 onCommitRef 的旁路 setState），
-      // 不操作 DOM inline style，避免后续 toggleVisible 时 stale style 冲突
-      // 拖动期间用一个临时 ref 持有最新值，pointerup 时再 commit
-      if (refWidthDuringDrag.current !== newWidth) {
-        refWidthDuringDrag.current = newWidth
-        // 实时反馈：直接写 inline style 仍然 OK，但必须在 pointerup 时清掉
-        target.style.width = `${newWidth}px`
-      }
+      const effectiveDelta = directionRef.current === 'right' ? delta : -delta
+      const newWidth = Math.max(minRef.current, Math.min(maxRef.current, startWidthRef.current + effectiveDelta))
+      target.style.width = `${newWidth}px`
     }
 
-    const onMouseUp = (e: PointerEvent) => {
+    const onPointerUp = () => {
       if (startXRef.current === 0) return
       startXRef.current = 0
-      const finalWidth = refWidthDuringDrag.current
+      const finalWidth = target.offsetWidth
       // 清掉 inline style，让 React state 接管（避免与 style={{ width }} 冲突）
       target.style.width = ''
-      onCommitRef.current(finalWidth)
-      divider.releasePointerCapture(e.pointerId)
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', onPointerUp)
       document.body.style.userSelect = ''
+      onCommitRef.current(finalWidth)
     }
 
     // 双击分隔条 → 重置回默认值（minWidth 之上、maxWidth 之下、中位数）。
@@ -72,23 +74,22 @@ function useHorizontalResize(
     const onDoubleClick = (e: MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      const defaultWidth = Math.round((minWidth + maxWidth) / 4) // 偏小的默认值
+      const defaultWidth = Math.round((minRef.current + maxRef.current) / 4) // 偏小的默认值
       target.style.width = ''  // 清掉 inline style，让 React state 接管
       onCommitRef.current(defaultWidth)
     }
 
-    divider.addEventListener('pointerdown', onMouseDown)
-    divider.addEventListener('pointermove', onMouseMove)
-    divider.addEventListener('pointerup', onMouseUp)
+    divider.addEventListener('pointerdown', onPointerDown)
     divider.addEventListener('dblclick', onDoubleClick)
 
     return () => {
-      divider.removeEventListener('pointerdown', onMouseDown)
-      divider.removeEventListener('pointermove', onMouseMove)
-      divider.removeEventListener('pointerup', onMouseUp)
+      divider.removeEventListener('pointerdown', onPointerDown)
       divider.removeEventListener('dblclick', onDoubleClick)
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.body.style.userSelect = ''
     }
-  }, [dividerRef, targetRef, direction, minWidth, maxWidth])
+  }, [dividerRef, targetRef])
 }
 
 export function Layout() {
@@ -214,7 +215,7 @@ export function Layout() {
     if (lastSavedWidth.current !== sidebarWidth && settings) {
       const timer = setTimeout(() => {
         window.inkslateApi.settings.update({
-          layout: { ...settings.layout, sidebarWidth }
+          layout: { sidebarWidth }
         }).catch(() => {})
         lastSavedWidth.current = sidebarWidth
       }, 500) // 叉姈 500ms
