@@ -13,6 +13,7 @@ import { toast } from './Toast'
 import { confirm } from './ConfirmDialog'
 import { IconPicker } from './IconPicker'
 import { PasswordDialog } from './PasswordDialog'
+import { richTextJsonToHtml } from './Preview'
 
 /** 笔记本图标：从 DB 图标名渲染 MatIcon / IonIcon 组件。
  *  - mat:icon_name (轮廓) 或 mat:icon_name:fill (填充)
@@ -692,7 +693,9 @@ export function Sidebar() {
   }
 
   /** 导出当前右键的笔记为 PDF 文件。
-   *  抓取当前预览区的 innerHTML，连同标题一起传给主进程，
+   *  markdown：抓预览区已渲染好的 innerHTML（带 mermaid / katex 渲染结果）；
+   *  html / code / richtext：预览不在 .preview-inner 里（html 在 iframe、code 是独立 pre、
+   *  richtext 无预览），直接用笔记原始内容生成，否则会导出空白 PDF。
    *  主进程用隐藏 BrowserWindow 加载纯净 HTML 后 printToPDF。
    *  先弹出水印输入框，确认后再真正导出。 */
   const handleExportPdf = (nodeId: string) => {
@@ -703,7 +706,7 @@ export function Sidebar() {
   const doExportPdf = async (nodeId: string, watermark: string) => {
     try {
       const targetNote = notes.find(n => n.id === nodeId)
-      if (targetNote?.format === 'spreadsheet') {
+      if (['spreadsheet', 'url', 'file'].includes(targetNote?.format ?? '')) {
         toast.error('该格式暂不支持导出为 PDF')
         return
       }
@@ -714,31 +717,51 @@ export function Sidebar() {
       }
       const note = notes.find(n => n.id === nodeId)
       const title = note?.title || '未命名笔记'
-      // 抓预览区已经渲染好的 HTML（带 mermaid / katex 渲染结果），
-      // 但要去掉右侧悬浮目录按钮，避免它出现在导出的 PDF 里
-      const inner = document.querySelector('.preview .preview-inner') as HTMLElement | null
       let html = ''
-      if (inner) {
-        const clone = inner.cloneNode(true) as HTMLElement
-        clone.querySelectorAll('.toc').forEach(el => el.remove())
-        // 去掉搜索高亮标记，避免导出 PDF 里残留 <mark>
-        clone.querySelectorAll('mark.preview-search-mark').forEach(m => {
-          const parent = m.parentNode
-          if (parent) {
-            parent.replaceChild(document.createTextNode(m.textContent ?? ''), m)
-            parent.normalize()
-          }
-        })
-        // 代码块强制换行：PDF 里不能有横向滚动条。
-        // 用 setProperty + 'important' 写内联样式（最高优先级），
-        // 保证导出的内容一定折行显示，不受任何外部 CSS/缓存影响。
-        clone.querySelectorAll('pre').forEach((el) => {
-          const s = (el as HTMLElement).style
-          s.setProperty('white-space', 'pre-wrap', 'important')
-          s.setProperty('word-break', 'break-all', 'important')
-          s.setProperty('overflow', 'visible', 'important')
-        })
-        html = clone.innerHTML
+      if (note?.format === 'html') {
+        // HTML 笔记预览渲染在 iframe 里，主文档没有 .preview-inner。
+        // 优先抓 iframe 实时内容（包含防抖未落库的最新编辑，sandbox allow-same-origin 可跨入），
+        // 抓不到再回退笔记内容
+        const iframe = document.querySelector('iframe[title="HTML Preview"]') as HTMLIFrameElement | null
+        html = iframe?.contentDocument?.body?.innerHTML || note.content || ''
+      } else if (note?.format === 'code') {
+        // 代码笔记预览也是独立结构，转义后包 pre/code（PDF 模板里有代码块样式）
+        const esc = (note.content ?? '')
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        html = `<pre><code>${esc}</code></pre>`
+      } else if (note?.format === 'richtext') {
+        // 富文本笔记没有预览区，把 JSON 转成 HTML 再导出
+        html = richTextJsonToHtml(note.content ?? '')
+      } else {
+        // markdown：抓预览区已经渲染好的 HTML（带 mermaid / katex 渲染结果），
+        // 但要去掉右侧悬浮目录按钮，避免它出现在导出的 PDF 里
+        const inner = document.querySelector('.preview .preview-inner') as HTMLElement | null
+        if (inner) {
+          const clone = inner.cloneNode(true) as HTMLElement
+          clone.querySelectorAll('.toc').forEach(el => el.remove())
+          // 去掉搜索高亮标记，避免导出 PDF 里残留 <mark>
+          clone.querySelectorAll('mark.preview-search-mark').forEach(m => {
+            const parent = m.parentNode
+            if (parent) {
+              parent.replaceChild(document.createTextNode(m.textContent ?? ''), m)
+              parent.normalize()
+            }
+          })
+          // 代码块强制换行：PDF 里不能有横向滚动条。
+          // 用 setProperty + 'important' 写内联样式（最高优先级），
+          // 保证导出的内容一定折行显示，不受任何外部 CSS/缓存影响。
+          clone.querySelectorAll('pre').forEach((el) => {
+            const s = (el as HTMLElement).style
+            s.setProperty('white-space', 'pre-wrap', 'important')
+            s.setProperty('word-break', 'break-all', 'important')
+            s.setProperty('overflow', 'visible', 'important')
+          })
+          html = clone.innerHTML
+        }
+      }
+      if (!html.trim()) {
+        toast.error('未找到可导出的内容')
+        return
       }
       const ok = await window.inkslateApi.file.exportPdf({ title, html, watermark })
       if (!ok) console.log('PDF 导出已取消')

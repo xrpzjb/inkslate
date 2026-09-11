@@ -81,8 +81,11 @@ export async function resolveHeadingPages(
   ensureNodePolyfills()
   const pdfjs = await loadPdfjs()
 
+  // ⚠️ 必须传拷贝：pdfjs 的 getDocument 会转移（detach）传入的 ArrayBuffer，
+  // 调用方（ipc.ts）在解析完还要用原始字节写书签 / 落盘，
+  // 传原字节会导致后续 addPdfOutline 拿到空数据（"No PDF header found"）
   const doc = await pdfjs.getDocument({
-    data: pdfBytes,
+    data: pdfBytes.slice(),
     isEvalSupported: false,
     disableFontFace: true,
     useSystemFonts: true,

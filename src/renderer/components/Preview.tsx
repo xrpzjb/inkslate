@@ -46,8 +46,8 @@ md.use((md) => {
 // 给 heading_open 注入 id（供右侧 TOC 跳转用）
 attachHeadingIds(md)
 
-/** 把富文本 JSON 转成 HTML 字符串用于显示 */
-function richTextJsonToHtml(jsonStr: string): string {
+/** 把富文本 JSON 转成 HTML 字符串用于显示（导出 PDF 也复用） */
+export function richTextJsonToHtml(jsonStr: string): string {
   try {
     const doc = JSON.parse(jsonStr)
     const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
