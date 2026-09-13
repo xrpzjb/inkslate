@@ -1455,7 +1455,9 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
           color: 'var(--text-primary)',
           fontSize,
           lineHeight: 1.6,
-          minHeight: 0
+          minHeight: 0,
+          // 编辑区域字体：设置页选过就用它，否则跟随全局 UI 字体
+          fontFamily: 'var(--editor-font, var(--font-family))'
         }}
       />
     </div>

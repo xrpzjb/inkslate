@@ -730,7 +730,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   }, [value])
 
   // 监听 --font-mono、--editor-font-weight、--editor-font CSS 变量变化，
-  // 直接 inject style tag 到 document.head（绕开 CodeMirror compartment 优先级问题）
+  // 直接 inject style tag 到 document.head（绕开 CodeMirror compartment 优先级问题）。
+  // 注意：.cm-line 必须包含在内 —— 正文文本在 .cm-line 上，global.css 里
+  // .cm-content 只影响容器，不覆盖 .cm-line 自身的 font-family。
   useEffect(() => {
     const apply = () => {
       const editorFont = getComputedStyle(document.documentElement).getPropertyValue('--editor-font').trim()
@@ -745,6 +747,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       }
       styleEl.textContent = `
         .cm-editor .cm-content,
+        .cm-editor .cm-line,
         .cm-editor .cm-scroller {
           font-family: ${mono}, ${cjkFont} !important;
           font-weight: ${weight} !important;

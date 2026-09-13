@@ -134,21 +134,22 @@ export default function App() {
       // 恢复用户选择的全局字体
       {
         const s = useAppStore.getState().settings
-        const { FONT_OPTIONS } = await import('./components/SettingsDialog')
+        const { FONT_OPTIONS, applyFontToCSS, applyEditorWeightVar } = await import('./components/SettingsDialog')
         const applyCSSVar = (cssVar: string, fontValue: string | undefined) => {
-          if (!fontValue || fontValue === 'system') return
-          const opt = FONT_OPTIONS.find(o => o.value === fontValue)
-          if (opt) document.documentElement.style.setProperty(cssVar, opt.stack)
+          // 未设置（跟随默认）时不写变量；显式选过某一项就写入 —— 包含「系统默认」，
+          // 与设置面板里切换时的行为保持一致，否则重启后编辑区域字体会退回等宽。
+          if (!fontValue) return
+          applyFontToCSS(cssVar, fontValue)
         }
         applyCSSVar('--font-family', s?.fontFamily)
         if (s?.fontFamily) {
           const opt = FONT_OPTIONS.find(o => o.value === s.fontFamily)
           if (opt?.mono) {
             document.documentElement.style.setProperty('--font-mono', opt.stack)
-            document.documentElement.style.setProperty('--editor-font-weight', opt.bold ? '700' : '400')
           }
         }
         applyCSSVar('--editor-font', s?.editorFontFamily)
+        applyEditorWeightVar(s?.editorFontFamily, s?.fontFamily)
         applyCSSVar('--tree-font', s?.treeFontFamily)
         if (s?.treeFontSize) {
           document.documentElement.style.setProperty('--tree-font-size', `${s.treeFontSize}px`)
@@ -342,7 +343,7 @@ export default function App() {
                 toast.success('已从远端更新')
                 if (r.conflicts > 0) {
                   const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
-                  toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-冲突N」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
+                  toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-001」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
                 }
                 await useAppStore.getState().loadNotebooks()
                 await useAppStore.getState().loadNotes()
@@ -355,7 +356,7 @@ export default function App() {
                 toast.info('已是最新，无需更新')
                 if (r.conflicts > 0) {
                   const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
-                  toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-冲突N」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
+                  toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-001」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
                 }
                 await refreshSyncStatus()
                 const cur = useAppStore.getState().settings
@@ -394,7 +395,7 @@ export default function App() {
               toast.success('同步成功')
               if (r.conflicts > 0) {
                 const names = r.conflictTitles?.length ? `：${r.conflictTitles.join('、')}` : ''
-                toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-冲突N」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
+                toast.info(`检测到 ${r.conflicts} 处冲突，本地版本已保留为「原名-001」副本笔记（与原笔记同目录、格式一致，智能表格副本可直接打开编辑对比），请手动删除不需要的一份${names}`, 6000)
               }
               // 如果 pull 阶段拉到了新数据，重建树
               if (r.pulled) {

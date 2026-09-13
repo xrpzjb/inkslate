@@ -266,38 +266,10 @@ export class GitManager {
     const dir = this.getWorkDir()
     if (!this.isInitialized()) throw new Error('Git 仓库未初始化')
 
-    // ⚠️ 空库/残缺防覆盖（最后防线，防止把空或残缺元数据推上远端把线上覆盖掉）
-    //
-    // 事故复盘：本地 DB 为空（坏 clone / 新机器）时，如果直接 exportMetadata →
-    // commit → push，会把 .inkslate/notes.json 覆盖成空并推上远端，线上 112 条
-    // 笔记的元数据一夜变空。此防护必须放在 commitAll 里（仅推送/一键同步都会经过这里），
-    // 并且 countNotesInHead 之前因 readBlob 无法解析 'HEAD' 而恒返回 0，导致防护从未生效。
-    //
-    // 规则：以 git HEAD 元数据（或工作区元数据）中的笔记数为基线，本地 DB 少于基线
-    // 就先用元数据恢复本地 DB；恢复后仍不够则中止提交，绝不用残缺数据覆盖远端。
-    const localNoteCount = dbApi.countAllNotes()
-    const headNoteCount = await this.countNotesInHead()
-    const workdirNoteCount = this.readWorkdirNotesCount()
-    // 取两者中较大者作为"仓库应有的笔记数"参照（-1 = 读不到，忽略）
-    const baseline = Math.max(headNoteCount, workdirNoteCount)
-    if (baseline > 0 && localNoteCount < baseline) {
-      console.warn(
-        `[git] commitAll: 本地 DB 有 ${localNoteCount} 条笔记，少于元数据基线 ${baseline} 条（HEAD=${headNoteCount}, 工作区=${workdirNoteCount}），先从 HEAD 恢复本地 DB`
-      )
-      try {
-        await this.restoreWorkdirFromHead()
-        this.reconcileFromMetadata()
-      } catch (e) {
-        console.error('[git] commitAll: 恢复本地 DB 失败', e)
-      }
-      const afterCount = dbApi.countAllNotes()
-      if (afterCount < baseline) {
-        throw new Error(
-          `本地数据库只有 ${afterCount} 条笔记，但 git 元数据有 ${baseline} 条，已中止提交，避免用残缺数据覆盖远端。请先执行"仅拉取"把远端笔记拉下来`
-        )
-      }
-      console.log(`[git] commitAll: 已从 HEAD 恢复本地 DB 至 ${afterCount} 条笔记`)
-    }
+    // 注意：不再比较"本地 DB 笔记数 vs git 元数据笔记数"来中止提交。
+    // 远端比本地多（或本地删过一些笔记）是正常现象，不应因此拦截用户提交/拉取。
+    // 两端同时修改同一笔记时，由 pull 的合并逻辑生成「原名-001」冲突副本，
+    // 让用户自行决定保留哪一份，而不是阻止同步。
 
     // 提交前清理重复闪念（软删除），墓碑随本次提交推送，把重复数据在整条链上清掉
     try { dbApi.dedupeFlashThoughts() } catch (e) { console.error('[git] commitAll: dedupeFlashThoughts failed:', e) }
@@ -1371,18 +1343,6 @@ export class GitManager {
     }
   }
 
-  /** 读当前工作区 .inkslate/notes.json 的笔记条数；文件不存在/解析失败返回 -1 */
-  private readWorkdirNotesCount(): number {
-    const p = path.join(this.getWorkDir(), '.inkslate', 'notes.json')
-    try {
-      if (!fs.existsSync(p)) return -1
-      const data = JSON.parse(fs.readFileSync(p, 'utf-8'))
-      return Array.isArray(data.notes) ? data.notes.length : 0
-    } catch (e) {
-      return -1
-    }
-  }
-
   /**
    * 把 git HEAD 中的 .inkslate/*.json 恢复到工作区
    * （空库防覆盖防护用：恢复被本地空库 exportMetadata 覆盖掉的远端元数据）
@@ -1659,11 +1619,19 @@ export class GitManager {
   }
 
   /**
+   * 判断标题是否是"冲突副本"：新格式「原名-001」或历史格式「原名-冲突N」。
+   * 用于内容去重，避免每次同步反复生成重复副本。
+   */
+  private isConflictCopyTitle(title: string): boolean {
+    return /-(?:冲突)?\d{3,}$/.test(title)
+  }
+
+  /**
    * merge 冲突完成后，把本地版本生成"冲突副本"笔记（可见、可手动删除）：
    * - 远端版本留在原路径（merge 已以 theirs 为准）
-   * - 本地版本写到原笔记同目录新文件，命名与原笔记标题一致："<原标题>-冲突N.<ext>"
-   * - DB 插入一条新笔记（标题 "<原标题>-冲突N"，同 notebook、同 format），随下次同步推上远端
-   *   format 从原笔记继承（智能表格副本打开后仍是表格，可直接对比/合并），编号 N 跨次同步连续递增，
+   * - 本地版本写到原笔记同目录新文件，命名与原笔记标题一致："<原标题>-001.<ext>"
+   * - DB 插入一条新笔记（标题 "<原标题>-001"，同 notebook、同 format），随下次同步推上远端
+   *   format 从原笔记继承（智能表格副本打开后仍是表格，可直接对比/合并），编号 001/002… 跨次同步连续递增，
    *   若同笔记本已存在内容完全相同的冲突副本则跳过（防止每次同步反复生成重复副本）。
    * 返回生成的冲突副本标题列表（供 UI 提示用户手动删除）。
    *
@@ -1731,7 +1699,7 @@ export class GitManager {
         // 内容去重：同笔记本已存在内容完全相同的冲突副本 → 跳过，避免每次同步反复生成一堆重复副本
         const dup = activeNotes.find(n =>
           n.notebookId === notebookId &&
-          n.title.includes('-冲突') &&
+          this.isConflictCopyTitle(n.title) &&
           n.path && fs.existsSync(n.path) &&
           readText(n.path) === content
         )
@@ -1740,12 +1708,13 @@ export class GitManager {
           continue
         }
 
-        // 编号 -冲突1、-冲突2 … 连续递增：标题不与现存活跃笔记重复，文件不与磁盘已有文件冲突
+        // 编号 -001、-002 … 连续递增：标题不与现存活跃笔记重复，文件不与磁盘已有文件冲突
         let title = ''
         let conflictPath = ''
-        for (let n = 1; n < 1000; n++) {
-          const candTitle = `${titleBase}-冲突${n}`
-          const candPath = path.join(nbDir, `${slugBase}-冲突${n}.${ext}`)
+        for (let n = 1; n < 100000; n++) {
+          const suffix = String(n).padStart(3, '0')
+          const candTitle = `${titleBase}-${suffix}`
+          const candPath = path.join(nbDir, `${slugBase}-${suffix}.${ext}`)
           if (!activeNotes.some(x => x.title === candTitle) && !fs.existsSync(candPath)) {
             title = candTitle
             conflictPath = candPath

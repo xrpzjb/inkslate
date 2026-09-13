@@ -326,13 +326,16 @@ svg.lucide {
   overflow: auto !important;
   height: 100% !important;
   min-height: 100%;
-  font-family: var(--font-mono) !important;
+  /* 编辑区域字体：设置页选了「编辑区域字体」就用它，否则回退等宽 */
+  font-family: var(--editor-font, var(--font-mono)) !important;
 }
 
-/* CJK 字体 fallback：英文用 mono，中文用系统字体 */
+/* CJK 字体 fallback：英文用编辑区字体，中文用系统字体。
+   注意：.cm-line 是正文文本行的真实载体，必须一起跟随 --editor-font，
+   否则正文被硬锁在等宽字体上，只有行号（继承 .cm-scroller）会随设置变化。 */
 .cm-content,
 .cm-line {
-  font-family: var(--font-mono), -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif !important;
+  font-family: var(--editor-font, var(--font-mono)), -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif !important;
 }
 
 /* ============ 富文本编辑器代码样式 ============ */

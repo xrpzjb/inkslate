@@ -88,8 +88,8 @@ export interface AppSettings {
   /** 全局 UI 字体选项 id（对应 SettingsDialog FONT_OPTIONS） */
   fontFamily?: 'system' | 'system-nano' | 'songti' | 'sourcehan-serif' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   fontSize: number
-  /** 编辑区域字体选项 id，不设置则跟随全局 fontFamily */
-  editorFontFamily?: 'system' | 'system-nano' | 'songti' | 'sourcehan-serif' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
+  /** 编辑区域字体选项 id；空字符串或不设置则用编辑器默认字体（源码编辑器等宽 / 富文本跟随全局 fontFamily） */
+  editorFontFamily?: 'system' | 'system-nano' | 'songti' | 'sourcehan-serif' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan' | ''
   /** 树状图字体选项 id，不设置则跟随全局 fontFamily */
   treeFontFamily?: 'system' | 'system-nano' | 'songti' | 'sourcehan-serif' | 'jetbrains' | 'cascadia' | 'jetbrains-bold' | 'sourcecode' | 'sourcehan'
   /** 树状图字体大小（px） */

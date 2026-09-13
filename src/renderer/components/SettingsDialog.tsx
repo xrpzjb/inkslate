@@ -16,14 +16,15 @@ export const FONT_OPTIONS: { value: string; label: string; stack: string; mono?:
   { value: 'sourcecode', label: 'Source Code Pro（粗体清晰）', stack: '"Source Code Pro", "Source Code Pro Black", "JetBrains Mono", Menlo, Consolas, monospace', mono: true, bold: true },
 ]
 
-/** 字体选择下拉框 */
-function FontSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+/** 字体选择下拉框；defaultLabel 存在时额外提供「默认」空选项（值 ''） */
+function FontSelect({ value, onChange, defaultLabel }: { value: string; onChange: (v: string) => void; defaultLabel?: string }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className="settings-font-select"
     >
+      {defaultLabel !== undefined && <option value="">{defaultLabel}</option>}
       {FONT_OPTIONS.map(opt => (
         <option key={opt.value} value={opt.value}>{opt.label}</option>
       ))}
@@ -43,20 +44,32 @@ function FontSizeControl({ value, onChange }: { value: number; onChange: (delta:
 }
 
 /** 应用字体选项到 CSS 变量（cssVar 如 '--font-family'），仅设置字体，不涉及 mono/bold 逻辑 */
-function applyFontToCSS(cssVar: string, fontValue: string) {
+export function applyFontToCSS(cssVar: string, fontValue: string) {
   const opt = FONT_OPTIONS.find(o => o.value === fontValue)
   if (opt) {
     document.documentElement.style.setProperty(cssVar, opt.stack)
   }
 }
 
+/** 全局字体若选了等宽字体，同步 --font-mono（代码块/行内代码用） */
 function applyFontMonoToCSS(fontValue: string) {
   const opt = FONT_OPTIONS.find(o => o.value === fontValue)
   if (opt && opt.mono) {
     document.documentElement.style.setProperty('--font-mono', opt.stack)
-    document.documentElement.style.setProperty('--editor-font-weight', opt.bold ? '700' : '400')
   } else if (opt) {
     document.documentElement.style.removeProperty('--font-mono')
+  }
+}
+
+/**
+ * 编辑器字重：以「编辑区域字体」为准，未单独设置时才跟随全局字体。
+ * 只有等宽+粗体的选项（JetBrains Mono Bold / Source Code Pro）才设为 700。
+ */
+export function applyEditorWeightVar(editorFontValue?: string, globalFontValue?: string) {
+  const opt = FONT_OPTIONS.find(o => o.value === (editorFontValue || globalFontValue || ''))
+  if (opt?.mono && opt.bold) {
+    document.documentElement.style.setProperty('--editor-font-weight', '700')
+  } else {
     document.documentElement.style.removeProperty('--editor-font-weight')
   }
 }
@@ -65,7 +78,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useAppStore.getState().settings
   const [fontFamily, setFontFamily] = useState<string>(settings?.fontFamily ?? 'system')
   const [fontSize, setFontSize] = useState<number>(settings?.fontSize ?? 14)
-  const [editorFontFamily, setEditorFontFamily] = useState<string>(settings?.editorFontFamily ?? fontFamily)
+  const [editorFontFamily, setEditorFontFamily] = useState<string>(settings?.editorFontFamily ?? '')
   const [treeFontFamily, setTreeFontFamily] = useState<string>(settings?.treeFontFamily ?? fontFamily)
   const [treeFontSize, setTreeFontSize] = useState<number>(settings?.treeFontSize ?? 14)
   const [showTreeCount, setShowTreeCount] = useState<boolean>(settings?.showTreeCount !== false)
@@ -108,12 +121,16 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setFontFamily(value)
     applyFontToCSS('--font-family', value)
     applyFontMonoToCSS(value)
+    applyEditorWeightVar(editorFontFamily, value)
     persist({ fontFamily: value })
   }
 
   const handleEditorFontChange = (value: string) => {
     setEditorFontFamily(value)
-    applyFontToCSS('--editor-font', value)
+    // 空值 = 回到编辑器默认字体（源码编辑器等宽 / 富文本跟随全局）
+    if (value) applyFontToCSS('--editor-font', value)
+    else document.documentElement.style.removeProperty('--editor-font')
+    applyEditorWeightVar(value, fontFamily)
     persist({ editorFontFamily: value })
   }
 
@@ -193,8 +210,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           {/* 编辑区域字体 */}
           <div className="settings-section">
             <h3 className="shortcuts-group-title"><Type size={14} style={{ marginRight: 4, verticalAlign: 'text-bottom' }} />编辑区域字体</h3>
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>留空则跟随全局字体</div>
-            <FontSelect value={editorFontFamily} onChange={handleEditorFontChange} />
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>默认：源码编辑器用等宽字体，富文本跟随全局字体</div>
+            <FontSelect value={editorFontFamily} onChange={handleEditorFontChange} defaultLabel="默认" />
             <FontSizeControl value={fontSize} onChange={handleEditorFontSizeChange} />
           </div>
 

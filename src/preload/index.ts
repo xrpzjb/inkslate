@@ -93,7 +93,7 @@ const api = {
     /** push（可选 autoCommit 先提交未保存变更） */
     push: (autoCommit?: boolean): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, autoCommit ?? true),
-    /** pull = fetch + merge（冲突自动以远端为准，本地版本保留为「原名-冲突N」冲突副本笔记） */
+    /** pull = fetch + merge（冲突自动以远端为准，本地版本保留为「原名-001」冲突副本笔记） */
     pull: (): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts: number; conflictTitles: string[] }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL),
     /**
