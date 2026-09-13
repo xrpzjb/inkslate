@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import { AppSettings, Note, Notebook, NoteTreeNode, SyncStatus, FlashThought } from '@shared/types'
+import { AppSettings, Note, Notebook, NoteTreeNode, SyncStatus, FlashThought, UNLOCK_TTL_MS } from '@shared/types'
 import { matchNotebookIcon } from '@shared/notebookIcons'
+import { toast } from '../components/Toast'
 
 interface AppState {
   // 涓婚
@@ -43,7 +44,27 @@ interface AppState {
   selectNote: (id: string | null) => Promise<void>
   selectNotebook: (id: string | null) => void
   createNotebook: (name: string, parentId: string | null, icon?: string) => Promise<Notebook>
-  createNote: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: Note['format'], language?: Note['language'], url?: string) => Promise<Note>
+  /** 新建笔记；目标笔记本处于加密锁定状态时会先弹出密码框，取消则返回 null */
+  createNote: (title: string, notebookId: string, parentId: string | null, icon?: string, format?: Note['format'], language?: Note['language'], url?: string) => Promise<Note | null>
+  /** 待解锁的加密笔记本（新建笔记等操作需要密码时挂起，由全局密码弹窗处理） */
+  unlockPrompt: { notebookId: string; notebookName: string } | null
+  /** 内部：解锁请求的 Promise resolver（成功后由弹窗调用 resolveUnlockPrompt(true)） */
+  _unlockResolve: ((ok: boolean) => void) | null
+  /** 请求用户输入某个加密笔记本的密码；返回是否解锁成功 */
+  requestNotebookUnlock: (notebookId: string) => Promise<boolean>
+  /** 密码校验成功：兑现挂起的解锁请求（弹窗自身会在提示后关闭） */
+  resolveUnlockPrompt: (ok: boolean) => void
+  /** 关闭全局密码弹窗（用户取消 → 挂起的解锁请求兑现为 false） */
+  closeUnlockPrompt: () => void
+  /** 解锁到期时间戳（毫秒）；到点后界面自动回到锁定态，需要重新输入密码 */
+  unlockExpiresAt: number | null
+  /** 解锁成功：刷新列表并登记有效期（UNLOCK_TTL_MS 后自动回锁） */
+  markUnlocked: () => void
+  /**
+   * 弹出密码框解锁某篇笔记所属的加密笔记本，成功后重新拉取该笔记内容。
+   * 「打开加密笔记就要密码」的各个入口（选中笔记 / 预览区按钮）都走这里。
+   */
+  promptUnlockNote: (noteId: string) => Promise<boolean>
   /** 仅更新内存里的 currentNote，不写库。供编辑器输入时即时同步给 Preview。 */
   updateCurrentNoteDraft: (updates: Partial<Note>) => void
   /** 写库持久化（防抖调用）。从 main process 拿回最新值刷新 currentNote。 */
@@ -171,6 +192,62 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentNote: null,
   openTabs: [],
   activeTabId: null,
+  unlockPrompt: null,
+  unlockExpiresAt: null,
+  _unlockResolve: null,
+  requestNotebookUnlock: (notebookId) => new Promise<boolean>((resolve) => {
+    // 上一个挂起的解锁请求直接作废，避免它永远等不到结果
+    get()._unlockResolve?.(false)
+    const nbs = get().notebooks
+    // 按加密根解锁：一次输入密码即可覆盖整棵受保护的子树
+    const rootId = protectedRootOf(notebookId, nbs)
+    const nb = nbs.find(n => n.id === rootId) ?? nbs.find(n => n.id === notebookId)
+    set({
+      unlockPrompt: { notebookId: rootId, notebookName: nb?.name ?? '加密笔记本' },
+      _unlockResolve: resolve
+    })
+  }),
+  resolveUnlockPrompt: (ok) => {
+    const r = get()._unlockResolve
+    set({ _unlockResolve: null })
+    r?.(ok)
+    if (ok) get().markUnlocked()
+  },
+  markUnlocked: () => {
+    const expiresAt = Date.now() + UNLOCK_TTL_MS
+    set({ unlockExpiresAt: expiresAt })
+    scheduleRelock(expiresAt)
+    // 解锁成功后刷新列表：整个加密子树里笔记/笔记本的 locked 都会变成 false
+    get().loadNotes().catch(() => {})
+    get().loadNotebooks().catch(() => {})
+  },
+  closeUnlockPrompt: () => {
+    const r = get()._unlockResolve
+    set({ unlockPrompt: null, _unlockResolve: null })
+    r?.(false)
+  },
+  promptUnlockNote: async (noteId) => {
+    try {
+      const state = get()
+      const note = state.notes.find(n => n.id === noteId) ?? (state.currentNote?.id === noteId ? state.currentNote : null)
+      if (!note) return false
+      const ok = await get().requestNotebookUnlock(note.notebookId)
+      if (!ok) return false
+      const fresh = withLockGuard(await window.inkslateApi.notes.get(noteId))
+      if (fresh) {
+        set((s) => ({
+          currentNote: s.currentNote?.id === noteId ? fresh : s.currentNote,
+          notes: s.notes.map(n => (n.id === noteId ? fresh : n))
+        }))
+        // 密码校验通过但内容仍是密文 → 这篇笔记是另一个密码加密的（历史错配），提示试原密码
+        if (fresh.locked) toast.error('密码校验通过，但这篇笔记是用另一个密码加密的，请试试原来的密码')
+      }
+      return true
+    } catch (e) {
+      console.error('[store] promptUnlockNote failed:', e)
+      return false
+    }
+  },
   /** 追踪 selectNote 请求序列，防止快速切换时旧请求覆盖新笔记 */
   _selectNoteSeq: 0,
   loadNotebooks: async () => {
@@ -200,12 +277,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     // 启动时 currentNote 为 null，跳过缓存抢占，避免缓存内容为空导致编辑器先闪一帧空白。
     const cached = get().notes.find(n => n.id === id)
     if (cached && get().currentNote) {
-      set({ currentNote: cached })
+      set({ currentNote: withLockGuard(cached) })
     }
     // 递增序列号，用于忽略快速切换时过时的响应
     const seq = get()._selectNoteSeq + 1
     set({ _selectNoteSeq: seq })
-    const note = await window.inkslateApi.notes.get(id)
+    const note = withLockGuard(await window.inkslateApi.notes.get(id))
     // 忽略过时响应（当前序列号已不是本次请求的 seq）
     if (get()._selectNoteSeq !== seq) return
     set({ currentNote: note })
@@ -342,6 +419,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         tabLayouts: { ...state.tabLayouts, [id]: { editorVisible: get().editorVisible, previewVisible: get().previewVisible } }
       }))
     }
+
+    // 加密笔记：打开（选中）就要求输入密码，取消则保持锁定状态。
+    if (note?.locked) {
+      const unlocked = await get().promptUnlockNote(id)
+      // 用户取消/输错：确保编辑器可见 —— 内联的解锁入口在编辑器面板里
+      // （markdown 笔记默认是"只读预览"，编辑器是收起的，否则用户无从输入密码）
+      if (!unlocked && get()._selectNoteSeq === seq && !get().editorVisible) {
+        set({ editorVisible: true })
+      }
+    }
   },
 
   selectNotebook: (id) => {
@@ -377,7 +464,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       newActive = newTabs[idx] || newTabs[idx - 1] || null
       newSelected = newActive
       if (newActive) {
-        const note = await window.inkslateApi.notes.get(newActive)
+        const note = withLockGuard(await window.inkslateApi.notes.get(newActive))
         newCurrent = note
       } else {
         newCurrent = null
@@ -426,7 +513,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // 当前激活标签被关掉了 → 激活锚点 id
       newActive = id
       newSelected = id
-      const note = await window.inkslateApi.notes.get(id)
+      const note = withLockGuard(await window.inkslateApi.notes.get(id))
       newCurrent = note
     }
     // 清理已关闭标签的布局
@@ -458,7 +545,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     return nb
   },
   createNote: async (title, notebookId, parentId, icon, format, language, url) => {
-    const note = await window.inkslateApi.notes.create(title, notebookId, parentId, icon, format, language, url)
+    // 目标笔记本受密码保护且未解锁：先让用户输入密码（否则主进程会拒绝新建，
+    // 因为它没法在不知道密码的情况下把新笔记加密）
+    const locked = await isNotebookLocked(notebookId)
+    if (locked) {
+      const ok = await get().requestNotebookUnlock(notebookId)
+      if (!ok) return null
+    }
+    let note: Note
+    try {
+      note = await window.inkslateApi.notes.create(title, notebookId, parentId, icon, format, language, url)
+    } catch (e: any) {
+      toast.error((e?.message ?? '新建笔记失败').replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, ''))
+      return null
+    }
     await get().loadNotes()
     await get().selectNote(note.id)
     // 新建笔记：强制打开 editor（覆盖 selectNote 默认的"只读预览"行为），
@@ -541,8 +641,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   renameNote: async (id, title) => {
     const updated = await window.inkslateApi.notes.update(id, { title })
-    if (get().currentNote?.id === id) {
-      set({ currentNote: updated })
+    const cur = get().currentNote
+    if (cur?.id === id) {
+      // 只同步元数据，绝不用返回值覆盖 content：
+      // 加密笔记的返回值里 content 是按文件读出的密文，会把编辑器里的明文顶掉
+      set({ currentNote: { ...cur, title: updated.title, updatedAt: updated.updatedAt } })
     }
     await get().loadNotes()
     await get().refreshSyncStatus()
@@ -856,6 +959,96 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   }
 }))
+
+/**
+ * 内容是不是"加密笔记的密文 JSON"。
+ * 主进程没有解密成功时会把密文原样返回，界面上绝不能把它当正文显示 ——
+ * 这里做渲染端兜底（即使主进程版本较旧、没有 locked 字段也能挡住）。
+ */
+export function looksLikeCiphertext(content?: string | null): boolean {
+  if (!content || content.length < 20) return false
+  const s = content.trimStart()
+  if (s[0] !== '{') return false
+  // 容忍被截断的密文（只要求头部特征齐全）
+  return s.includes('"salt"') && (s.includes('"iv"') || s.includes('"tag"') || s.includes('"data"'))
+}
+
+/** 给笔记对象加"必须输密码"的兜底标记：内容是密文时一律按锁定处理 */
+export function withLockGuard(note: Note | null): Note | null {
+  if (!note) return note
+  if (note.locked || !looksLikeCiphertext(note.content)) return note
+  return { ...note, locked: true, isEncrypted: true }
+}
+
+/**
+ * 解锁有效期到期后的自动回锁定时器（模块级：全局只需要一个）。
+ * 主进程到点后就不再解密（hasCachedPassword=false），这里负责把界面同步回锁定态 ——
+ * 否则界面还显示着明文内容、自动保存又会被主进程丢弃。
+ */
+let relockTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleRelock(expiresAt: number) {
+  if (relockTimer) clearTimeout(relockTimer)
+  relockTimer = setTimeout(async () => {
+    relockTimer = null
+    const next = useAppStore.getState().unlockExpiresAt
+    if (next && Date.now() < next) {
+      // 期间又解锁了别的加密笔记本：先按最早的到期时间刷新一次界面，再为剩下的排下一次
+      await refreshLockState()
+      scheduleRelock(next)
+      return
+    }
+    useAppStore.setState({ unlockExpiresAt: null })
+    await refreshLockState()
+  }, Math.max(0, expiresAt - Date.now()))
+}
+
+/** 重新拉取笔记/笔记本与当前笔记，让界面跟上主进程的锁定状态 */
+async function refreshLockState() {
+  const cur = useAppStore.getState().currentNote
+  try {
+    await Promise.all([useAppStore.getState().loadNotes(), useAppStore.getState().loadNotebooks()])
+    if (cur) {
+      // currentNote 不会被 loadNotes 刷新，必须单独重新取一次才能把编辑器切回锁定态
+      const fresh = withLockGuard(await window.inkslateApi.notes.get(cur.id))
+      if (fresh) {
+        useAppStore.setState((s) => ({ currentNote: s.currentNote?.id === fresh.id ? fresh : s.currentNote }))
+        if (fresh.locked) toast.info('密码验证已过期，请重新输入密码')
+      }
+    }
+  } catch (e) {
+    console.warn('[store] refreshLockState failed:', e)
+  }
+}
+
+/**
+ * 目标笔记本当前是否处于加密锁定状态。
+ * 主进程新增的 notebookPassword.isLocked 接口 —— 旧 preload 尚未重启时按"未锁定"处理，
+ * 保证不会因为接口缺失而让新建笔记直接报错（此时主进程仍会兜底拒绝明文新建）。
+ */
+export async function isNotebookLocked(notebookId: string): Promise<boolean> {
+  const api = window.inkslateApi?.notebookPassword as { isLocked?: (id: string) => Promise<boolean> } | undefined
+  if (!api?.isLocked) return false
+  try { return await api.isLocked(notebookId) } catch { return false }
+}
+
+/**
+ * 找到某个笔记本所属的「加密根」：自下往上找最高的 passwordProtected 祖先，
+ * 没有就返回它自己。解锁时按加密根解锁 —— 主进程会缓存整棵子树的密码，
+ * 这样在子笔记本里输入一次密码，父笔记本下的笔记也一起解开。
+ */
+export function protectedRootOf(notebookId: string, notebooks: Notebook[]): string {
+  const byId = new Map(notebooks.map(n => [n.id, n]))
+  let root = notebookId
+  let cur = byId.get(notebookId)
+  const seen = new Set<string>()
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    if (cur.passwordProtected) root = cur.id
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  }
+  return root
+}
 
 /** 把扁平的笔记本/笔记列表组装成树 */
 export function buildNoteTree(notebooks: Notebook[], notes: Note[]): NoteTreeNode[] {

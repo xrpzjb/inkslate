@@ -182,7 +182,10 @@ const api = {
     remove: (notebookId: string, password: string): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_REMOVE_PASSWORD, notebookId, password),
     unlock: (notebookId: string, password: string): Promise<{ ok: boolean; message: string }> =>
-      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_UNLOCK, notebookId, password)
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_UNLOCK, notebookId, password),
+    /** 该笔记本（含祖先）当前是否锁定（受密码保护且尚未解锁） */
+    isLocked: (notebookId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.NOTEBOOK_LOCK_STATUS, notebookId)
   },
 
   settings: {

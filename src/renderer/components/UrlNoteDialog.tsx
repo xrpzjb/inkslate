@@ -63,8 +63,10 @@ export function UrlNoteDialog({ notebookId, parentId, onClose }: UrlNoteDialogPr
 
     setBusy(true)
     try {
-      await createNote(title, nbId, parentId ?? null, undefined, 'url', undefined, normalized)
-      onClose()
+      // 加密笔记本需要先输入密码；用户取消时返回 null，弹窗保持打开
+      const note = await createNote(title, nbId, parentId ?? null, undefined, 'url', undefined, normalized)
+      if (note) onClose()
+      else setBusy(false)
     } catch (e) {
       setBusy(false)
       console.error('create url note failed:', e)

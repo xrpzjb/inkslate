@@ -17,7 +17,7 @@ const clearDraft = (noteId: string) => {
   try { localStorage.removeItem(DRAFT_NS + noteId) } catch {}
 }
 import { createPortal } from 'react-dom'
-import { useAppStore } from '../store/app'
+import { useAppStore, protectedRootOf, looksLikeCiphertext, withLockGuard } from '../store/app'
 import { appThemes } from '../themes'
 import { Bold, Italic, Heading1, Heading2, Heading3, Heading4, Link, Link2, Image, Code, Code2, List, ListOrdered, ListChecks, ListTodo, Quote, Save, Underline, Strikethrough, Undo2, Redo2, Pilcrow, Minus, AlignLeft, AlignCenter, AlignRight, Eraser, Indent, Outdent, PanelRightClose, PanelRightOpen, PanelLeftOpen, Table, Wand2, Highlighter, Sigma, SquareSigma, ChartBar, BarChart3, History, Sun, Moon, Bot, Loader2, Lock, Unlock, AlertCircle, MoreHorizontal, WrapText, Check, Download } from 'lucide-react'
 import { FileText } from 'lucide-react'
@@ -477,32 +477,10 @@ export function Editor() {
 
   const fontSize = settings?.fontSize ?? 14
 
-  // 加密笔记检测
-  const [unlockPassword, setUnlockPassword] = useState('')
-  const [unlockError, setUnlockError] = useState<string | null>(null)
-  const [unlockBusy, setUnlockBusy] = useState(false)
-  const needsUnlock = currentNote?.isEncrypted && currentNote.content?.includes('"v":1,"salt"')
-
-  const handleUnlock = async () => {
-    if (!currentNote || !unlockPassword) return
-    setUnlockBusy(true)
-    setUnlockError(null)
-    try {
-      const r = await window.inkslateApi.notebookPassword.unlock(currentNote.notebookId, unlockPassword)
-      if (r.ok) {
-        // 重新获取解密后的笔记内容
-        const note = await window.inkslateApi.notes.get(currentNote.id)
-        if (note) useAppStore.setState({ currentNote: note })
-        setUnlockPassword('')
-      } else {
-        setUnlockError(r.message || '密码错误')
-      }
-    } catch (e: any) {
-      setUnlockError(e?.message || '解锁失败')
-    } finally {
-      setUnlockBusy(false)
-    }
-  }
+  // 加密笔记检测：locked 由主进程判定（受密码保护且本进程未解锁 / 密文没解开）；
+  // 再用 looksLikeCiphertext 兜一层，任何情况下都不会把密文当正文显示。
+  // 解锁入口统一走全局密码弹窗（promptUnlockNote），编辑器里不再放第二个输入框。
+  const needsUnlock = !!(currentNote?.locked || looksLikeCiphertext(currentNote?.content))
 
   if (!currentNote) {
     return (
@@ -525,29 +503,17 @@ export function Editor() {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }} data-editor-dark={settings?.editorDark === true ? 'true' : undefined}>
       {needsUnlock && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32, background: 'var(--bg-primary)', zIndex: 10 }}>
+        // zIndex 必须高于下面的编辑器工具条（同为绝对定位），否则锁定状态下标题栏还会露在上面
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32, background: 'var(--bg-primary)', zIndex: 20 }}>
           <Lock size={48} opacity={0.3} />
           <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>此笔记受密码保护</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>请输入笔记本密码以查看内容</div>
-          <div style={{ display: 'flex', gap: 8, width: 280 }}>
-            <input
-              type="password"
-              value={unlockPassword}
-              onChange={(e) => setUnlockPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-              placeholder="输入密码"
-              style={{ flex: 1, padding: '8px 12px', fontSize: 13, border: '1px solid var(--border-color)', borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', outline: 'none' }}
-              autoFocus
-            />
-            <button onClick={handleUnlock} disabled={unlockBusy || !unlockPassword} style={{ padding: '8px 16px', fontSize: 13, borderRadius: 6, border: 'none', background: unlockBusy ? 'var(--bg-hover)' : 'var(--accent-color)', color: '#fff', cursor: unlockBusy ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-              {unlockBusy ? <Loader2 size={14} className="spin" /> : <Unlock size={14} />} 解锁
-            </button>
-          </div>
-          {unlockError && (
-            <div style={{ fontSize: 12, color: 'var(--error-color)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <AlertCircle size={12} /> {unlockError}
-            </div>
-          )}
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>需要输入密码才能查看内容</div>
+          <button
+            onClick={() => useAppStore.getState().promptUnlockNote(currentNote.id)}
+            style={{ marginTop: 4, padding: '8px 20px', fontSize: 13, borderRadius: 6, border: 'none', background: 'var(--accent-color)', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <Unlock size={14} /> 输入密码
+          </button>
         </div>
       )}
       <div style={{
@@ -879,7 +845,9 @@ export function Editor() {
         </div>
       )}
 
-            {currentNote.format === 'spreadsheet' ? (
+            {/* 锁定状态（受密码保护且未解锁）不挂载编辑器：此时 content 是密文，
+                既不该显示密文，也不该让自动保存把密文/空内容写回去 */}
+            {!needsUnlock && (currentNote.format === 'spreadsheet' ? (
         <SpreadsheetEditor
           noteId={currentNote.id}
           value={content}
@@ -923,7 +891,7 @@ export function Editor() {
             onSave={stableSave}
           />
         </div>
-      )}
+      ))}
     </div>
   )
 }

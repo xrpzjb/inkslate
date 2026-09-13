@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { useAppStore } from './store/app'
+import { useAppStore, isNotebookLocked } from './store/app'
 import { appThemes } from './themes'
 import { Layout } from './components/Layout'
 import { TitleBar } from './components/TitleBar'
@@ -17,6 +17,7 @@ import { AlertDialogManager, alert } from './components/AlertDialog'
 import { UrlNoteDialog } from './components/UrlNoteDialog'
 import { FlashThoughtDialog } from './components/FlashThoughtDialog'
 import { HistoryPanel } from './components/gitHistory/HistoryPanel'
+import { PasswordDialog } from './components/PasswordDialog'
 import { useState } from 'react'
 import { FlashThought } from '@shared/types'
 
@@ -69,6 +70,8 @@ export default function App() {
   const setSyncStatus = useAppStore(s => s.setSyncStatus)
   const updateSettings = useAppStore(s => s.updateSettings)
   const refreshSyncStatus = useAppStore(s => s.refreshSyncStatus)
+  /** 全局密码弹窗（新建笔记遇到加密笔记本时挂起，等这里输入密码） */
+  const unlockPrompt = useAppStore(s => s.unlockPrompt)
 
   const [gitDialogOpen, setGitDialogOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -233,6 +236,11 @@ export default function App() {
       // 这里 title 设成带后缀的文件名保证唯一且可读
       const title = sourcePath.split(/[\\/]/).pop() || '未命名文件'
       try {
+        // 加密笔记本：先要密码，否则主进程会拒绝新建（没法加密新内容）
+        if (await isNotebookLocked(notebookId)) {
+          const ok = await useAppStore.getState().requestNotebookUnlock(notebookId)
+          if (!ok) return
+        }
         const note = await window.inkslateApi.notes.create(title, notebookId, null, undefined, 'file')
         const fileInfo = await window.inkslateApi.fileNote.create(note.id, sourcePath)
         if (!fileInfo) {
@@ -600,6 +608,20 @@ export default function App() {
       <ConfirmDialogManager />
       <SshConfirmManager />
       <AlertDialogManager />
+      {unlockPrompt && createPortal(
+        <PasswordDialog
+          mode="unlock"
+          notebookName={unlockPrompt.notebookName}
+          onSubmit={async (password) => {
+            const r = await window.inkslateApi.notebookPassword.unlock(unlockPrompt.notebookId, password)
+            // 校验通过：兑现挂起的操作（弹窗自己会在提示后关闭）
+            if (r.ok) useAppStore.getState().resolveUnlockPrompt(true)
+            return r
+          }}
+          onClose={() => useAppStore.getState().closeUnlockPrompt()}
+        />,
+        document.body
+      )}
       {gitDialogOpen && createPortal(
         <GitSettingsDialog onClose={() => setGitDialogOpen(false)} />,
         document.body

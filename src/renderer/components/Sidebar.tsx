@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
-import { useAppStore, buildNoteTree } from '../store/app'
+import { useAppStore, buildNoteTree, isNotebookLocked } from '../store/app'
 import { NoteTreeNode, Note, Notebook } from '@shared/types'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
@@ -494,7 +494,9 @@ export function Sidebar() {
     const title = sourcePath.split(/[\\/]/).pop() || '未命名文件'
 
     // 先创建 note 拿到 noteId，再调 fileNote.create 复制文件
-    const note = await window.inkslateApi.notes.create(title, targetNotebookId, targetParentId, undefined, 'file')
+    // （走 store.createNote：加密笔记本会先弹密码框，取消则返回 null）
+    const note = await createNote(title, targetNotebookId, targetParentId, undefined, 'file')
+    if (!note) return
     try {
       const fileInfo = await window.inkslateApi.fileNote.create(note.id, sourcePath)
       if (!fileInfo) {
@@ -517,6 +519,11 @@ export function Sidebar() {
     if (!target.notebookId) {
       toast.error('请先创建笔记本')
       return
+    }
+    // 目标笔记本处于加密锁定状态：先输入密码，否则导入的笔记无法加密（会被主进程拒绝）
+    if (await isNotebookLocked(target.notebookId)) {
+      const ok = await useAppStore.getState().requestNotebookUnlock(target.notebookId)
+      if (!ok) return
     }
 
     let paths: string[]
@@ -701,6 +708,10 @@ export function Sidebar() {
         toast.error('笔记不存在或已被删除')
         return
       }
+      if (note.locked) {
+        toast.error('该笔记已加密，请先打开并输入密码解锁后再导出')
+        return
+      }
       if (note.format === 'spreadsheet') {
         toast.error('该格式暂不支持导出为 HTML')
         return
@@ -731,6 +742,10 @@ export function Sidebar() {
       const targetNote = notes.find(n => n.id === nodeId)
       if (['spreadsheet', 'url', 'file'].includes(targetNote?.format ?? '')) {
         toast.error('该格式暂不支持导出为 PDF')
+        return
+      }
+      if (targetNote?.locked) {
+        toast.error('该笔记已加密，请先打开并输入密码解锁后再导出')
         return
       }
       if (selectedNoteId !== nodeId) {
@@ -808,6 +823,10 @@ export function Sidebar() {
         toast.error('该格式暂不支持导出为 Word')
         return
       }
+      if (note.locked) {
+        toast.error('该笔记已加密，请先打开并输入密码解锁后再导出')
+        return
+      }
       const res = await window.inkslateApi.file.exportDocx({
         title: note.title,
         content: note.content,
@@ -827,6 +846,8 @@ export function Sidebar() {
     if (node.type !== 'note') return false
     const note = notes.find(n => n.id === node.id)
     if (!note) return false
+    // 加密笔记未解锁时不提供历史快照：git 里的历史版本可能是加密前的明文
+    if (note.locked) return false
     return !['url', 'file', 'spreadsheet'].includes(note.format) && !!(useAppStore.getState().settings?.gitSync?.configured)
   }
 
@@ -834,6 +855,8 @@ export function Sidebar() {
     if (node.type !== 'note') return false
     const note = notes.find(n => n.id === node.id)
     if (!note) return false
+    // 加密笔记未解锁时不提供 AI 写作（否则会拿密文去写作）
+    if (note.locked) return false
     return !['url', 'file', 'spreadsheet'].includes(note.format)
   }
 
@@ -871,6 +894,9 @@ export function Sidebar() {
 
     if (node.type === 'notebook') {
       const isDragOver = dragOverInfo?.targetId === node.id
+      // 加密状态：locked=true 表示此刻打开需要输入密码（解锁后仍保留锁标记，只是变淡）
+      const nbLocked = !!notebooks.find(n => n.id === node.id)?.locked
+      const nbEncrypted = !!node.passwordProtected || nbLocked
       const dropLineStyle: React.CSSProperties = isDragOver
         ? {
             position: 'absolute',
@@ -918,7 +944,17 @@ export function Sidebar() {
             ) : (
               <>
                 <span className="tree-label">{node.name}</span>
-                {node.passwordProtected && <Lock size={11} className="tree-lock" style={{ color: 'var(--text-tertiary)', flexShrink: 0, marginLeft: 6 }} />}
+                {nbEncrypted && (
+                  <span
+                    title={nbLocked ? '需要输入密码才能查看这个笔记本' : '受密码保护（本次运行已解锁）'}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', flexShrink: 0, marginLeft: 6,
+                      color: nbLocked ? 'var(--accent-color)' : 'var(--text-tertiary)'
+                    }}
+                  >
+                    <Lock size={11} />
+                  </span>
+                )}
                 {showTreeCount && <span className="tree-count">{node.children.length}</span>}
               </>
             )}
@@ -930,7 +966,11 @@ export function Sidebar() {
     }
 
     // ===== 笔记节点 =====
-    const noteFormat = notes.find(n => n.id === node.id)?.format
+    // 加密状态：locked=true 表示此刻打开需要输入密码（解锁后仍保留锁标记，只是变淡）
+    const noteState = notes.find(n => n.id === node.id)
+    const noteLocked = !!noteState?.locked
+    const noteEncrypted = !!(noteState?.isEncrypted || noteState?.locked)
+    const noteFormat = noteState?.format
     const formatInfo = {
       markdown: { Icon: MarkdownIcon, color: '#7d8590', title: 'Markdown' },
       html: { Icon: Globe, color: '#e67e22', title: 'HTML' },
@@ -1003,6 +1043,17 @@ export function Sidebar() {
           ) : (
             <>
               <span className="tree-label">{node.name}</span>
+              {noteEncrypted && (
+                <span
+                  title={noteLocked ? '需要输入密码才能打开这篇笔记' : '已加密（本次运行已解锁）'}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', flexShrink: 0, marginLeft: 6,
+                    color: noteLocked ? 'var(--accent-color)' : 'var(--text-tertiary)'
+                  }}
+                >
+                  <Lock size={11} />
+                </span>
+              )}
               {showTreeCount && <span className="tree-count">{node.children.length}</span>}
             </>
           )}
@@ -1011,6 +1062,42 @@ export function Sidebar() {
                 {hasChildren && isExpanded && node.children.map(child => renderNode(child, depth + 1))}
       </div>
     )
+  }
+
+  /**
+   * 密码弹窗提交：
+   * - set：先落盘当前草稿，再设置密码。设置完该子树立即进入锁定状态
+   *   （主进程刻意不缓存密码），所以必须刷新笔记列表 + 重新选中当前笔记，
+   *   让编辑器/预览立刻显示"已加密，请输入密码"。
+   * - remove：解密后同样刷新，笔记恢复正常打开。
+   * - unlock：仅缓存密码，刷新后即可查看。
+   */
+  const submitPassword = async (password: string) => {
+    if (!passwordDialog) return { ok: false, message: '弹窗已关闭' }
+    const { mode, notebookId } = passwordDialog
+    let r: { ok: boolean; message: string }
+    if (mode === 'set') {
+      // 设置密码后未解锁状态下主进程会丢弃内容写入，先把当前草稿存下来
+      const cur = useAppStore.getState().currentNote
+      if (cur) {
+        try { await useAppStore.getState().updateNote(cur.id, { content: cur.content, title: cur.title }) } catch {}
+      }
+      r = await window.inkslateApi.notebookPassword.set(notebookId, password)
+    } else if (mode === 'remove') {
+      r = await window.inkslateApi.notebookPassword.remove(notebookId, password)
+    } else {
+      r = await window.inkslateApi.notebookPassword.unlock(notebookId, password)
+    }
+    if (r.ok) {
+      const store = useAppStore.getState()
+      await store.loadNotebooks()
+      await store.loadNotes()
+      const cur = useAppStore.getState().currentNote
+      if (cur) await useAppStore.getState().selectNote(cur.id)
+      if (mode === 'set') toast.success('密码设置成功，该笔记本下的笔记已锁定')
+      else if (mode === 'remove') toast.success('密码已移除')
+    }
+    return r
   }
 
   return (
@@ -1066,14 +1153,14 @@ export function Sidebar() {
               const target = resolveTarget(contextMenu.node)
               const nbId = target.notebookId || await ensureNotebook()
               const note = await createNote('未命名笔记', nbId, target.parentId, undefined, 'markdown')
-              setRenaming({ id: note.id, type: 'note', value: note.title })
+              if (note) setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
             <MenuItem icon={<Table2 size={14} />} label="智能表格" onClick={async () => {
               closeContextMenu()
               const target = resolveTarget(contextMenu.node)
               const nbId = target.notebookId || await ensureNotebook()
               const note = await createNote('未命名智能表格', nbId, target.parentId, undefined, 'spreadsheet')
-              setRenaming({ id: note.id, type: 'note', value: note.title })
+              if (note) setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
             <MenuItem icon={<Globe size={14} />} label="网址笔记" onClick={async () => {
               closeContextMenu()
@@ -1087,14 +1174,14 @@ export function Sidebar() {
               const target = resolveTarget(contextMenu.node)
               const nbId = target.notebookId || await ensureNotebook()
               const note = await createNote('未命名 HTML', nbId, target.parentId, undefined, 'html')
-              setRenaming({ id: note.id, type: 'note', value: note.title })
+              if (note) setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
             <MenuItem icon={<FileType2 size={14} />} label="富文本笔记" onClick={async () => {
               closeContextMenu()
               const target = resolveTarget(contextMenu.node)
               const nbId = target.notebookId || await ensureNotebook()
               const note = await createNote('未命名富文本', nbId, target.parentId, undefined, 'richtext')
-              setRenaming({ id: note.id, type: 'note', value: note.title })
+              if (note) setRenaming({ id: note.id, type: 'note', value: note.title })
             }} />
             <SubMenuItem icon={<CodeIcon size={14} />} label="代码笔记" parentRef={contextMenuRef}>
               {(['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'cpp', 'csharp', 'html', 'css', 'json', 'sql', 'shell', 'plaintext'] as const).map(lang => (
@@ -1103,7 +1190,7 @@ export function Sidebar() {
                   const target = resolveTarget(contextMenu.node)
                   const nbId = target.notebookId || await ensureNotebook()
                   const note = await createNote(`${lang} 代码片段`, nbId, target.parentId, undefined, 'code', lang)
-                  setRenaming({ id: note.id, type: 'note', value: note.title })
+                  if (note) setRenaming({ id: note.id, type: 'note', value: note.title })
                 }} />
               ))}
             </SubMenuItem>
@@ -1144,15 +1231,19 @@ export function Sidebar() {
                       })
                     }}
                   />
-                  <MenuItem
-                    icon={<Lock size={14} />}
-                    label="设置密码"
-                    onClick={() => {
-                      const node = contextMenu.node!
-                      setContextMenu(null)
-                      setPasswordDialog({ notebookId: node.id, notebookName: node.name, mode: 'set' })
-                    }}
-                  />
+                  {/* 已设密码的笔记本不再提供「设置密码」：改密码要先「移除密码」，
+                      否则会出现"新密码能通过校验、内容还是旧密码加密的"错配 */}
+                  {!contextMenu.node.passwordProtected && (
+                    <MenuItem
+                      icon={<Lock size={14} />}
+                      label="设置密码"
+                      onClick={() => {
+                        const node = contextMenu.node!
+                        setContextMenu(null)
+                        setPasswordDialog({ notebookId: node.id, notebookName: node.name, mode: 'set' })
+                      }}
+                    />
+                  )}
                   <MenuItem
                     icon={<Unlock size={14} />}
                     label="移除密码"
@@ -1498,15 +1589,7 @@ export function Sidebar() {
         <PasswordDialog
           mode={passwordDialog.mode}
           notebookName={passwordDialog.notebookName}
-          onSubmit={async (password) => {
-            if (passwordDialog.mode === 'set') {
-              return await window.inkslateApi.notebookPassword.set(passwordDialog.notebookId, password)
-            } else if (passwordDialog.mode === 'remove') {
-              return await window.inkslateApi.notebookPassword.remove(passwordDialog.notebookId, password)
-            } else {
-              return await window.inkslateApi.notebookPassword.unlock(passwordDialog.notebookId, password)
-            }
-          }}
+          onSubmit={submitPassword}
           onClose={() => setPasswordDialog(null)}
         />
       )}

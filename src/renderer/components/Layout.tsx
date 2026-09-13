@@ -22,6 +22,7 @@ function useHorizontalResize(
 ) {
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
+  const activeRef = useRef(false)
   const onCommitRef = useRef(onCommit)
   const directionRef = useRef(direction)
   const minRef = useRef(minWidth)
@@ -33,45 +34,59 @@ function useHorizontalResize(
   useEffect(() => { maxRef.current = maxWidth })
 
   useEffect(() => {
-    const divider = dividerRef.current
-    const target = targetRef.current
-    if (!divider || !target) return
-
+    // 监听挂在 document 上、每次事件时再取当前 DOM 节点：
+    // 分隔条/目标面板会被条件渲染卸载重建（如切到回收站再切回笔记），
+    // 若在 effect 里一次性绑定旧节点，重建后拖拽就会失效。
     const onPointerDown = (e: PointerEvent) => {
+      const divider = dividerRef.current
+      const target = targetRef.current
+      if (!divider || !target) return
+      // 只处理落在分隔条（含其 ::before 命中区）上的按下
+      if (e.target !== divider && !divider.contains(e.target as Node)) return
       e.preventDefault()
-      e.stopPropagation()
       startXRef.current = e.clientX
       startWidthRef.current = target.offsetWidth
+      activeRef.current = true
       document.body.style.userSelect = 'none'
-      // 拖动期间把事件挂到 document 上，避免鼠标移出 divider 后收不到 move/up
       document.addEventListener('pointermove', onPointerMove)
       document.addEventListener('pointerup', onPointerUp)
       try { divider.setPointerCapture(e.pointerId) } catch {}
     }
 
     const onPointerMove = (e: PointerEvent) => {
-      if (startXRef.current === 0) return
+      if (!activeRef.current) return
+      const target = targetRef.current
+      if (!target) return
       const delta = e.clientX - startXRef.current
       const effectiveDelta = directionRef.current === 'right' ? delta : -delta
       const newWidth = Math.max(minRef.current, Math.min(maxRef.current, startWidthRef.current + effectiveDelta))
       target.style.width = `${newWidth}px`
     }
 
-    const onPointerUp = () => {
-      if (startXRef.current === 0) return
-      startXRef.current = 0
-      const finalWidth = target.offsetWidth
-      // 清掉 inline style，让 React state 接管（避免与 style={{ width }} 冲突）
-      target.style.width = ''
+    const finishDrag = () => {
+      if (!activeRef.current) return
+      activeRef.current = false
       document.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerUp)
       document.body.style.userSelect = ''
+      const target = targetRef.current
+      if (!target) return
+      const finalWidth = target.offsetWidth
+      // 清掉 inline style，让 React state 接管（避免与 style={{ width }} 冲突）
+      target.style.width = ''
       onCommitRef.current(finalWidth)
     }
+
+    const onPointerUp = () => finishDrag()
+    const onPointerCancel = () => finishDrag()
 
     // 双击分隔条 → 重置回默认值（minWidth 之上、maxWidth 之下、中位数）。
     // —— 拖死之后的"逃生通道"，免得点右下角按钮不响应以为坏了
     const onDoubleClick = (e: MouseEvent) => {
+      const divider = dividerRef.current
+      const target = targetRef.current
+      if (!divider || !target) return
+      if (e.target !== divider && !divider.contains(e.target as Node)) return
       e.preventDefault()
       e.stopPropagation()
       const defaultWidth = Math.round((minRef.current + maxRef.current) / 4) // 偏小的默认值
@@ -79,12 +94,14 @@ function useHorizontalResize(
       onCommitRef.current(defaultWidth)
     }
 
-    divider.addEventListener('pointerdown', onPointerDown)
-    divider.addEventListener('dblclick', onDoubleClick)
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('pointercancel', onPointerCancel)
+    document.addEventListener('dblclick', onDoubleClick)
 
     return () => {
-      divider.removeEventListener('pointerdown', onPointerDown)
-      divider.removeEventListener('dblclick', onDoubleClick)
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('pointercancel', onPointerCancel)
+      document.removeEventListener('dblclick', onDoubleClick)
       document.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerUp)
       document.body.style.userSelect = ''

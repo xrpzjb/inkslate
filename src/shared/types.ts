@@ -3,6 +3,12 @@
 
 export type NoteFormat = 'markdown' | 'html' | 'richtext' | 'code' | 'url' | 'file' | 'spreadsheet'
 
+/**
+ * 密码解锁有效期（毫秒）：解锁后经过这段时间需要重新输入密码。
+ * 主进程按它判定"是否仍处于解锁状态"，渲染端按它在到期瞬间把界面同步回锁定态。
+ */
+export const UNLOCK_TTL_MS = 10 * 60 * 1000
+
 /** 智能表格笔记的内部数据格式（对应 x-data-spreadsheet 的 getData() 输出） */
 export interface SpreadsheetSheetData {
   name?: string
@@ -40,6 +46,11 @@ export interface Note {
   icon?: string
   sortOrder?: number
   isEncrypted?: boolean
+  /**
+   * 当前是否处于"锁定"状态（属于受密码保护且本进程尚未解锁的笔记本，或内容仍是密文）。
+   * 由主进程计算：locked=true 时 content 为密文，界面必须遮住并提示输入密码。
+   */
+  locked?: boolean
 }
 
 export interface Notebook {
@@ -56,6 +67,8 @@ export interface Notebook {
   sortOrder?: number
   /** 是否受密码保护（自身或祖先设置了密码） */
   passwordProtected?: boolean
+  /** 当前是否处于锁定状态（受保护且本进程尚未解锁），界面据此提示需要输入密码 */
+  locked?: boolean
 }
 
 export interface NoteTreeNode {
@@ -298,6 +311,8 @@ export const IPC_CHANNELS = {
   NOTEBOOK_SET_PASSWORD: 'notebook:set-password',
   NOTEBOOK_REMOVE_PASSWORD: 'notebook:remove-password',
   NOTEBOOK_UNLOCK: 'notebook:unlock',
+  /** 查询笔记本（含祖先/子树）当前是否处于锁定状态 */
+  NOTEBOOK_LOCK_STATUS: 'notebook:lock-status',
   // AI
   AI_CHAT: 'ai:chat',
   AI_CONFIGURE: 'ai:configure',

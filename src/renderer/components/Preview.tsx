@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import mermaid from 'mermaid'
-import { useAppStore } from '../store/app'
-import { FileText, Maximize2, Loader2, ExternalLink, Copy, Check } from 'lucide-react'
+import { useAppStore, looksLikeCiphertext } from '../store/app'
+import { FileText, Maximize2, Loader2, ExternalLink, Copy, Check, Lock } from 'lucide-react'
 import { attachHeadingIds } from '../utils/headings'
 import { md } from '../utils/markdown'
 import hljs from 'highlight.js'
@@ -221,6 +221,30 @@ export function Preview() {
         <div className="preview-empty">
           <FileText size={48} className="preview-empty-icon" />
           <p>选择一篇笔记查看预览</p>
+        </div>
+      </div>
+    )
+  }
+
+  // 加密笔记未解锁：预览区不渲染内容（此时 content 是密文），需要先输入密码。
+  // looksLikeCiphertext 是渲染端兜底 —— 即使主进程版本较旧、没给 locked 字段，
+  // 也绝不会把 {"v":1,"salt":...} 这种密文当正文渲染出来。
+  if (currentNote.locked || looksLikeCiphertext(currentNote.content)) {
+    return (
+      <div className="preview">
+        <div className="preview-empty">
+          <Lock size={48} className="preview-empty-icon" />
+          <p>此笔记已加密</p>
+          <p style={{ fontSize: 12, opacity: 0.6 }}>需要输入密码才能查看</p>
+          <button
+            onClick={() => { useAppStore.getState().promptUnlockNote(currentNote.id) }}
+            style={{
+              marginTop: 12, padding: '6px 18px', borderRadius: 6, border: 'none',
+              background: 'var(--accent-color)', color: '#fff', cursor: 'pointer', fontSize: 13
+            }}
+          >
+            输入密码
+          </button>
         </div>
       </div>
     )

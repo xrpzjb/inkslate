@@ -92,6 +92,11 @@ export function setupIpcHandlers(): void {
     }
   })
 
+  /** 查询笔记本当前是否锁定（受密码保护且本进程未解锁） */
+  ipcMain.handle(IPC_CHANNELS.NOTEBOOK_LOCK_STATUS, async (_, notebookId: string): Promise<boolean> => {
+    return dbApi.isNotebookLocked(notebookId)
+  })
+
   // ============ 回收站 - 笔记本 ============
   ipcMain.handle(IPC_CHANNELS.NOTEBOOK_LIST_DELETED, async (): Promise<Notebook[]> => {
     return dbApi.listDeletedNotebooks()
@@ -118,6 +123,11 @@ export function setupIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTE_CREATE, async (_, title: string, notebookId: string, parentId: string | null, icon?: string, format: 'markdown' | 'html' | 'richtext' | 'code' | 'url' = 'markdown', language?: string, url?: string): Promise<Note> => {
+    // 受密码保护且尚未解锁：没有密码就无法加密，直接拒绝，
+    // 否则会在加密笔记本里新建出一条明文笔记（打开时不会要求密码）。
+    if (dbApi.isNotebookLocked(notebookId)) {
+      throw new Error('NOTEBOOK_LOCKED: 该笔记本已加密，请先输入密码解锁后再新建笔记')
+    }
     const result = dbApi.createNote(title, notebookId, parentId, icon, format, language, url)
     // 如果笔记本受密码保护且有缓存密码，自动加密新笔记
     if (result && hasCachedPassword(notebookId)) {
@@ -131,19 +141,23 @@ export function setupIpcHandlers(): void {
     return dbApi.getNote(result.id)!
   })
 
-ipcMain.handle(IPC_CHANNELS.NOTE_UPDATE, async (_, id: string, updates: Partial<Note>): Promise<Note> => {
+  ipcMain.handle(IPC_CHANNELS.NOTE_UPDATE, async (_, id: string, updates: Partial<Note>): Promise<Note> => {
     // 加密笔记的内容写入防护：
-    //  - 已解锁（缓存了密码）→ 写入前加密
-    //  - 未解锁 → 忽略内容写入，防止陈旧自动保存把明文覆盖到加密内容上
+    //  - 已解锁 → 写入前加密（encryptWithCachedPassword 内部还有 2 分钟写入宽容期，
+    //    避免解锁刚过期时正在编辑的内容被静默丢弃；写入仍是同一密码加密，不会明文落盘）
+    //  - 完全拿不到密码（未解锁 / 过期太久）→ 丢弃内容写入，
+    //    防止陈旧自动保存把明文覆盖到加密内容上
     if (updates.content !== undefined) {
       const note = dbApi.getNote(id)
-      if (note && note.isEncrypted) {
-        if (hasCachedPassword(note.notebookId)) {
-          const encrypted = encryptWithCachedPassword(updates.content, note.notebookId)
-          if (encrypted) updates.content = encrypted
-        } else {
-          delete updates.content
-        }
+      if (note?.locked) {
+        const encrypted = note.isEncrypted
+          ? encryptWithCachedPassword(updates.content, note.notebookId)
+          : null
+        if (encrypted) updates.content = encrypted
+        else delete updates.content
+      } else if (note?.isEncrypted && hasCachedPassword(note.notebookId)) {
+        const encrypted = encryptWithCachedPassword(updates.content, note.notebookId)
+        if (encrypted) updates.content = encrypted
       }
     }
     const result = dbApi.updateNote(id, updates)

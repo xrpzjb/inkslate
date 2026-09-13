@@ -3,7 +3,7 @@ import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { Notebook, Note, AppSettings, FlashThought } from '../shared/types'
-import { isEncryptedContent, decryptWithCachedPassword, encryptNoteContent, decryptNoteContent, hasCachedPassword, cachePassword, removeCachedPassword } from './crypto'
+import { isEncryptedContent, decryptWithCachedPassword, encryptWithCachedPassword, encryptNoteContent, decryptNoteContent, hasCachedPassword, cachePassword, removeCachedPassword, makePasswordVerifier, checkPasswordVerifier, decryptWithKey, saltOfEncrypted, deriveKeyFromSalt } from './crypto'
 
 // 类型已经在函数内部使用，下面是接口占位
 export type { Notebook, Note, AppSettings, FlashThought }
@@ -154,6 +154,11 @@ export async function initDatabase(): Promise<void> {
   const hasPasswordProtected = nbColumns.some(c => c.name === 'password_protected')
   if (!hasPasswordProtected) {
     db.exec(`ALTER TABLE notebooks ADD COLUMN password_protected INTEGER DEFAULT 0`)
+  }
+  // 密码校验值：一段用该密码加密的固定明文，用来校验密码是否正确。
+  // 有了它，解锁不再依赖"子树里必须还有密文笔记"（空笔记本、笔记全被删的笔记本也能解锁）
+  if (!nbColumns.some(c => c.name === 'password_verifier')) {
+    db.exec(`ALTER TABLE notebooks ADD COLUMN password_verifier TEXT`)
   }
   // notes 表：加密标记
   const hasIsEncrypted = columns.some(c => c.name === 'is_encrypted')
@@ -579,11 +584,40 @@ function rowToNotebook(row: any): Notebook {
     isDeleted: !!row.is_deleted,
     deletedAt: row.deleted_at ?? undefined,
     sortOrder: row.sort_order ?? row.created_at,
-    passwordProtected: !!row.password_protected
+    passwordProtected: !!row.password_protected,
+    // 当前是否需要输入密码才能查看该笔记本下的笔记
+    locked: dbMethods.isNotebookLocked(row.id)
   }
 }
 
+/** 笔记本自身或任一祖先是否设置了密码（只看 password_protected 标记，不做兜底统计） */
+function notebookChainProtected(notebookId: string): boolean {
+  const d = getDatabase()
+  let cur: string | null = notebookId
+  const seen = new Set<string>()
+  while (cur && !seen.has(cur)) {
+    seen.add(cur)
+    const row = d.prepare('SELECT password_protected, parent_id FROM notebooks WHERE id = ?').get(cur) as any
+    if (!row) return false
+    if (row.password_protected) return true
+    cur = row.parent_id ?? null
+  }
+  return false
+}
+
+/**
+ * 判断一条笔记当前是否处于锁定状态（界面需遮住内容并提示输入密码）。
+ * 只看"所属笔记本是否受密码保护 + 本进程是否已解锁"，与内容是否已加密无关 ——
+ * 否则历史遗留的明文笔记 / 空笔记会出现"同一个笔记本里有的要密码、有的不要"。
+ */
+function isNoteLocked(row: any, encrypted: boolean): boolean {
+  if (hasCachedPassword(row.notebook_id)) return false
+  if (encrypted) return true
+  return notebookChainProtected(row.notebook_id)
+}
+
 function rowToNote(row: any, content: string = ''): Note {
+  const encrypted = row.is_encrypted === 1 || isEncryptedContent(content)
   return {
     id: row.id,
     title: row.title,
@@ -604,8 +638,98 @@ function rowToNote(row: any, content: string = ''): Note {
     deletedAt: row.deleted_at ?? undefined,
     icon: row.icon ?? undefined,
     sortOrder: row.sort_order ?? undefined,
-    isEncrypted: row.is_encrypted === 1 || isEncryptedContent(content)
+    isEncrypted: encrypted,
+    locked: isNoteLocked(row, encrypted)
   }
+}
+
+/**
+ * 把指定笔记本（子树）内仍是明文的笔记补加密。
+ * encrypt 返回 null 表示当前拿不到密码（未解锁）→ 该笔记跳过，等解锁时再补。
+ * 用于：解锁成功后自愈 / 把笔记移入加密笔记本时。
+ */
+function encryptPlaintextNotesIn(
+  ids: string[],
+  encrypt: (plain: string, notebookId: string) => string | null
+): void {
+  if (ids.length === 0) return
+  const d = getDatabase()
+  const ph = ids.map(() => '?').join(',')
+  const rows = d.prepare(`SELECT * FROM notes WHERE notebook_id IN (${ph}) AND is_deleted = 0`).all(...ids) as any[]
+  for (const r of rows) {
+    const { content } = resolveNoteContent(r)
+    if (isEncryptedContent(content)) continue
+    const encrypted = encrypt(content ?? '', r.notebook_id)
+    if (!encrypted) continue
+    if (r.path && fs.existsSync(r.path) && r.format !== 'url' && r.format !== 'file') {
+      try { fs.writeFileSync(r.path, encrypted, 'utf-8') } catch {}
+    }
+    d.prepare('UPDATE notes SET content = ?, is_encrypted = 1 WHERE id = ?').run(encrypted, r.id)
+  }
+}
+
+/**
+ * 解锁后把子树内的密文「归一化」——解决两类历史错配：
+ *
+ *  1) 磁盘文件与数据库 content 各存着一份不一样的密文（git 同步/换密码后 checkout 覆盖导致）。
+ *     只要其中任意一份能用当前密码解开，就用它把两份统一重写成同一份当前方案密文。
+ *  2) 早期「锚点 key」方案写下的密文：用当前密码 + 候选 salt 试解后重写。
+ *
+ * 解不开的（确实是另一个密码加密的）原样保留，绝不猜测、绝不破坏数据。
+ * 返回被修复的笔记数。
+ */
+function normalizeEncryptedNotes(ids: string[], password: string): number {
+  if (ids.length === 0) return 0
+  const d = getDatabase()
+  const ph = ids.map(() => '?').join(',')
+  const rows = d.prepare(`SELECT * FROM notes WHERE notebook_id IN (${ph}) AND is_deleted = 0`).all(...ids) as any[]
+
+  // 候选锚点 salt（旧方案：key 由某篇笔记的 salt 派生，见 crypto.decryptWithKey 注释）
+  const salts = new Set<string>()
+  for (const r of rows) {
+    const resolved = resolveNoteContent(r).content
+    for (const content of [resolved, r.content]) {
+      if (!content) continue
+      const s = saltOfEncrypted(content)
+      if (s) salts.add(s)
+    }
+  }
+  const keyCache = new Map<string, Buffer>()
+  const keyFor = (salt: string): Buffer => {
+    let k = keyCache.get(salt)
+    if (!k) { k = deriveKeyFromSalt(password, salt); keyCache.set(salt, k) }
+    return k
+  }
+  // 先用当前方案解；解不开再用旧方案候选 salt 解。current 表示是否当前方案。
+  const tryDecrypt = (content: string | null | undefined): { plain: string; current: boolean } | null => {
+    if (!content || !isEncryptedContent(content)) return null
+    const cur = decryptNoteContent(content, password)
+    if (cur !== null) return { plain: cur, current: true }
+    for (const salt of salts) {
+      const plain = decryptWithKey(content, keyFor(salt))
+      if (plain !== null) return { plain, current: false }
+    }
+    return null
+  }
+
+  let fixed = 0
+  for (const r of rows) {
+    const resolved = resolveNoteContent(r).content
+    const diskHit = tryDecrypt(resolved)
+    const dbHit = tryDecrypt(r.content)
+    // 磁盘与 DB 都是当前方案且完全一致 → 已归一，跳过
+    if (diskHit?.current && dbHit?.current && resolved === r.content) continue
+    // 选明文：优先「当前方案」的那份（避免拿旧密文覆盖新内容），同方案时以磁盘为准
+    const chosen = diskHit?.current ? diskHit : (dbHit?.current ? dbHit : (diskHit ?? dbHit))
+    if (!chosen) continue
+    const encrypted = encryptNoteContent(chosen.plain, password)
+    if (r.path && r.format !== 'url' && r.format !== 'file') {
+      try { fs.writeFileSync(r.path, encrypted, 'utf-8') } catch {}
+    }
+    d.prepare('UPDATE notes SET content = ?, is_encrypted = 1 WHERE id = ?').run(encrypted, r.id)
+    fixed++
+  }
+  return fixed
 }
 
 function rowToFlashThought(row: any): FlashThought {
@@ -761,10 +885,28 @@ const dbMethods = {
     }
     const note = rowToNote(row, content)
     // 尝试用缓存的密码解密（按笔记自身 salt 派生密钥，可解密笔记本内任意笔记）
+    let decrypted = false
     if (note.isEncrypted && hasCachedPassword(row.notebook_id)) {
-      const decrypted = decryptWithCachedPassword(content, row.notebook_id)
-      if (decrypted !== null) note.content = decrypted
+      const plain = decryptWithCachedPassword(content, row.notebook_id)
+      if (plain !== null) {
+        note.content = plain
+        decrypted = true
+      } else if (row.content && row.content !== content && isEncryptedContent(row.content)) {
+        // 磁盘与 DB 里的密文不一致（git 同步/历史遗留）且磁盘这份解不开：
+        // 回退到 DB 里的密文再试一次，并用它修复磁盘，避免下次又打不开。
+        const plain2 = decryptWithCachedPassword(row.content, row.notebook_id)
+        if (plain2 !== null) {
+          note.content = plain2
+          decrypted = true
+          if (row.path && fs.existsSync(row.path) && row.format !== 'url' && row.format !== 'file') {
+            try { fs.writeFileSync(row.path, row.content, 'utf-8') } catch {}
+          }
+        }
+      }
     }
+    // 关键：内容仍是密文（没密码 / 缓存的密码和这条密文对不上）→ 一律算"锁定"，
+    // 否则界面会把 {"v":1,"salt":...} 当正文显示出来
+    if (note.isEncrypted && !decrypted) note.locked = true
     return note
   },
 
@@ -974,6 +1116,12 @@ const dbMethods = {
     // 更新 DB：切换 notebook、清空 parent、更新路径
     d.prepare('UPDATE notes SET notebook_id = ?, parent_id = ?, path = ?, file_path = ?, updated_at = ? WHERE id = ?')
       .run(newNotebookId, null, newPath, newFilePath, Date.now(), id)
+
+    // 移入受密码保护的笔记本：本进程已解锁的话顺手把明文内容加密落盘
+    // （未解锁时不加密也没问题 —— 笔记处于锁定状态看不到，下次解锁会自愈补加密）
+    if (newNotebookId && notebookChainProtected(newNotebookId)) {
+      encryptPlaintextNotesIn([newNotebookId], encryptWithCachedPassword)
+    }
   },
 
   searchNotes(keyword: string): Note[] {
@@ -1594,6 +1742,12 @@ const dbMethods = {
     return (count?.c ?? 0) > 0
   },
 
+  /** 笔记本（含祖先）是否受密码保护，且本进程尚未解锁 —— 即"当前锁定" */
+  isNotebookLocked(notebookId: string): boolean {
+    if (!this.isNotebookProtected(notebookId)) return false
+    return !hasCachedPassword(notebookId)
+  },
+
   /** 收集笔记本自身及所有后代笔记本 id */
   notebookSubtreeIds(notebookId: string): string[] {
     const d = getDatabase()
@@ -1614,25 +1768,36 @@ const dbMethods = {
     return result
   },
 
-  /** 给笔记本设置密码：加密自身及所有子笔记本下的笔记 */
+  /** 给笔记本设置密码：加密自身及所有子笔记本下的笔记（已加密的会用旧密码换钥重加密） */
   setNotebookPassword(notebookId: string, password: string): void {
     const d = getDatabase()
     const ids = this.notebookSubtreeIds(notebookId)
     const ph = ids.map(() => '?').join(',')
     const notes = d.prepare(`SELECT * FROM notes WHERE notebook_id IN (${ph}) AND is_deleted = 0`).all(...ids) as any[]
-    for (const row of notes) {
-      const { content } = resolveNoteContent(row)
-      if (!content || isEncryptedContent(content)) continue
-      const encrypted = encryptNoteContent(content, password)
+    // 预检：已加密的笔记必须能用当前缓存的（旧）密码解开，否则会在库里留下
+    // "校验值是新密码、内容还是旧密码"的错配（表现为：密码输对了却看到一串密文 JSON）
+    const prepared = notes.map(row => ({ row, content: resolveNoteContent(row).content }))
+    const blocked = prepared.filter(({ row, content }) => isEncryptedContent(content) && decryptWithCachedPassword(content, row.notebook_id) === null).length
+    if (blocked > 0) {
+      throw new Error(`该笔记本里还有 ${blocked} 篇笔记是用旧密码加密的：请先打开其中一篇、输入旧密码解锁，再设置新密码（或先用「移除密码」）`)
+    }
+    for (const { row, content } of prepared) {
+      let plain = content ?? ''
+      if (isEncryptedContent(content)) {
+        // 已经是密文 → 用旧密码解出来，再用新密码重新加密（换密钥）
+        plain = decryptWithCachedPassword(content, row.notebook_id) ?? ''
+      }
+      const encrypted = encryptNoteContent(plain, password)
       // 写入加密内容
       if (row.path && fs.existsSync(row.path) && row.format !== 'url' && row.format !== 'file') {
         fs.writeFileSync(row.path, encrypted, 'utf-8')
       }
       d.prepare('UPDATE notes SET content = ?, is_encrypted = 1 WHERE id = ?').run(encrypted, row.id)
     }
-    d.prepare(`UPDATE notebooks SET password_protected = 1 WHERE id IN (${ph})`).run(...ids)
-    // 缓存密码（整棵子树共享，解锁任意笔记后整棵子树都能解密）
-    for (const id of ids) cachePassword(id, password)
+    const verifier = makePasswordVerifier(password)
+    d.prepare(`UPDATE notebooks SET password_protected = 1, password_verifier = ? WHERE id IN (${ph})`).run(verifier, ...ids)
+    // 注意：这里故意不缓存密码 —— 设置完立即进入锁定状态，
+    // 打开子树内任意笔记都要输入刚设置的密码，否则「设了密码却直接打开」。
   },
 
   /** 移除笔记本密码：解密自身及所有子笔记本下的笔记 */
@@ -1651,23 +1816,60 @@ const dbMethods = {
       }
       d.prepare('UPDATE notes SET content = ?, is_encrypted = 0 WHERE id = ?').run(decrypted, row.id)
     }
-    d.prepare(`UPDATE notebooks SET password_protected = 0 WHERE id IN (${ph})`).run(...ids)
+    d.prepare(`UPDATE notebooks SET password_protected = 0, password_verifier = NULL WHERE id IN (${ph})`).run(...ids)
     for (const id of ids) removeCachedPassword(id)
     return true
   },
 
-  /** 验证密码并缓存密码（供查看笔记时解密用） */
+  /**
+   * 验证密码并缓存密码（供查看笔记时解密用）。
+   * 校验顺序：
+   *  1) 先用子树里的密文笔记实试（真凭实据：解得开就说明密码对，且立刻能看内容）
+   *  2) 再用笔记本上存的密码校验值（空笔记本 / 笔记全被删的笔记本靠它）
+   * 校验通过后：缓存密码（整棵子树共享）→ 用实际生效的密码修正校验值 →
+   * 把子树里仍是明文的笔记补加密。
+   */
   unlockNotebook(notebookId: string, password: string): boolean {
+    const d = getDatabase()
     const ids = this.notebookSubtreeIds(notebookId)
     const ph = ids.map(() => '?').join(',')
-    const row = getDatabase().prepare(`SELECT content FROM notes WHERE notebook_id IN (${ph}) AND is_encrypted = 1 AND is_deleted = 0 LIMIT 1`).get(...ids) as any
-    if (!row?.content) return false
     try {
-      // 验证：尝试解密
-      const test = decryptNoteContent(row.content, password)
-      if (test === null) return false
+      // 1) 用密文正文实试。以 resolveNoteContent 为准（兼容磁盘/DB 不一致、
+      //    以及历史数据里 is_encrypted 标记缺失的密文），逐条试。
+      const rows = d.prepare(
+        `SELECT * FROM notes WHERE notebook_id IN (${ph}) AND is_deleted = 0`
+      ).all(...ids) as any[]
+      let noteOk = false
+      for (const r of rows) {
+        const { content } = resolveNoteContent(r)
+        if (!content || !isEncryptedContent(content)) continue
+        if (decryptNoteContent(content, password) !== null) { noteOk = true; break }
+      }
+      // 2) 校验值（可能有多条，任意一条通过即可）
+      const verifierRows = d.prepare(
+        `SELECT password_verifier FROM notebooks WHERE id IN (${ph}) AND password_verifier IS NOT NULL`
+      ).all(...ids) as any[]
+      const verifierOk = verifierRows.some(v => checkPasswordVerifier(v.password_verifier, password))
+      if (!noteOk && !verifierOk) return false
+
       // 缓存密码（整棵子树共享）
       for (const id of ids) cachePassword(id, password)
+      // 归一化子树内的密文：修复「磁盘/数据库不一致」「旧锚点方案」等历史错配。
+      // 解开后界面就不再误报"这篇笔记是用另一个密码加密的"。
+      const recovered = normalizeEncryptedNotes(ids, password)
+      if (recovered > 0) console.log(`[db] unlockNotebook: normalized ${recovered} encrypted notes under ${notebookId}`)
+      // 用实际生效的密码修正校验值：能解开密文时以密文为准，
+      // 避免出现"校验值通过、内容却解不开 → 界面显示一串 {\"v\":1,...}"的错配
+      if (noteOk || recovered > 0) {
+        d.prepare(`UPDATE notebooks SET password_verifier = ? WHERE id IN (${ph})`).run(makePasswordVerifier(password), ...ids)
+      } else {
+        d.prepare(
+          `UPDATE notebooks SET password_verifier = ? WHERE id IN (${ph}) AND password_verifier IS NULL`
+        ).run(makePasswordVerifier(password), ...ids)
+      }
+      // 自愈：子树内如果还有明文笔记（历史数据 / 设密时空内容被跳过 / 移动到加密笔记本下），
+      // 现在有密码了，顺手补加密（空内容的也补），避免"同一个笔记本里有的要密码有的不要"。
+      encryptPlaintextNotesIn(ids, (plain) => encryptNoteContent(plain, password))
       return true
     } catch {
       return false
