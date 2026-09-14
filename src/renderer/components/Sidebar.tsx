@@ -5,7 +5,7 @@ import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
   FileDown, FileCode, Globe, Link2, Paperclip, Palette, History, ArrowRightLeft,
-  Lock, Unlock, Clock, Upload, Bot, Table2
+  Lock, Unlock, Clock, Upload, Bot, Table2, Search
 } from 'lucide-react'
 import { MatIcon } from './MatIcon'
 import { IonIcon } from './IonIcon'
@@ -111,6 +111,19 @@ function RichTextIcon({ size = 14 }: { size?: number }) {
   )
 }
 
+/** 笔记格式 → 图标/颜色/标题。主树状图与移动弹框共用，保证图标完全统一 */
+function getNoteFormatInfo(format: string | undefined) {
+  return {
+    markdown: { Icon: MarkdownIcon, color: '#7d8590', title: 'Markdown' },
+    html: { Icon: Globe, color: '#e67e22', title: 'HTML' },
+    richtext: { Icon: RichTextIcon, color: '#9b59b6', title: '富文本' },
+    code: { Icon: CodeIcon, color: '#4a90e2', title: '代码' },
+    url: { Icon: Link2, color: '#0ea5e9', title: '网址' },
+    file: { Icon: Paperclip, color: '#16a34a', title: '文件' },
+    spreadsheet: { Icon: Table2, color: '#f59e0b', title: '智能表格' }
+  }[format ?? 'markdown'] ?? { Icon: MarkdownIcon, color: 'var(--text-secondary)', title: '笔记' }
+}
+
 export function Sidebar() {
   const notebooks = useAppStore(s => s.notebooks)
   const notes = useAppStore(s => s.notes)
@@ -136,17 +149,16 @@ export function Sidebar() {
   // 点击去抖：防止快速点击触发多个并发 selectNote 请求
   const selectNoteTimer = useRef<NodeJS.Timeout | null>(null)
 
-  // ============ 拖动排序 ============
-  // 简化设计：笔记本和笔记拖动都视为"同级排序"。笔记本顶级拖到另一个笔记本下 → 不支持
-  // （要做跨 parent 拖动需要把 NoteTreeNode 的 parentId 改了，那是另一个特性）。
-  // 当前支持：
+  // ============ 拖动排序/移动 ============
+  // 简化设计：笔记本拖动视为"同级排序"。当前支持：
   //   1. 拖动笔记本 → 同 parentId 下重排
-  //   2. 拖动笔记 → 拖到目标笔记本下的某个位置
-  //   3. 拖动时目标位置的上半部分 = 之前；下半部分 = 之后
+  //   2. 拖动笔记到笔记本 → 跨笔记本移动（moveNote）
+  //   3. 拖动笔记到笔记：同笔记本 → 重排；跨笔记本 → 移动进目标笔记所在笔记本
+  //   4. 拖动时目标位置的上半部分 = 之前；下半部分 = 之后；拖到笔记本/跨笔记本 = 移入（inside）
 
   const [dragOverInfo, setDragOverInfo] = useState<{
     targetId: string
-    position: 'before' | 'after'
+    position: 'before' | 'after' | 'inside'
   } | null>(null)
   const draggingRef = useRef<{ id: string; type: 'notebook' | 'note' } | null>(null)
   const tree = useMemo(() => buildNoteTree(notebooks, notes), [notebooks, notes])
@@ -581,18 +593,40 @@ export function Sidebar() {
     if (dragging.id === node.id) return // 自己拖自己不算
     e.preventDefault() // 必须 preventDefault 才能 drop（即使后面 reject，也允许 drop 触发让 handler 清状态）
 
-    // 笔记本只能和笔记本一起排，笔记只能和笔记一起排（不同级不能混排）
-    if (dragging.type !== node.type) {
-      e.dataTransfer.dropEffect = 'none'
+    const setPosition = (position: 'before' | 'after' | 'inside') => {
+      e.dataTransfer.dropEffect = 'move'
+      if (dragOverInfo?.targetId !== node.id || dragOverInfo.position !== position) {
+        setDragOverInfo({ targetId: node.id, position })
+      }
+    }
+
+    if (dragging.type === 'notebook') {
+      // 笔记本只能和笔记本一起排（不同级不能混排）
+      if (node.type !== 'notebook') {
+        e.dataTransfer.dropEffect = 'none'
+        return
+      }
+      const rect = e.currentTarget.getBoundingClientRect()
+      const midpoint = rect.top + rect.height / 2
+      setPosition(e.clientY < midpoint ? 'before' : 'after')
       return
     }
 
-    e.dataTransfer.dropEffect = 'move'
-    const rect = e.currentTarget.getBoundingClientRect()
-    const midpoint = rect.top + rect.height / 2
-    const position = e.clientY < midpoint ? 'before' : 'after'
-    if (dragOverInfo?.targetId !== node.id || dragOverInfo.position !== position) {
-      setDragOverInfo({ targetId: node.id, position })
+    // 拖动的是笔记
+    if (node.type === 'notebook') {
+      // 笔记拖到笔记本上 → 移动进该笔记本
+      setPosition('inside')
+      return
+    }
+    // 笔记拖到笔记上：同笔记本 → 重排；跨笔记本 → 移动进目标笔记所在笔记本
+    const draggingNote = notes.find(n => n.id === dragging.id)
+    const targetNote = notes.find(n => n.id === node.id)
+    if (draggingNote && targetNote && draggingNote.notebookId === targetNote.notebookId) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const midpoint = rect.top + rect.height / 2
+      setPosition(e.clientY < midpoint ? 'before' : 'after')
+    } else {
+      setPosition('inside')
     }
   }
 
@@ -607,13 +641,13 @@ export function Sidebar() {
     setDragOverInfo(null)
     if (!dragging) return
     if (dragging.id === target.id) return
-    if (dragging.type !== target.type) return
 
     const rect = e.currentTarget.getBoundingClientRect()
     const midpoint = rect.top + rect.height / 2
     const position = e.clientY < midpoint ? 'before' : 'after'
 
     if (dragging.type === 'notebook') {
+      if (target.type !== 'notebook') return
       // 同 parentId 下重排
       const sameParent = notebooks.filter(nb => nb.parentId === target.parentId)
       const ordered = sameParent.map(nb => nb.id)
@@ -634,22 +668,36 @@ export function Sidebar() {
       } catch (err) {
         console.error('[sidebar] reorderNotebooks failed:', err)
       }
-    } else {
-      // 笔记：拖到目标笔记的笔记本下
-      // 注意：不能简单地按目标笔记本下的所有笔记重排——拖动的笔记可能不在那个 notebook 下
-      // 简化：先把拖动的笔记移到目标 notebook（如果不同），再重排
-      // 这里先只做同 notebook 内的重排
-      const targetNote = notes.find(n => n.id === target.id)
-      if (!targetNote) {
-        console.warn('[sidebar] drop: target note not found', target.id)
-        return
+      return
+    }
+
+    // 拖动的是笔记
+    const draggingNote = notes.find(n => n.id === dragging.id)
+    if (!draggingNote) return
+
+    // 拖到笔记本上：跨笔记本移动进该笔记本
+    if (target.type === 'notebook') {
+      if (draggingNote.notebookId === target.id) return // 已经在该笔记本里
+      console.log('[sidebar] moveNote (drop onto notebook):', dragging.id, '→', target.id)
+      try {
+        await moveNote(dragging.id, target.id)
+      } catch (err) {
+        console.error('[sidebar] moveNote failed:', err)
       }
+      return
+    }
+
+    // 拖到笔记上
+    const targetNote = notes.find(n => n.id === target.id)
+    if (!targetNote) return
+
+    if (draggingNote.notebookId === targetNote.notebookId) {
+      // 同 notebook 内重排
       const sameNotebook = notes.filter(n => n.notebookId === targetNote.notebookId)
       const ordered = sameNotebook.map(n => n.id)
       const fromIdx = ordered.indexOf(dragging.id)
       let toIdx = ordered.indexOf(target.id)
       if (fromIdx < 0) {
-        // 拖动的笔记不在目标 notebook 下 —— 暂不支持跨笔记本移动
         console.warn('[sidebar] drop: note not in target notebook', { dragging: dragging.id, targetNb: targetNote.notebookId })
         return
       }
@@ -662,6 +710,14 @@ export function Sidebar() {
         console.log('[sidebar] reorderNotes OK')
       } catch (err) {
         console.error('[sidebar] reorderNotes failed:', err)
+      }
+    } else {
+      // 跨笔记本：移动进目标笔记所在笔记本
+      console.log('[sidebar] moveNote (drop onto note):', dragging.id, '→', targetNote.notebookId)
+      try {
+        await moveNote(dragging.id, targetNote.notebookId)
+      } catch (err) {
+        console.error('[sidebar] moveNote failed:', err)
       }
     }
   }
@@ -897,7 +953,7 @@ export function Sidebar() {
       // 加密状态：locked=true 表示此刻打开需要输入密码（解锁后仍保留锁标记，只是变淡）
       const nbLocked = !!notebooks.find(n => n.id === node.id)?.locked
       const nbEncrypted = !!node.passwordProtected || nbLocked
-      const dropLineStyle: React.CSSProperties = isDragOver
+      const dropLineStyle: React.CSSProperties = isDragOver && dragOverInfo!.position !== 'inside'
         ? {
             position: 'absolute',
             left: 0,
@@ -908,12 +964,16 @@ export function Sidebar() {
             ...(dragOverInfo!.position === 'before' ? { top: -1 } : { bottom: -1 })
           }
         : {}
+      const dragInside = isDragOver && dragOverInfo!.position === 'inside'
       return (
         <div key={node.id} className={isSelected ? 'tree-group-selected' : ''} style={{ position: 'relative' }}>
           <div
             className={`tree-row ${isSelected ? 'selected' : ''} ${isChildOfSelected ? 'child-of-selected' : ''}`}
             data-notebook-id={node.id}
-            style={{ paddingLeft: 4 + depth * 10 }}
+            style={{
+              paddingLeft: 4 + depth * 10,
+              ...(dragInside ? { boxShadow: 'inset 0 0 0 2px var(--accent-color)', borderRadius: 6 } : {})
+            }}
             onClick={() => { setRenaming(null); selectNotebook(node.id) }}
             onContextMenu={(e) => handleContextMenu(e, node)}
             onDoubleClick={() => handleRename(node)}
@@ -971,20 +1031,12 @@ export function Sidebar() {
     const noteLocked = !!noteState?.locked
     const noteEncrypted = !!(noteState?.isEncrypted || noteState?.locked)
     const noteFormat = noteState?.format
-    const formatInfo = {
-      markdown: { Icon: MarkdownIcon, color: '#7d8590', title: 'Markdown' },
-      html: { Icon: Globe, color: '#e67e22', title: 'HTML' },
-      richtext: { Icon: RichTextIcon, color: '#9b59b6', title: '富文本' },
-      code: { Icon: CodeIcon, color: '#4a90e2', title: '代码' },
-      url: { Icon: Link2, color: '#0ea5e9', title: '网址' },
-      file: { Icon: Paperclip, color: '#16a34a', title: '文件' },
-      spreadsheet: { Icon: Table2, color: '#f59e0b', title: '智能表格' }
-    }[noteFormat ?? 'markdown'] ?? { Icon: MarkdownIcon, color: 'var(--text-secondary)', title: '笔记' }
-    const { Icon: FormatIcon, color: formatColor, title: formatTitle } = formatInfo
+    const { Icon: FormatIcon, color: formatColor, title: formatTitle } = getNoteFormatInfo(noteFormat)
     const hasChildren = node.children.length > 0
 
     const isDragOver = dragOverInfo?.targetId === node.id
-    const dropLineStyle: React.CSSProperties = isDragOver
+    const dragInside = isDragOver && dragOverInfo!.position === 'inside'
+    const dropLineStyle: React.CSSProperties = isDragOver && !dragInside
       ? {
           position: 'absolute',
           left: 0,
@@ -1000,7 +1052,10 @@ export function Sidebar() {
         <div
           className={`tree-row ${isSelected ? 'selected' : ''} ${isChildOfSelected ? 'child-of-selected' : ''}`}
           data-note-id={node.id}
-          style={{ paddingLeft: 4 + depth * 10 }}
+          style={{
+            paddingLeft: 4 + depth * 10,
+            ...(dragInside ? { boxShadow: 'inset 0 0 0 2px var(--accent-color)', borderRadius: 6 } : {})
+          }}
           onClick={() => {
             setRenaming(null)
             selectNotebook(null)
@@ -1597,28 +1652,6 @@ export function Sidebar() {
   )
 }
 
-function MoveNoteIcon({ format, size, color }: { format: string; size: number; color: string }) {
-  switch (format) {
-    case 'markdown': return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M5 6 L5 18" /><path d="M5 6 L12 14" /><path d="M12 14 L19 6" /><path d="M19 6 L19 18" />
-      </svg>)
-    case 'code': return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M8 6 L2 12 L8 18" /><path d="M16 6 L22 12 L16 18" /><path d="M15 4 L9 20" />
-      </svg>)
-    case 'richtext': return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 6 L20 6" /><path d="M12 6 L12 19" />
-      </svg>)
-    case 'html': return <Globe size={size} color={color} />
-    case 'url': return <Link2 size={size} color={color} />
-    case 'file': return <Paperclip size={size} color={color} />
-    case 'spreadsheet': return <Table2 size={size} color={color} />
-    default: return <FileText size={size} color={color} />
-  }
-}
-
 function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: (e: React.MouseEvent<HTMLDivElement>) => void; danger?: boolean }) {
   return (
     <div
@@ -1883,6 +1916,8 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
   onClose: () => void
 }) {
   const [selected, setSelected] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const trimmedQuery = query.trim().toLowerCase()
   const tree = useMemo(() => buildNoteTree(notebooks, notes), [notebooks, notes])
   // 折叠状态：默认全部收起（集合里有的 id 表示"已折叠"），点击展开/收起
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(notebooks.map(n => n.id)))
@@ -1917,6 +1952,25 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
     return ids
   }, [nodeId, notes, notebooks])
 
+  // 搜索过滤：保留命中的节点及其祖先路径，其余收起/展开态在搜索时忽略（全部展开）
+  const filteredTree = useMemo(() => {
+    if (!trimmedQuery) return tree
+    const filterNodes = (nodes: NoteTreeNode[]): NoteTreeNode[] => {
+      const result: NoteTreeNode[] = []
+      for (const node of nodes) {
+        if (!node || !node.id) continue
+        if (excludeIds.has(node.id)) continue
+        const selfMatch = (node.name || '').toLowerCase().includes(trimmedQuery)
+        const matchedChildren = filterNodes(node.children)
+        if (selfMatch || matchedChildren.length > 0) {
+          result.push({ ...node, children: matchedChildren })
+        }
+      }
+      return result
+    }
+    return filterNodes(tree)
+  }, [tree, trimmedQuery, excludeIds])
+
   // 笔记本移动只能选笔记本，笔记移动两者都可
   const canSelect = (n: NoteTreeNode) => {
     if (nodeType === 'notebook' && n.type !== 'notebook') return false
@@ -1934,11 +1988,8 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
       }
       const isFolder = node.type === 'notebook'
       const hasChildren = node.children.length > 0
-      const isCollapsed = collapsed.has(node.id)
-      const note = notes.find(n => n.id === node.id)
-      const noteFormat = note?.format || 'markdown'
-      const formatColors: Record<string, string> = { markdown: '#7d8590', html: '#e67e22', richtext: '#9b59b6', code: '#4a90e2', url: '#0ea5e9', file: '#16a34a', spreadsheet: '#f59e0b' }
-      const fc = formatColors[noteFormat] || 'var(--text-secondary)'
+      const isCollapsed = !trimmedQuery && collapsed.has(node.id)
+      const { Icon: FormatIcon, color: formatColor, title: formatTitle } = getNoteFormatInfo(notes.find(n => n.id === node.id)?.format)
       result.push(
         <div
           key={node.id}
@@ -1961,7 +2012,13 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
           ) : (
             <span style={{ width: 12, flexShrink: 0 }} />
           )}
-          {isFolder ? <Folder size={13} color="var(--text-secondary)" /> : <MoveNoteIcon format={noteFormat} size={13} color={fc} />}
+          {isFolder
+            ? <Folder size={13} color="var(--text-secondary)" />
+            : (
+              <span title={formatTitle} style={{ display: 'inline-flex', color: formatColor, flexShrink: 0 }}>
+                <FormatIcon size={13} />
+              </span>
+            )}
           {node.name || '(未命名)'}
         </div>
       )
@@ -1985,6 +2042,22 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>
           移动{nodeType === 'note' ? '笔记' : '笔记本'} "{nodeName || '(未命名)'}" 到
         </div>
+        <div style={{ position: 'relative', marginBottom: 8 }}>
+          <Search
+            size={14}
+            style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }}
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索笔记本或笔记..."
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '6px 10px 6px 28px', fontSize: 13,
+              borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary, transparent)',
+              color: 'var(--text-primary)', outline: 'none'
+            }}
+          />
+        </div>
         <div style={{ flex: 1, overflowY: 'auto', marginBottom: 12, minHeight: 120 }}>
           <div
             onClick={() => setSelected(null)}
@@ -1997,7 +2070,11 @@ function MoveDialog({ nodeId, nodeType, nodeName, notebooks, notes, onMove, onCl
             <Folder size={13} color="var(--text-secondary)" />
             根目录
           </div>
-          {renderTree(tree)}
+          {trimmedQuery && filteredTree.length === 0 ? (
+            <div style={{ padding: '12px 10px', fontSize: 13, color: 'var(--text-tertiary)' }}>没有找到匹配的笔记本或笔记</div>
+          ) : (
+            renderTree(filteredTree)
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '6px 14px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', fontSize: 13, cursor: 'pointer' }}>取消</button>

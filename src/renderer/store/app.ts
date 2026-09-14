@@ -260,7 +260,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   selectNote: async (id) => {
     // 任何时候选中笔记都切回笔记视图（从回收站视图点回笔记时尤其需要）
-    set({ selectedNoteId: id, viewMode: 'notes' })
+    // 同时清除笔记本选中，避免父级与笔记同时出现选中浮动样式
+    set({ selectedNoteId: id, selectedNotebookId: null, viewMode: 'notes' })
     // 持久化 lastSelectedNoteId（启动时恢复）
     if (id) {
       const settings = get().settings

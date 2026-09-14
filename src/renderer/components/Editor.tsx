@@ -906,13 +906,19 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
   noteFilePath?: string
 }>(function RichTextEditor({ value, onChange, fontSize, editorDark, noteFilePath }, ref) {
   const editorRef = useRef<HTMLDivElement>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const isInternalUpdate = useRef(false)
+  // 图片选中 + 缩放
+  const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null)
+  const [imgBox, setImgBox] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
+  const resizeStateRef = useRef<{ startX: number; startWidth: number; img: HTMLImageElement } | null>(null)
 
   useImperativeHandle(ref, () => ({
     setHTML: (html: string) => {
       if (editorRef.current) {
         isInternalUpdate.current = true
         editorRef.current.innerHTML = html
+        setSelectedImage(null)
         onChange(htmlToValue(editorRef.current.innerHTML))
       }
     }
@@ -922,6 +928,77 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
   const [linkDlg, setLinkDlg] = useState({ open: false, url: '', text: '' })
   const [imageDlg, setImageDlg] = useState<{ open: boolean; url: string; alt: string; busy: boolean; sourcePath?: string }>({ open: false, url: '', alt: '', busy: false })
   const [tableDlg, setTableDlg] = useState({ open: false, rows: 3, cols: 3 })
+
+  // 相对路径（assets/xxx.png）→ file:// 绝对路径用于显示；data/http/file 原样返回
+  const resolveImageSrc = (rawSrc: string): string => {
+    if (rawSrc && !rawSrc.startsWith('data:') && !rawSrc.startsWith('http') && !rawSrc.startsWith('file:') && noteFilePath) {
+      const noteDir = noteFilePath.replace(/[\\/][^\\/]+$/, '')
+      return `file:///${noteDir.replace(/\\/g, '/')}/${rawSrc.replace(/\\/g, '/')}`
+    }
+    return rawSrc
+  }
+
+  // ===== 图片选中 / 拖动缩放 =====
+  const updateImgBox = () => {
+    const img = selectedImage
+    const wrapper = wrapperRef.current
+    if (!img || !wrapper || !img.isConnected) {
+      setImgBox(null)
+      return
+    }
+    const wr = wrapper.getBoundingClientRect()
+    const ir = img.getBoundingClientRect()
+    setImgBox({ top: ir.top - wr.top, left: ir.left - wr.left, width: ir.width, height: ir.height })
+  }
+
+  const handleEditorClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement
+    if (target && target.tagName === 'IMG' && target.getAttribute('data-richtext-image') !== null) {
+      setSelectedImage(target as HTMLImageElement)
+    } else {
+      setSelectedImage(null)
+    }
+  }
+
+  const startImageResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const img = selectedImage
+    if (!img) return
+    const ir = img.getBoundingClientRect()
+    resizeStateRef.current = { startX: e.clientX, startWidth: ir.width, img }
+    const onMove = (ev: MouseEvent) => {
+      const st = resizeStateRef.current
+      if (!st) return
+      // 以编辑器可视宽度为上限，保持宽高比（height:auto）
+      const maxW = wrapperRef.current ? Math.max(40, wrapperRef.current.clientWidth - 48) : 4000
+      const w = Math.max(40, Math.min(maxW, st.startWidth + (ev.clientX - st.startX)))
+      st.img.style.width = `${Math.round(w)}px`
+      st.img.style.height = 'auto'
+      st.img.setAttribute('data-richtext-width', String(Math.round(w)))
+      updateImgBox()
+    }
+    const onUp = () => {
+      resizeStateRef.current = null
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      handleInput()
+      updateImgBox()
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
+  useEffect(() => {
+    if (!selectedImage) {
+      setImgBox(null)
+      return
+    }
+    updateImgBox()
+    const onWinResize = () => updateImgBox()
+    window.addEventListener('resize', onWinResize)
+    return () => window.removeEventListener('resize', onWinResize)
+  }, [selectedImage])
 
   // 鎶?JSON 杞垚 HTML 鐢ㄤ簬鏄剧ず
   const valueToHtml = (jsonStr: string): string => {
@@ -971,15 +1048,12 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
         if (node.type === 'image') {
           const rawSrc = node.attrs?.src || ''
           const alt = escapeHtml(node.attrs?.alt || '')
+          const width = node.attrs?.width
           // 相对路径（assets/xxx.png）→ 解析为 file:// 绝对路径用于显示
-          let src: string
-          if (rawSrc && !rawSrc.startsWith('data:') && !rawSrc.startsWith('http') && !rawSrc.startsWith('file:') && noteFilePath) {
-            const noteDir = noteFilePath.replace(/[\\/][^\\/]+$/, '')
-            src = `file:///${noteDir.replace(/\\/g, '/')}/${rawSrc.replace(/\\/g, '/')}`
-          } else {
-            src = escapeHtml(rawSrc)
-          }
-          return `<img src="${src}" alt="${alt}" data-richtext-image="1" data-richtext-src="${escapeHtml(rawSrc)}" style="max-width: 100%;">`
+          const src = escapeHtml(resolveImageSrc(rawSrc))
+          const widthStyle = width > 0 ? `width: ${width}px;` : ''
+          const widthAttr = width > 0 ? ` data-richtext-width="${width}"` : ''
+          return `<img src="${src}" alt="${alt}" draggable="false" data-richtext-image="1" data-richtext-src="${escapeHtml(rawSrc)}"${widthAttr} style="max-width: 100%; ${widthStyle}">`
         }
         if (node.type === 'table') {
           return `<table data-richtext-table="1" style="border-collapse: collapse; width: 100%;">${(node.content || []).map(renderNode).join('')}</table>`
@@ -1013,13 +1087,14 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
       if (tag === 'img') {
         // 优先取 data-richtext-src（原始相对路径），否则用 src
         const src = el.getAttribute('data-richtext-src') || el.getAttribute('src') || ''
-        return {
-          type: 'image',
-          attrs: {
-            src,
-            alt: el.getAttribute('alt') || ''
-          }
+        const widthAttr = el.getAttribute('data-richtext-width') || ''
+        const attrs: { src: string; alt: string; width?: number } = {
+          src,
+          alt: el.getAttribute('alt') || ''
         }
+        const width = parseInt(widthAttr, 10)
+        if (width > 0) attrs.width = width
+        return { type: 'image', attrs }
       }
       if (tag === 'br') {
         return { type: 'hardBreak' }
@@ -1103,6 +1178,7 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
   useEffect(() => {
     if (editorRef.current && !isInternalUpdate.current) {
       editorRef.current.innerHTML = valueToHtml(value)
+      setSelectedImage(null)
     }
     isInternalUpdate.current = false
   }, [value])
@@ -1112,6 +1188,8 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
       isInternalUpdate.current = true
       onChange(htmlToValue(editorRef.current.innerHTML))
     }
+    // 选中的图片被删除时收起缩放框
+    if (selectedImage && !selectedImage.isConnected) setSelectedImage(null)
   }
 
   // 在 code block 内按 Enter 时光标跳到后面的段落
@@ -1186,21 +1264,10 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
   const confirmImage = async () => {
     if (!imageDlg.url) return
     const alt = imageDlg.alt || 'image'
-    let imgSrc = imageDlg.url
 
-    // 本地图片：复制到笔记的 assets 目录，存储相对路径
-    if (imageDlg.sourcePath && noteFilePath) {
-      try {
-        const relativePath = await window.inkslateApi.file.saveAsset(noteFilePath, imageDlg.sourcePath)
-        if (relativePath) {
-          imgSrc = relativePath  // 存相对路径如 assets/img-xxx.png
-        }
-      } catch (e) {
-        console.error('[editor] saveAsset failed, fallback to data URL:', e)
-      }
-    }
-
-    exec('insertHTML', `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" data-richtext-image="1" style="max-width: 100%;">`)
+    // 直接内嵌 base64 data URL：内容自包含，随笔记一起同步，
+    // 不依赖本地 assets 目录，保证在其它端同步后图片仍可见。
+    exec('insertHTML', `<img src="${escapeHtml(imageDlg.url)}" alt="${escapeHtml(alt)}" draggable="false" data-richtext-image="1" style="max-width: 100%;">`)
     setImageDlg(d => ({ ...d, open: false }))
   }
 
@@ -1406,28 +1473,65 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
         document.body
       )}
 
+      <div ref={wrapperRef} style={{ position: 'relative', flex: 1, display: 'flex', minHeight: 0 }}>
+        <div
+          ref={editorRef}
+          className="richtext-editor"
+          contentEditable
+          suppressContentEditableWarning
+          onInput={handleInput}
+          onBlur={handleInput}
+          onKeyDown={handleKeyDown}
+          onClick={handleEditorClick}
+          onScroll={updateImgBox}
+          style={{
+            flex: 1,
+            padding: '8px 24px',
+            outline: 'none',
+            overflow: 'auto',
+            background: editorDark ? '#1e1e1e' : 'var(--bg-primary)',
+            color: 'var(--text-primary)',
+            fontSize,
+            lineHeight: 1.6,
+            minHeight: 0,
+            // 编辑区域字体：设置页选过就用它，否则跟随全局 UI 字体
+            fontFamily: 'var(--editor-font, var(--font-family))'
+          }}
+        />
+        {imgBox && (
+          <div
+            style={{
+              position: 'absolute',
+              top: imgBox.top,
+              left: imgBox.left,
+              width: imgBox.width,
+              height: imgBox.height,
+              border: '1px solid var(--accent-color)',
+              boxSizing: 'border-box',
+              pointerEvents: 'none',
+              zIndex: 5
+            }}
+          >
             <div
-        ref={editorRef}
-        className="richtext-editor"
-        contentEditable
-        suppressContentEditableWarning
-        onInput={handleInput}
-        onBlur={handleInput}
-        onKeyDown={handleKeyDown}
-        style={{
-          flex: 1,
-          padding: '8px 24px',
-          outline: 'none',
-          overflow: 'auto',
-          background: editorDark ? '#1e1e1e' : 'var(--bg-primary)',
-          color: 'var(--text-primary)',
-          fontSize,
-          lineHeight: 1.6,
-          minHeight: 0,
-          // 编辑区域字体：设置页选过就用它，否则跟随全局 UI 字体
-          fontFamily: 'var(--editor-font, var(--font-family))'
-        }}
-      />
+              title="拖动缩放图片"
+              onMouseDown={startImageResize}
+              style={{
+                position: 'absolute',
+                right: -6,
+                bottom: -6,
+                width: 12,
+                height: 12,
+                borderRadius: 2,
+                background: 'var(--accent-color)',
+                border: '1px solid #fff',
+                cursor: 'nwse-resize',
+                pointerEvents: 'auto',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 })
