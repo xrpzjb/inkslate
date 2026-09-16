@@ -307,7 +307,7 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   z-index: 99999;
 }
@@ -322,7 +322,11 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  margin-top: -30vh;
+  margin-top: 10vh;
+}
+
+.search-dialog-expanded {
+  height: 70vh;
 }
 
 .search-dialog-input-row {
@@ -360,6 +364,10 @@
 }
 
 .search-dialog-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
   text-align: center;
   padding: 24px 16px;
   color: var(--text-tertiary);

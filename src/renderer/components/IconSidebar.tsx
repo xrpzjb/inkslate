@@ -735,7 +735,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="search-dialog-overlay" onMouseDown={onClose}>
-      <div className="search-dialog" onMouseDown={(e) => e.stopPropagation()}>
+      <div className={'search-dialog' + (lower ? ' search-dialog-expanded' : '')} onMouseDown={(e) => e.stopPropagation()}>
         <div className="search-dialog-input-row">
           <Search size={16} className="search-dialog-input-icon" />
           <input
@@ -746,17 +746,19 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
             className="search-dialog-input"
           />
         </div>
-        <div className="search-dialog-results">
-          {results.length === 0 && lower && (
-            <div className="search-dialog-empty">未找到匹配的笔记</div>
-          )}
-          {results.map(note => (
-            <div key={note.id} className="search-dialog-item" onClick={() => handleClick(note.id)}>
-              <div className="search-dialog-item-title">{highlight(note.title || '未命名')}</div>
-              <div className="search-dialog-item-snippet">{highlight(snippet(note.content))}</div>
-            </div>
-          ))}
-        </div>
+        {lower && (
+          <div className="search-dialog-results">
+            {results.length === 0 && (
+              <div className="search-dialog-empty">未找到匹配的笔记</div>
+            )}
+            {results.map(note => (
+              <div key={note.id} className="search-dialog-item" onClick={() => handleClick(note.id)}>
+                <div className="search-dialog-item-title">{highlight(note.title || '未命名')}</div>
+                <div className="search-dialog-item-snippet">{highlight(snippet(note.content))}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
