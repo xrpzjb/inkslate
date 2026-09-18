@@ -1,7 +1,7 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
-import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult } from '../shared/types'
+import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult, PdfPageSize, getPdfPageSizeInfo, getPdfContentDimensions } from '../shared/types'
 import { dbApi, getFilesDir, slugify, getUniqueFileName } from './db'
 import { OssManager } from './oss/manager'
 import { GitManager } from './git/manager'
@@ -299,7 +299,7 @@ export function setupIpcHandlers(): void {
     return result.canceled ? null : result.filePath ?? null
   })
 
-  ipcMain.handle(IPC_CHANNELS.FILE_EXPORT_PDF, async (_, payload: { title: string; html: string; watermark?: string }): Promise<boolean> => {
+  ipcMain.handle(IPC_CHANNELS.FILE_EXPORT_PDF, async (_, payload: { title: string; html: string; watermark?: string; pageSize?: PdfPageSize; singlePage?: boolean }): Promise<boolean> => {
     const owner = BrowserWindow.getFocusedWindow()
     if (!owner) return false
     const result = await dialog.showSaveDialog(owner, {
@@ -392,15 +392,13 @@ ${watermarkHtml}
 </body>
 </html>`
 
-    // A4 尺寸与 printToPDF 的 0.4in 边距 → 打印内容区（CSS px，96dpi）
-    // 让隐藏窗口用相同的内容宽度排版，DOM 里的标题 offsetTop 就能换算成准确页码
-    const PX_PER_PT = 96 / 72
-    const PAGE_W = 595.28
-    const PAGE_H = 841.89
+    // 根据用户选择的纸张尺寸计算页面参数
+    const pageSizeInfo = getPdfPageSizeInfo(payload?.pageSize)
+    const { contentW: CONTENT_W, contentH: CONTENT_H, pageW: PAGE_W } = getPdfContentDimensions(payload?.pageSize)
     const MARGIN_IN = 0.4
-    const MARGIN_PT = MARGIN_IN * 72
-    const CONTENT_W = Math.ceil((PAGE_W - MARGIN_PT * 2) * PX_PER_PT)
-    const CONTENT_H = (PAGE_H - MARGIN_PT * 2) * PX_PER_PT
+    // 长图模式底部留一点余量（px），避免舍入误差把末尾几行挤到下一页
+    const SINGLE_PAGE_SLACK_PX = 12
+    const singlePage = payload?.singlePage === true
 
     const tempWin = new BrowserWindow({
       show: false,
@@ -413,28 +411,51 @@ ${watermarkHtml}
       await tempWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(wrapper))
       // 等渲染稳定
       await new Promise(r => setTimeout(r, 150))
-      // 收集所有标题及其在文档中的纵向位置（CSS px），用于生成 PDF 目录书签
-      const headings: { text: string; top: number }[] = await tempWin.webContents.executeJavaScript(`(() => {
-        const res = []
+      // 等字体 / 图片就绪、布局稳定后再量，避免把尚未加载完的内容漏算，导致长图仍被截断。
+      // 所有等待都有超时兜底，避免个别加载不出来的资源把导出卡死。
+      const measured: { headings: { text: string; top: number }[]; contentHeight: number } = await tempWin.webContents.executeJavaScript(`(async () => {
+        const withTimeout = (p, ms) => Promise.race([p, new Promise(res => setTimeout(res, ms))])
+        document.querySelectorAll('img[loading="lazy"]').forEach(img => { img.loading = 'eager' })
+        if (document.fonts && document.fonts.ready) { try { await withTimeout(document.fonts.ready, 3000) } catch (e) {} }
+        await withTimeout(Promise.all(Array.from(document.images || []).map(img => img.complete ? null : new Promise(res => {
+          img.addEventListener('load', res, { once: true })
+          img.addEventListener('error', res, { once: true })
+        }))), 3000)
+        await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)))
+        const headings = []
         document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
           const text = (h.textContent || '').trim()
           if (!text) return
-          res.push({ text, top: h.getBoundingClientRect().top + (window.scrollY || 0) })
+          headings.push({ text, top: h.getBoundingClientRect().top + (window.scrollY || 0) })
         })
-        return res
+        const de = document.documentElement
+        const body = document.body
+        let contentHeight = Math.max(de ? de.scrollHeight : 0, body ? body.scrollHeight : 0)
+        // 兜底：绝对定位 / 浮动等 scrollHeight 可能统计不到，取所有元素的最大 bottom
+        const all = document.querySelectorAll('body *')
+        for (let i = 0; i < all.length; i++) {
+          const r = all[i].getBoundingClientRect()
+          if (r.height > 0 && r.bottom > contentHeight) contentHeight = r.bottom
+        }
+        return { headings, contentHeight: Math.ceil(contentHeight) }
       })()`)
+      const { headings, contentHeight } = measured
+      // 不分页：宽度沿用所选纸张宽度，高度取整篇内容高度，只输出一页、不截断
+      const pageSize = singlePage
+        ? { width: PAGE_W / 72, height: contentHeight / 96 + MARGIN_IN * 2 + SINGLE_PAGE_SLACK_PX / 96 }
+        : pageSizeInfo.printPageSize
       const pdfBuffer = await tempWin.webContents.printToPDF({
-        pageSize: 'A4',
+        pageSize,
         printBackground: true,
         margins: { top: MARGIN_IN, bottom: MARGIN_IN, left: MARGIN_IN, right: MARGIN_IN }
       })
       // printToPDF 不会生成书签，用 pdf-lib 后处理注入目录（Outlines）树。
       // Chromium 按块分页，图片/表格在页底会被推到下一页，floor(top/CONTENT_H) 只是估算，
-      // 先用 pdfjs 按文本精确解析标题所在页，未命中再回退到估算值。
+      // 先用 pdfjs 按文本精确解析标题所在页，未命中再回退到估算值（长图模式只有一页，直接回退 0）。
       const pdfBytes = new Uint8Array(pdfBuffer)
       const headingPages = await resolveHeadingPages(
         pdfBytes,
-        headings.map(h => ({ text: h.text, fallbackPage: Math.floor(h.top / CONTENT_H) }))
+        headings.map(h => ({ text: h.text, fallbackPage: singlePage ? 0 : Math.floor(h.top / CONTENT_H) }))
       )
       const outlineItems = headings.map((h, i) => ({
         title: h.text,

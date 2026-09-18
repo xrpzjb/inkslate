@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
 import { useAppStore, buildNoteTree, isNotebookLocked } from '../store/app'
-import { NoteTreeNode, Note, Notebook } from '@shared/types'
+import { NoteTreeNode, Note, Notebook, PdfPageSize, PDF_PAGE_SIZES } from '@shared/types'
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen, FileText,
   Trash2, Edit3, FilePlus, FolderPlus, FileCode2, FileType2, Heading1,
@@ -226,7 +226,7 @@ export function Sidebar() {
     mode: 'set' | 'remove' | 'unlock'
   } | null>(null)
   // PDF 导出水印输入弹框
-  const [pdfExportDialog, setPdfExportDialog] = useState<{ nodeId: string; value: string } | null>(null)
+  const [pdfExportDialog, setPdfExportDialog] = useState<{ nodeId: string; value: string; pageSize: PdfPageSize; singlePage: boolean } | null>(null)
 
   useEffect(() => {
     if (!selectedNoteId) return
@@ -790,10 +790,10 @@ export function Sidebar() {
    *  先弹出水印输入框，确认后再真正导出。 */
   const handleExportPdf = (nodeId: string) => {
     closeContextMenu()
-    setPdfExportDialog({ nodeId, value: '' })
+    setPdfExportDialog({ nodeId, value: '', pageSize: 'A4', singlePage: false })
   }
 
-  const doExportPdf = async (nodeId: string, watermark: string) => {
+  const doExportPdf = async (nodeId: string, watermark: string, pageSize?: PdfPageSize, singlePage?: boolean) => {
     try {
       const targetNote = notes.find(n => n.id === nodeId)
       if (['spreadsheet', 'url', 'file'].includes(targetNote?.format ?? '')) {
@@ -857,7 +857,7 @@ export function Sidebar() {
         toast.error('未找到可导出的内容')
         return
       }
-      const ok = await window.inkslateApi.file.exportPdf({ title, html, watermark })
+      const ok = await window.inkslateApi.file.exportPdf({ title, html, watermark, pageSize, singlePage })
       if (!ok) console.log('PDF 导出已取消')
     } catch (e) {
       console.error('PDF 导出失败:', e)
@@ -1572,7 +1572,7 @@ export function Sidebar() {
               boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
             }}
           >
-            <h3 style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--text-primary)' }}>导出 PDF - 添加文字水印</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--text-primary)' }}>导出 PDF</h3>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>水印文字（留空则不加水印）</div>
             <input
               autoFocus
@@ -1581,9 +1581,9 @@ export function Sidebar() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
-                  const { nodeId, value } = pdfExportDialog
+                  const { nodeId, value, pageSize, singlePage } = pdfExportDialog
                   setPdfExportDialog(null)
-                  doExportPdf(nodeId, value.trim())
+                  doExportPdf(nodeId, value.trim(), pageSize, singlePage)
                 } else if (e.key === 'Escape') {
                   e.preventDefault()
                   setPdfExportDialog(null)
@@ -1602,6 +1602,36 @@ export function Sidebar() {
                 boxSizing: 'border-box'
               }}
             />
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4, marginTop: 10 }}>纸张尺寸</div>
+            <select
+              value={pdfExportDialog.pageSize}
+              onChange={(e) => setPdfExportDialog({ ...pdfExportDialog, pageSize: e.target.value as PdfPageSize })}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                fontSize: 13,
+                border: '1px solid var(--border-color)',
+                borderRadius: 4,
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                outline: 'none',
+                boxSizing: 'border-box',
+                cursor: 'pointer'
+              }}
+            >
+              {PDF_PAGE_SIZES.map(s => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={pdfExportDialog.singlePage}
+                onChange={(e) => setPdfExportDialog({ ...pdfExportDialog, singlePage: e.target.checked })}
+                style={{ cursor: 'pointer' }}
+              />
+              不分页（导出为单页长图）
+            </label>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
               <button
                 onClick={() => setPdfExportDialog(null)}
@@ -1619,9 +1649,9 @@ export function Sidebar() {
               </button>
               <button
                 onClick={() => {
-                  const { nodeId, value } = pdfExportDialog
+                  const { nodeId, value, pageSize, singlePage } = pdfExportDialog
                   setPdfExportDialog(null)
-                  doExportPdf(nodeId, value.trim())
+                  doExportPdf(nodeId, value.trim(), pageSize, singlePage)
                 }}
                 style={{
                   padding: '6px 14px',

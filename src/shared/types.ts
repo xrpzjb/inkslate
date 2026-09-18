@@ -327,3 +327,58 @@ export const IPC_CHANNELS = {
   /** 渲染端回传确认结果（渲染端 → 主进程，单向事件） */
   SSH_CONFIRM_RESPONSE: 'ssh:confirm:response'
 } as const
+
+/** PDF 导出纸张尺寸 */
+export type PdfPageSize = 'A4' | 'A3' | 'A5' | 'Letter' | '1024' | '1440' | '1920'
+
+export interface PdfPageSizeInfo {
+  key: PdfPageSize
+  label: string
+  /** 纸张宽度（pt，1pt = 1/72in），用于计算渲染窗口的 CSS 像素宽高 */
+  widthPt: number
+  /** 纸张高度（pt，1pt = 1/72in），用于计算渲染窗口的 CSS 像素宽高 */
+  heightPt: number
+  /** printToPDF pageSize 参数：标准纸张传内置名字符串，自定义传英寸单位的 {width, height} */
+  printPageSize: 'A4' | 'A3' | 'A5' | 'Letter' | { width: number; height: number }
+}
+
+const PX_PER_PT = 96 / 72
+const PX_PER_IN = 96
+const MARGIN_IN = 0.4
+const MARGIN_PT = MARGIN_IN * 72
+
+/** 屏幕像素尺寸（按 16:10 宽高比补高度）换算成纸张尺寸信息。
+ *  widthPt/heightPt 供渲染窗口计算 CSS 像素宽高；
+ *  printToPDF 的自定义纸张宽高单位是英寸（与内置纸张字符串走同一下游），
+ *  若直接传 pt 页面会被放大 72 倍，必须换算成英寸。 */
+function screenPxToSize (px: number): Omit<PdfPageSizeInfo, 'key' | 'label'> {
+  const heightPx = Math.round(px * 10 / 16)
+  return {
+    widthPt: Math.round((px / PX_PER_PT) * 100) / 100,
+    heightPt: Math.round((heightPx / PX_PER_PT) * 100) / 100,
+    printPageSize: { width: px / PX_PER_IN, height: heightPx / PX_PER_IN }
+  }
+}
+
+export const PDF_PAGE_SIZES: PdfPageSizeInfo[] = [
+  { key: 'A4', label: 'A4（默认）', widthPt: 595.28, heightPt: 841.89, printPageSize: 'A4' },
+  { key: 'A3', label: 'A3', widthPt: 841.89, heightPt: 1190.55, printPageSize: 'A3' },
+  { key: 'A5', label: 'A5', widthPt: 419.53, heightPt: 595.28, printPageSize: 'A5' },
+  { key: 'Letter', label: 'Letter', widthPt: 612, heightPt: 792, printPageSize: 'Letter' },
+  { key: '1024', label: '1024px 宽屏', ...screenPxToSize(1024) },
+  { key: '1440', label: '1440px 宽屏', ...screenPxToSize(1440) },
+  { key: '1920', label: '1920px 宽屏', ...screenPxToSize(1920) }
+]
+
+/** 获取纸张尺寸信息，默认 A4 */
+export function getPdfPageSizeInfo (key?: PdfPageSize): PdfPageSizeInfo {
+  return PDF_PAGE_SIZES.find(s => s.key === (key || 'A4')) || PDF_PAGE_SIZES[0]
+}
+
+/** 根据纸张尺寸计算隐藏窗口的内容区域尺寸（CSS px） */
+export function getPdfContentDimensions (key?: PdfPageSize): { contentW: number; contentH: number; pageW: number; pageH: number } {
+  const info = getPdfPageSizeInfo(key)
+  const contentW = Math.ceil((info.widthPt - MARGIN_PT * 2) * PX_PER_PT)
+  const contentH = (info.heightPt - MARGIN_PT * 2) * PX_PER_PT
+  return { contentW, contentH, pageW: info.widthPt, pageH: info.heightPt }
+}

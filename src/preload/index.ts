@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult, SyncStatus, FlashThought } from '../shared/types'
+import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult, SyncStatus, FlashThought, PdfPageSize } from '../shared/types'
 
 /** preload 桥接：把 IPC 调用暴露给渲染进程 */
 
@@ -224,7 +224,7 @@ const api = {
     },
     export: (format: 'html' | 'md'): Promise<string | null> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT, format),
-    exportPdf: (payload: { title: string; html: string; watermark?: string }): Promise<boolean> =>
+    exportPdf: (payload: { title: string; html: string; watermark?: string; pageSize?: PdfPageSize; singlePage?: boolean }): Promise<boolean> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_PDF, payload),
     exportDocx: (payload: { title: string; content: string; format: Note['format']; basePath?: string; language?: string }): Promise<{ ok: boolean; message: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPORT_DOCX, payload),
