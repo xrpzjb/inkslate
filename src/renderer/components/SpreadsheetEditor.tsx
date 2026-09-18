@@ -203,7 +203,7 @@ export function SpreadsheetEditor({
         textwrap: false,
         strike: false,
         underline: false,
-        font: { name: 'Helvetica', size: 10, bold: false, italic: false }
+        font: { name: 'Helvetica', size: 12, bold: false, italic: false }
       }
     })
 
@@ -231,6 +231,68 @@ export function SpreadsheetEditor({
     // 并直接改 datas[i].name，这些操作都不触发 change 事件，导致新增的 sheet 没进 content，
     // 切走再切回来就丢了。这里包一层方法感知这些操作并保存全量数据。
     const sheetAny = sheet as any
+
+    // 底部工作表标签拖拽排序（库只提供 新增/删除/重命名/切换，没有排序）。
+    // 顺序同时存在于三处：sheet.datas（决定 getData() 与切换时的索引）、
+    // bottombar.items、bottombar.dataNames + 标签 DOM，这里一起维护保持一致。
+    const bb: any = sheetAny.bottombar
+    let dragFrom = -1
+    const clearDropMarks = () => {
+      if (!bb) return
+      bb.items.forEach((it: any) => { if (it.el) it.el.classList.remove('sheet-drag-over') })
+    }
+    const moveSheet = (from: number, to: number) => {
+      if (!bb || from < 0 || to < 0 || from === to) return
+      const datas = sheetAny.datas as any[]
+      const items = bb.items as any[]
+      const names = bb.dataNames as string[]
+      if (from >= datas.length || to >= datas.length) return
+      const [d] = datas.splice(from, 1); datas.splice(to, 0, d)
+      const [it] = items.splice(from, 1); items.splice(to, 0, it)
+      const [nm] = names.splice(from, 1); names.splice(to, 0, nm)
+      // 按新顺序重排标签 DOM（appendChild 会把节点移到末尾，循环一遍即完成重排）
+      items.forEach((x: any) => bb.menuEl.el.appendChild(x.el))
+      bb.moreEl.reset(names)
+      emitFullData('structural')
+    }
+    const wireSheetDrag = (item: any) => {
+      if (!bb || !item || !item.el) return
+      const el = item.el as HTMLElement
+      if (el.dataset.sheetDragWired) return
+      el.dataset.sheetDragWired = '1'
+      el.draggable = true
+      el.style.cursor = 'grab'
+      el.title = '拖拽调整工作表顺序'
+      el.addEventListener('dragstart', (e: DragEvent) => {
+        dragFrom = bb.items.indexOf(item)
+        el.style.opacity = '0.5'
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move'
+          try { e.dataTransfer.setData('text/plain', String(dragFrom)) } catch {}
+        }
+      })
+      el.addEventListener('dragend', () => {
+        el.style.opacity = ''
+        clearDropMarks()
+        dragFrom = -1
+      })
+      el.addEventListener('dragover', (e: DragEvent) => {
+        if (dragFrom < 0) return
+        e.preventDefault()
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+        clearDropMarks()
+        el.classList.add('sheet-drag-over')
+      })
+      el.addEventListener('dragleave', () => el.classList.remove('sheet-drag-over'))
+      el.addEventListener('drop', (e: DragEvent) => {
+        e.preventDefault()
+        const to = bb.items.indexOf(item)
+        el.classList.remove('sheet-drag-over')
+        moveSheet(dragFrom, to)
+        dragFrom = -1
+      })
+    }
+
     const origAddSheet = sheetAny.addSheet.bind(sheet)
     sheetAny.addSheet = (name?: string, active = true) => {
       const d = origAddSheet(name, active)
@@ -243,6 +305,8 @@ export function SpreadsheetEditor({
           if (!loadingRef.current) emitFullData('structural')
         }
       })
+      // 新增的工作表标签也要能拖拽排序
+      wireSheetDrag(bb && bb.items[bb.items.length - 1])
       if (!loadingRef.current) emitFullData('structural')
       return d
     }
@@ -259,6 +323,8 @@ export function SpreadsheetEditor({
     } finally {
       loadingRef.current = false
     }
+    // loadData 已按当前顺序建好所有标签，逐一接上拖拽排序
+    if (bb) bb.items.forEach(wireSheetDrag)
     // 通过 change 回调把最新数据写回 content（改用 getData() 拿全量，避免截断成单 sheet）
     sheet.change(() => {
       emitFullData()

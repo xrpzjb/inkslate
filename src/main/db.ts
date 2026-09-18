@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { Notebook, Note, AppSettings, FlashThought } from '../shared/types'
 import { isEncryptedContent, decryptWithCachedPassword, encryptWithCachedPassword, encryptNoteContent, decryptNoteContent, hasCachedPassword, cachePassword, removeCachedPassword, makePasswordVerifier, checkPasswordVerifier, decryptWithKey, saltOfEncrypted, deriveKeyFromSalt } from './crypto'
+import { GIT_NET_SETTINGS_DEFAULTS } from '../shared/gitNet'
 
 // 类型已经在函数内部使用，下面是接口占位
 export type { Notebook, Note, AppSettings, FlashThought }
@@ -37,7 +38,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     authorEmail: 'inkslate@local',
     username: '',
     configured: false,
-    initialized: false
+    initialized: false,
+    // 慢网络默认放宽：单次请求 30 分钟、空闲 120 秒判定断流、网络失败最多尝试 5 次
+    requestTimeoutMinutes: GIT_NET_SETTINGS_DEFAULTS.requestTimeoutMinutes,
+    idleTimeoutSeconds: GIT_NET_SETTINGS_DEFAULTS.idleTimeoutSeconds,
+    maxRetries: GIT_NET_SETTINGS_DEFAULTS.maxRetries
   }
 }
 

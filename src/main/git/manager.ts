@@ -3,6 +3,20 @@ import path from 'node:path'
 import { app, safeStorage } from 'electron'
 import * as git from 'isomorphic-git'
 import { gitHttp as http } from './httpClient'
+import {
+  backoffDelay,
+  clampInt,
+  configureGitNet,
+  DEFAULT_IDLE_TIMEOUT_SECONDS,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_REQUEST_TIMEOUT_MINUTES,
+  describeDuration,
+  GIT_NET_LIMITS,
+  getGitNetTuning,
+  isRetryableError,
+  sleep,
+  tuningFromSettings
+} from './netRetry'
 import { AppSettings, Note } from '../../shared/types'
 import { dbApi, getNotesDir, getNotebookPath, getNotebookFilePath, slugify, getUniqueFileName, findFileRecursively } from '../db'
 
@@ -57,6 +71,8 @@ export class GitManager {
   private lastMergeDriverBackupCount: number = 0
   /** 最近一次 merge 中冲突的笔记内容文件（本地版本，pull 完成后据此生成"冲突副本"笔记） */
   private lastNoteConflicts: { relPath: string; content: string }[] = []
+  /** 网络操作互斥：慢网络下单次同步可能持续很久，避免自动同步与手动同步并发操作同一工作区 */
+  private netOpBusy = false
 
   static getInstance(): GitManager {
     if (!GitManager.instance) {
@@ -68,8 +84,12 @@ export class GitManager {
   private constructor() {
     try {
       const settings = dbApi.getSettings?.()
-      if (settings?.gitSync?.configured) {
-        this.configure(settings.gitSync)
+      if (settings?.gitSync) {
+        // 即使还没配置完，也先把超时/重试参数应用到网络层
+        this.applyNetTuning(settings.gitSync)
+        if (settings.gitSync.configured) {
+          this.configure(settings.gitSync)
+        }
       }
     } catch (e) {
       console.error('GitManager init failed:', e)
@@ -105,19 +125,103 @@ export class GitManager {
     }
     this.decryptedToken = decryptedToken
     this.config = { ...config }
+    // 超时/重试参数跟着配置走：改完设置立即生效，不用重启
+    this.applyNetTuning(config)
+  }
+
+  /**
+   * 把「Git 同步设置」里的超时/重试参数同步给网络层（httpClient）
+   * 单位换算：分钟 → 毫秒；未设置的项回落到默认值
+   */
+  private applyNetTuning(source?: AppSettings['gitSync'] | null): void {
+    const tuning = configureGitNet(tuningFromSettings(source ?? this.config))
+    console.log(
+      `[git] 网络参数：请求超时 ${describeDuration(tuning.requestTimeoutMs)}、` +
+      `空闲断流 ${tuning.idleTimeoutMs > 0 ? describeDuration(tuning.idleTimeoutMs) : '关闭'}、` +
+      `请求级重试最多 ${tuning.maxRetries} 次`
+    )
+  }
+
+  /**
+   * 网络操作互斥锁：拿到锁返回 null，已经有任务在跑返回给用户看的提示。
+   * 慢网络下单个操作可能持续几十分钟，自动同步（每 5 分钟一轮）与手动同步很容易撞车，
+   * 两个 isomorphic-git 操作同时改同一工作区会损坏 index，所以这里直接拒绝后来者。
+   */
+  private acquireNetOp(): string | null {
+    if (this.netOpBusy) return '已有 Git 同步任务正在进行，请等它结束后再试'
+    this.netOpBusy = true
+    return null
+  }
+
+  private releaseNetOp(): void {
+    this.netOpBusy = false
+  }
+
+  /**
+   * 操作级重试：整个 push / fetch / clone 失败后重跑。
+   *
+   * 为什么请求级重试不够：传输中途断流（传到一半 socket 断了）的错误发生在响应体读取期间，
+   * 那时 httpClient 的请求已经返回，只能在这一层兜住。
+   * 只重试网络类错误（isRetryableError），认证失败/冲突/非快进等直接抛出，避免无谓重试。
+   * 尝试次数跟随设置里的「重试次数」，但最多 3 次（请求级已经重试过一轮，这里不必再来一大轮）。
+   */
+  private async withNetRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    const maxAttempts = Math.max(1, Math.min(getGitNetTuning().maxRetries, 3))
+    let lastErr: unknown
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await fn()
+      } catch (e) {
+        lastErr = e
+        if (attempt >= maxAttempts || !isRetryableError(e)) throw e
+        const delay = backoffDelay(attempt) * 2
+        console.warn(
+          `[git] ${label} 第 ${attempt}/${maxAttempts} 次失败：${(e as any)?.message || e}；` +
+          `${describeDuration(delay)} 后整体重试`
+        )
+        await sleep(delay)
+      }
+    }
+    throw lastErr
   }
 
   /** 暴露给 IPC：保存配置时调，先把密码/token 加密再写库 */
-  saveConfig(repoUrl: string, branch: string, authorName: string, authorEmail: string, username: string, token: string): AppSettings['gitSync'] {
+  saveConfig(payload: {
+    repoUrl: string
+    branch: string
+    authorName: string
+    authorEmail: string
+    username: string
+    token: string
+    requestTimeoutMinutes?: number
+    idleTimeoutSeconds?: number
+    maxRetries?: number
+  }): AppSettings['gitSync'] {
+    const { repoUrl, branch, authorName, authorEmail, username, token } = payload
     // 检测 SSH URL：isomorphic-git 只支持 HTTP/HTTPS，不支持 SSH
     const sshHint = this.detectSshUrl(repoUrl)
     if (sshHint) {
       throw new Error(sshHint)
     }
+    // 密码/token：留空 = 不修改（设置弹窗不回显已存 token），只有真填了才重新加密
     let encryptedToken: string | undefined
-    if (token && safeStorage.isEncryptionAvailable()) {
-      encryptedToken = safeStorage.encryptString(token).toString('base64')
+    if (token) {
+      if (safeStorage.isEncryptionAvailable()) {
+        encryptedToken = safeStorage.encryptString(token).toString('base64')
+      }
+    } else {
+      encryptedToken = this.config?.encryptedToken ?? dbApi.getSettings().gitSync?.encryptedToken
     }
+    // 超时/重试参数：钳到合法范围，保证存进库的永远是有效值
+    const requestTimeoutMinutes = clampInt(
+      payload.requestTimeoutMinutes, GIT_NET_LIMITS.requestTimeoutMinutes.min, GIT_NET_LIMITS.requestTimeoutMinutes.max, DEFAULT_REQUEST_TIMEOUT_MINUTES
+    )
+    const idleTimeoutSeconds = clampInt(
+      payload.idleTimeoutSeconds, GIT_NET_LIMITS.idleTimeoutSeconds.min, GIT_NET_LIMITS.idleTimeoutSeconds.max, DEFAULT_IDLE_TIMEOUT_SECONDS
+    )
+    const maxRetries = clampInt(
+      payload.maxRetries, GIT_NET_LIMITS.maxRetries.min, GIT_NET_LIMITS.maxRetries.max, DEFAULT_MAX_RETRIES
+    )
     const newConfig: AppSettings['gitSync'] = {
       repoUrl,
       branch: branch || 'main',
@@ -125,10 +229,13 @@ export class GitManager {
       authorEmail: authorEmail || 'inkslate@local',
       username: username || '',
       encryptedToken,
-      configured: !!(repoUrl && username && token),
-      initialized: this.isInitialized()
+      configured: !!(repoUrl && username && (token || encryptedToken)),
+      initialized: this.isInitialized(),
+      requestTimeoutMinutes,
+      idleTimeoutSeconds,
+      maxRetries
     }
-    // 写库
+    // 写库（updateSettings 做的是浅合并，lastSyncAt 等没在这里给的字段会保留原值）
     dbApi.updateSettings({ gitSync: newConfig })
     // 内存同步
     this.configure(newConfig)
@@ -199,6 +306,16 @@ export class GitManager {
 
   /** 从远端 clone 到工作区（工作区必须为空或不存在） */
   async cloneRepo(url: string): Promise<void> {
+    const busy = this.acquireNetOp()
+    if (busy) throw new Error(busy)
+    try {
+      await this.doCloneRepo(url)
+    } finally {
+      this.releaseNetOp()
+    }
+  }
+
+  private async doCloneRepo(url: string): Promise<void> {
     const sshHint = this.detectSshUrl(url)
     if (sshHint) throw new Error(sshHint)
     const dir = this.getWorkDir()
@@ -207,13 +324,13 @@ export class GitManager {
       throw new Error('工作区非空，无法 clone。请先清空 notes 目录或备份后重试。')
     }
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    await git.clone({
+    await this.withNetRetry('clone', () => git.clone({
       fs, http, dir, url,
       ref: this.config?.branch || 'main',
       singleBranch: true,
       depth: 1,
       onAuth: this.auth
-    })
+    }))
     this.markInitialized()
     // clone 后全量替换本地 SQLite（clone 语义就是用远端覆盖本地，不做合并）
     try {
@@ -876,6 +993,16 @@ export class GitManager {
 
   /** push 到 origin/{branch} */
   async push(): Promise<{ ok: boolean; message: string }> {
+    const busy = this.acquireNetOp()
+    if (busy) return { ok: false, message: busy }
+    try {
+      return await this.doPush()
+    } finally {
+      this.releaseNetOp()
+    }
+  }
+
+  private async doPush(): Promise<{ ok: boolean; message: string }> {
     if (!this.isConfigured()) return { ok: false, message: 'Git 未配置' }
     if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化' }
     if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写' }
@@ -886,20 +1013,119 @@ export class GitManager {
     try {
       // 确保 remote origin 存在且 URL 正确
       await this.ensureRemote()
-      const result = await git.push({
-        fs, http, dir,
-        remote: 'origin',
-        ref: branch,
-        onAuth: this.auth
-      })
-      // isomorphic-git push 返回 { ok, error? }
-      if (result && !(result as any).ok) {
-        return { ok: false, message: (result as any).error?.message || 'push 失败（可能需要先 pull）' }
+
+      // ⚠️ 慢网络下的推送重试规则（踩坑后写的，别退回去）
+      //
+      // 报错原文：One or more branches were not updated: - refs/heads/main: reference already exists
+      // 这句是服务端给的，含义是「客户端要求创建一个已存在的 ref」，也就是这次 push 发出的
+      // old oid 是全 0。isomorphic-git 的 old oid 取自 push 前的 ref 广告
+      // （httpRemote.refs.get(fullRemoteRef) || 全0）：广告一旦被截断，它的 pkt-line 读取器
+      // 会把流错误当成 flush 包，parseRefsAdResponse 便误以为「远端没有任何 ref」，
+      // 于是把一次更新发成了「新建分支」，服务端当然拒绝。
+      // 所以这不是 ref 锁、也不是快进冲突，重试同一条推送没有意义；广告的完整性由
+      // httpClient.ts 的 bufferInfoRefsBody 兜底（读不全就抛可重试的网络错误）。
+      // 另外：push 的 POST 绝不在请求层重发（重发会撞服务端），重试必须重新发现远端，
+      // 并且先判断「是不是其实已经推上去了」——响应丢了但服务端已接受，在慢网络下是常态。
+      const maxPushAttempts = 3
+      let lastErr: any = null
+      for (let attempt = 1; attempt <= maxPushAttempts; attempt++) {
+        try {
+          const result: any = await git.push({
+            fs, http, dir,
+            remote: 'origin',
+            ref: branch,
+            onAuth: this.auth
+          })
+          // 防御：某些版本会返回 { ok:false } 而不是抛错
+          if (result && !result.ok) {
+            throw new Error((result as any).error?.message || 'push 失败（可能需要先 pull）')
+          }
+          return { ok: true, message: '推送成功' }
+        } catch (e: any) {
+          lastErr = e
+          const reason = e?.message || String(e)
+
+          // ① 先确认服务端是不是已经收下了这次推送
+          const state = await this.remoteBranchState(branch)
+          if (state && state.remoteOid && state.remoteOid === state.localOid) {
+            console.warn(`[git] push 报错，但服务端 refs/heads/${branch} 已经是本地 commit，按成功处理。原始报错：${reason}`)
+            return { ok: true, message: '推送已生效（响应中断，已向服务端确认）' }
+          }
+
+          // ② 只有网络类错误、或 ref 锁/陈旧信息这类「上一轮推送还在跑」的冲突才重试；
+          //    真正的非快进冲突重试只会白等。
+          const retryable = isRetryableError(e) || this.isPushRetryableReason(reason)
+          if (attempt >= maxPushAttempts || !retryable) throw e
+
+          // 重试前必须等服务端把上一轮处理完（否则还会撞上它持有的 ref 锁）
+          const delay = Math.max(10_000, backoffDelay(attempt) * 2)
+          console.warn(
+            `[git] push 第 ${attempt}/${maxPushAttempts} 次失败：${reason}；` +
+            `${describeDuration(delay)} 后重新发现远端再推（等服务端释放 ref 锁）`
+          )
+          await sleep(delay)
+        }
       }
-      return { ok: true, message: '推送成功' }
+      throw lastErr
     } catch (e: any) {
-      return { ok: false, message: e?.message ?? 'push 失败' }
+      return { ok: false, message: await this.explainPushFailure(branch, e?.message ?? 'push 失败') }
     }
+  }
+
+  /**
+   * 是否值得重推：ref 锁冲突 / 陈旧信息 这类「上一轮推送还在跑或刚跑完」的信号。
+   * 注意不要把这些和真正的非快进冲突混在一起。
+   */
+  private isPushRetryableReason(msg: string): boolean {
+    return /cannot lock ref|stale info|unable to create|fetch first/i.test(msg)
+  }
+
+  /**
+   * 服务端 refs/heads/<branch> 现在指向哪个 commit + 本地是哪个。
+   * 用于判断「响应虽断、服务端其实已经接受」这种慢网络下的假失败。
+   */
+  private async remoteBranchState(branch: string): Promise<{ remoteOid: string; localOid: string } | null> {
+    const dir = this.getWorkDir()
+    let localOid = ''
+    try {
+      localOid = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` })
+    } catch { /* ignore */ }
+    try {
+      // 和 push 走同一条发现路径（protocolVersion 1 = receive-pack 广告）
+      const refs = await git.listServerRefs({
+        http, onAuth: this.auth, url: this.config!.repoUrl,
+        forPush: true, protocolVersion: 1
+      }) as { ref: string; oid: string }[]
+      return { remoteOid: refs.find(r => r.ref === `refs/heads/${branch}`)?.oid || '', localOid }
+    } catch (e: any) {
+      console.warn('[git] 查询服务端 ref 失败：', e?.message || e)
+      return null
+    }
+  }
+
+  /**
+   * 把推送失败翻译成能自助排查的说明：并列出服务端实际的 oid 与本地 oid。
+   */
+  private async explainPushFailure(branch: string, reason: string): Promise<string> {
+    const base = reason || 'push 失败（可能需要先 pull）'
+    const state = await this.remoteBranchState(branch)
+    const short = (o: string) => (o ? o.slice(0, 8) : '（无）')
+
+    if (!state) {
+      return `${base}。本次连服务端仓库信息都没取到，请检查网络后重试同步。`
+    }
+    const parts = [
+      base,
+      `服务端 refs/heads/${branch} = ${state.remoteOid ? short(state.remoteOid) : '（未广告）'}，本地 = ${short(state.localOid)}。`
+    ]
+    if (!state.remoteOid) {
+      parts.push('服务端这次没有广告这个分支，多半是取仓库信息时响应被网络截断；稍后重试同步即可。')
+    } else if (/reference already exists/i.test(base)) {
+      parts.push('服务端说这个分支「已存在」，说明本次推送是按「新建分支」（old oid 全 0）发出去的：拉取服务端 ref 广告时连接被截断，客户端误以为远端没有这个分支。这不是 ref 锁，重试不会成功。')
+    } else if (this.isPushRetryableReason(base)) {
+      parts.push('服务端返回的是 ref 层面的临时冲突，可稍后再同步一次。')
+    }
+    return parts.join(' ')
   }
 
   /**
@@ -933,6 +1159,25 @@ export class GitManager {
     conflicts?: number
     conflictTitles?: string[]
   }> {
+    const busy = this.acquireNetOp()
+    if (busy) return { ok: false, message: busy }
+    try {
+      return await this.doSync()
+    } finally {
+      this.releaseNetOp()
+    }
+  }
+
+  private async doSync(): Promise<{
+    ok: boolean
+    message: string
+    phase?: 'commit' | 'pull' | 'push'
+    phases?: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' }
+    pulled?: boolean
+    pushed?: boolean
+    conflicts?: number
+    conflictTitles?: string[]
+  }> {
     const phases: { commit: 'ok' | 'skipped' | 'failed'; pull: 'ok' | 'up-to-date' | 'failed'; push: 'ok' | 'up-to-date' | 'failed' } = {
       commit: 'skipped',
       pull: 'up-to-date',
@@ -954,7 +1199,7 @@ export class GitManager {
     }
 
     // Step 1: pull 远端变更（新机器拉取后重建 SQLite）
-    const pullResult = await this.pull()
+    const pullResult = await this.doPull()
 
     // Step 1.5 空库防覆盖防护（数据安全关键）
     //
@@ -1009,7 +1254,7 @@ export class GitManager {
     phases.pull = (pullResult.updated || pullResult.reconciled) ? 'ok' : 'up-to-date'
 
     // Step 3: push（commit 或 pull 后通常都有新 commit 需要推上去）
-    const pushResult = await this.push()
+    const pushResult = await this.doPush()
     if (!pushResult.ok) {
       phases.push = 'failed'
       return { ok: false, message: '推送失败：' + pushResult.message, phases, phase: 'push' }
@@ -1037,6 +1282,16 @@ export class GitManager {
 
   /** pull = fetch + merge（fastForward 优先，保持线性历史） */
   async pull(): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts: number; conflictTitles: string[] }> {
+    const busy = this.acquireNetOp()
+    if (busy) return { ok: false, message: busy, updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
+    try {
+      return await this.doPull()
+    } finally {
+      this.releaseNetOp()
+    }
+  }
+
+  private async doPull(): Promise<{ ok: boolean; message: string; updated: boolean; reconciled: boolean; conflicts: number; conflictTitles: string[] }> {
     if (!this.isConfigured()) return { ok: false, message: 'Git 未配置', updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
     if (!this.isInitialized()) return { ok: false, message: 'Git 仓库未初始化', updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
     if (!this.decryptedToken) return { ok: false, message: 'Git 密码/Token 未配置，请打开 Git 设置填写', updated: false, reconciled: false, conflicts: 0, conflictTitles: [] }
@@ -1055,13 +1310,13 @@ export class GitManager {
       } catch {}
 
       // fetch 远端（FETCH_HEAD = 远端 HEAD）
-      await git.fetch({
+      await this.withNetRetry('fetch', () => git.fetch({
         fs, http, dir,
         remote: 'origin',
         ref: branch,
         singleBranch: true,
         onAuth: this.auth
-      })
+      }))
       let fetchHeadOid: string
       try {
         fetchHeadOid = await git.resolveRef({ fs, dir, ref: 'FETCH_HEAD' })
@@ -1208,6 +1463,24 @@ export class GitManager {
     localHeadNoteCount: number
     remoteNoteCount: number
   }> {
+    const busy = this.acquireNetOp()
+    if (busy) {
+      return { ok: false, message: busy, localNoteCount: 0, localHeadNoteCount: 0, remoteNoteCount: 0 }
+    }
+    try {
+      return await this.doInspectRemote()
+    } finally {
+      this.releaseNetOp()
+    }
+  }
+
+  private async doInspectRemote(): Promise<{
+    ok: boolean
+    message: string
+    localNoteCount: number
+    localHeadNoteCount: number
+    remoteNoteCount: number
+  }> {
     const base = { ok: false, message: '', localNoteCount: 0, localHeadNoteCount: 0, remoteNoteCount: 0 }
     if (!this.isConfigured()) return { ...base, message: 'Git 未配置' }
     if (!this.isInitialized()) return { ...base, message: 'Git 仓库未初始化' }
@@ -1218,13 +1491,13 @@ export class GitManager {
     const branch = this.config?.branch || 'main'
     try {
       await this.ensureRemote()
-      await git.fetch({
+      await this.withNetRetry('fetch', () => git.fetch({
         fs, http, dir,
         remote: 'origin',
         ref: branch,
         singleBranch: true,
         onAuth: this.auth
-      })
+      }))
       let fetchHeadOid: string
       try {
         fetchHeadOid = await git.resolveRef({ fs, dir, ref: 'FETCH_HEAD' })

@@ -1,11 +1,19 @@
 import { useState } from 'react'
 import { useAppStore } from '../store/app'
 import { X, Save, Loader2, CheckCircle2, AlertCircle, GitBranch, Download, FolderPlus, RefreshCw } from 'lucide-react'
+import { GIT_NET_LIMITS, GIT_NET_SETTINGS_DEFAULTS } from '../../shared/gitNet'
+
+/** 解析输入框里的整数；非法输入返回 NaN，方便按字段给出精确提示 */
+function parseIntField(raw: string): number {
+  const n = parseInt(String(raw ?? '').trim(), 10)
+  return Number.isFinite(n) ? n : NaN
+}
 
 /**
  * Git 同步设置弹窗
  * - 配置仓库 URL / 分支 / author / token
  * - token 用 safeStorage 加密存（主进程处理）
+ * - 慢网络可调：单次请求超时（分钟）、空闲断流判定（秒）、网络失败重试次数
  * - 三种初始化路径：
  *   1. 已有本地数据 → git init（把现有数据变成首个 commit）
  *   2. 空工作区 + 远端有仓库 → git clone（拉取远端）
@@ -21,6 +29,10 @@ export function GitSettingsDialog({ onClose }: { onClose: () => void }) {
   const [authorEmail, setAuthorEmail] = useState(gitSync?.authorEmail ?? 'inkslate@local')
   const [username, setUsername] = useState(gitSync?.username ?? '')
   const [token, setToken] = useState('') // 不回显已存密码/token（安全）
+  // 慢网络参数：用字符串存，允许用户输入过程中出现空串
+  const [timeoutMinutes, setTimeoutMinutes] = useState(String(gitSync?.requestTimeoutMinutes ?? GIT_NET_SETTINGS_DEFAULTS.requestTimeoutMinutes))
+  const [idleSeconds, setIdleSeconds] = useState(String(gitSync?.idleTimeoutSeconds ?? GIT_NET_SETTINGS_DEFAULTS.idleTimeoutSeconds))
+  const [retries, setRetries] = useState(String(gitSync?.maxRetries ?? GIT_NET_SETTINGS_DEFAULTS.maxRetries))
 
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
@@ -37,6 +49,22 @@ export function GitSettingsDialog({ onClose }: { onClose: () => void }) {
       setResult({ ok: false, message: '请填写用户名' })
       return
     }
+    // 超时/重试参数：越界或非法输入直接拦下来，避免存进去一个不生效的值
+    const timeoutMin = parseIntField(timeoutMinutes)
+    if (!Number.isFinite(timeoutMin) || timeoutMin < GIT_NET_LIMITS.requestTimeoutMinutes.min || timeoutMin > GIT_NET_LIMITS.requestTimeoutMinutes.max) {
+      setResult({ ok: false, message: `请求超时需在 ${GIT_NET_LIMITS.requestTimeoutMinutes.min}-${GIT_NET_LIMITS.requestTimeoutMinutes.max} 分钟之间` })
+      return
+    }
+    const idleSec = parseIntField(idleSeconds)
+    if (!Number.isFinite(idleSec) || idleSec < GIT_NET_LIMITS.idleTimeoutSeconds.min || idleSec > GIT_NET_LIMITS.idleTimeoutSeconds.max) {
+      setResult({ ok: false, message: `空闲断流判定需在 ${GIT_NET_LIMITS.idleTimeoutSeconds.min}-${GIT_NET_LIMITS.idleTimeoutSeconds.max} 秒之间（0 = 关闭）` })
+      return
+    }
+    const retryCount = parseIntField(retries)
+    if (!Number.isFinite(retryCount) || retryCount < GIT_NET_LIMITS.maxRetries.min || retryCount > GIT_NET_LIMITS.maxRetries.max) {
+      setResult({ ok: false, message: `重试次数需在 ${GIT_NET_LIMITS.maxRetries.min}-${GIT_NET_LIMITS.maxRetries.max} 次之间` })
+      return
+    }
     setBusy(true)
     setResult(null)
     try {
@@ -46,7 +74,10 @@ export function GitSettingsDialog({ onClose }: { onClose: () => void }) {
         authorName: authorName.trim() || 'inkslate',
         authorEmail: authorEmail.trim() || 'inkslate@local',
         username: username.trim(),
-        token: token // 空字符串表示不修改密码
+        token: token, // 空字符串表示不修改密码
+        requestTimeoutMinutes: timeoutMin,
+        idleTimeoutSeconds: idleSec,
+        maxRetries: retryCount
       })
       setResult({ ok: true, message: '配置已保存' })
       // 重新加载 settings 让 UI 同步
@@ -216,6 +247,51 @@ export function GitSettingsDialog({ onClose }: { onClose: () => void }) {
             <div className="dialog-hint">
               支持账号密码或 Token，用 safeStorage 加密存储在本地。GitHub 已禁用密码，请用 Token（Settings → Developer settings → Personal access tokens）
             </div>
+          </div>
+
+          {/* 慢网络参数：网速特别慢时把超时拉长、重试次数调多 */}
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div className="dialog-field" style={{ flex: 1 }}>
+              <label className="dialog-field-label">请求超时（分钟）</label>
+              <input
+                type="number"
+                min={GIT_NET_LIMITS.requestTimeoutMinutes.min}
+                max={GIT_NET_LIMITS.requestTimeoutMinutes.max}
+                value={timeoutMinutes}
+                onChange={(e) => setTimeoutMinutes(e.target.value)}
+                placeholder={String(GIT_NET_SETTINGS_DEFAULTS.requestTimeoutMinutes)}
+                className="dialog-input"
+              />
+            </div>
+            <div className="dialog-field" style={{ flex: 1 }}>
+              <label className="dialog-field-label">空闲断流判定（秒）</label>
+              <input
+                type="number"
+                min={GIT_NET_LIMITS.idleTimeoutSeconds.min}
+                max={GIT_NET_LIMITS.idleTimeoutSeconds.max}
+                value={idleSeconds}
+                onChange={(e) => setIdleSeconds(e.target.value)}
+                placeholder={String(GIT_NET_SETTINGS_DEFAULTS.idleTimeoutSeconds)}
+                className="dialog-input"
+              />
+            </div>
+            <div className="dialog-field" style={{ flex: 1 }}>
+              <label className="dialog-field-label">重试次数</label>
+              <input
+                type="number"
+                min={GIT_NET_LIMITS.maxRetries.min}
+                max={GIT_NET_LIMITS.maxRetries.max}
+                value={retries}
+                onChange={(e) => setRetries(e.target.value)}
+                placeholder={String(GIT_NET_SETTINGS_DEFAULTS.maxRetries)}
+                className="dialog-input"
+              />
+            </div>
+          </div>
+          <div className="dialog-hint" style={{ marginBottom: 12 }}>
+            网速特别慢时可以调到「超时 60 分钟 / 空闲 180 秒 / 重试 8 次」。
+            单次请求最长等这么久；空闲超过设定秒数没有任何数据就判定断流并自动重试；
+            网络抖动（连接失败、断流、429/5xx）按重试次数自动重连，认证失败等不会重试。
           </div>
 
           {result && (

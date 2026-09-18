@@ -639,7 +639,7 @@ ${watermarkHtml}
 
   // ============ Git 同步 ============
 
-  /** 保存 Git 配置（URL/branch/author/username/password），密码用 safeStorage 加密 */
+  /** 保存 Git 配置（URL/branch/author/username/password/超时重试），密码用 safeStorage 加密 */
   ipcMain.handle(IPC_CHANNELS.GIT_CONFIGURE, async (_, payload: {
     repoUrl: string
     branch: string
@@ -647,8 +647,11 @@ ${watermarkHtml}
     authorEmail: string
     username: string
     token: string
+    requestTimeoutMinutes?: number
+    idleTimeoutSeconds?: number
+    maxRetries?: number
   }): Promise<AppSettings['gitSync']> => {
-    return gitMgr.saveConfig(payload.repoUrl, payload.branch, payload.authorName, payload.authorEmail, payload.username, payload.token)
+    return gitMgr.saveConfig(payload)
   })
 
   /** 工作区变更状态 */

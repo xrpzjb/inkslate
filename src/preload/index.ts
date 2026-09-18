@@ -75,8 +75,18 @@ const api = {
 
   /** Git 同步 */
   git: {
-    /** 保存配置（密码/token 加密存） */
-    configure: (payload: { repoUrl: string; branch: string; authorName: string; authorEmail: string; username: string; token: string }): Promise<any> =>
+    /** 保存配置（密码/token 加密存；超时/重试参数可省略，省略即用默认值） */
+    configure: (payload: {
+      repoUrl: string
+      branch: string
+      authorName: string
+      authorEmail: string
+      username: string
+      token: string
+      requestTimeoutMinutes?: number
+      idleTimeoutSeconds?: number
+      maxRetries?: number
+    }): Promise<any> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_CONFIGURE, payload),
     /** 工作区变更状态 */
     status: (): Promise<{ filepath: string; status: string }[]> =>

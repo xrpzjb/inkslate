@@ -161,6 +161,21 @@ export interface AppSettings {
     initialized: boolean
     /** 最近一次同步（push/pull 任一成功）的时间戳，毫秒 */
     lastSyncAt?: number
+    /**
+     * 单次 Git 请求的超时时间（分钟）。网速特别慢时可以调大，
+     * 默认 30 分钟。范围 1-360。
+     */
+    requestTimeoutMinutes?: number
+    /**
+     * 连接空闲多久（秒）没有收到数据就判定断流并重试，0 = 关闭该判定。
+     * 默认 120 秒：这样"连上但卡住"能很快被发现，不用干等到整体超时。范围 0-3600。
+     */
+    idleTimeoutSeconds?: number
+    /**
+     * 网络类失败的最大尝试次数（含首次），默认 5 次。范围 1-20。
+     * 请求级按此重试；整体操作（push/fetch/clone）另按此值重试，最多 3 次。
+     */
+    maxRetries?: number
   }
   /** AI 大模型配置 */
   ai?: {

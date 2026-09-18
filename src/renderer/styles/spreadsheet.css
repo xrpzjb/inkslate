@@ -43,6 +43,10 @@
   background: var(--bg-primary);
   color: var(--text-primary);
 }
+/* 拖拽排序时高亮落点标签（内阴影，不引起布局抖动） */
+.spreadsheet-view .x-spreadsheet-bottombar .x-spreadsheet-menu > li.sheet-drag-over {
+  box-shadow: inset 2px 0 0 0 var(--accent-color);
+}
 
 /* 下拉 / 右键菜单 / 建议 / 筛选 */
 .spreadsheet-view .x-spreadsheet-dropdown-content,
