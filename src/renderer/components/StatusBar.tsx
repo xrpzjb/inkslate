@@ -259,13 +259,20 @@ export function StatusBar() {
       userSelect: 'none'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span
+          style={{ display: 'flex', alignItems: 'center', gap: 4, color: saveStatus.error ? '#ef4444' : undefined }}
+          title={saveStatus.error ? `保存到本地失败：${saveStatus.error}（内容仍保留在编辑器草稿中）` : '本地保存状态（与 Git 同步无关）'}
+        >
           <Save size={11} />
           {saveStatus.saving
             ? '保存中...'
-            : saveStatus.lastSaved
-              ? `已保存于 ${formatTime(saveStatus.lastSaved)}`
-              : ''}
+            : saveStatus.error
+              ? '保存失败'
+              : saveStatus.dirty
+                ? '未保存'
+                : saveStatus.lastSaved
+                  ? `已保存于 ${formatTime(saveStatus.lastSaved)}`
+                  : ''}
         </span>
         {currentNote && (
           <>

@@ -104,12 +104,18 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   }
   // Anthropic 格式的模型（需要不同的 API 端点）
   const anthropicModels = new Set(['minimax-m3', 'minimax-m2.7', 'minimax-m2.5', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus'])
+  // 「模型」下拉里代表「我要自己填」的哨兵值（真实模型名不会长这样）
+  const CUSTOM_MODEL_OPTION = '__custom__'
   const [aiProvider, setAiProvider] = useState(settings?.ai?.provider ?? 'deepseek')
   const [aiUrl, setAiUrl] = useState(settings?.ai?.apiUrl ?? aiPresets['deepseek'].url)
   const [aiModel, setAiModel] = useState(settings?.ai?.model ?? aiPresets['deepseek'].model)
   const [aiKey, setAiKey] = useState(settings?.ai?.apiKey ?? '')
   const [aiProxyUrl, setAiProxyUrl] = useState(settings?.ai?.proxyUrl ?? '')
   const [aiTesting, setAiTesting] = useState(false)
+  // 当前提供商的预设模型列表（自定义提供商没有 → 空数组）
+  const aiModelOptions = aiModels[aiProvider] ?? []
+  // 自定义提供商一律走手填输入框；预设提供商上出现列表外的模型名（历史配置/手填）也走输入框
+  const showModelInput = aiProvider === 'custom' || !aiModelOptions.includes(aiModel)
 
   const persist = (patch: Record<string, unknown>) => {
     const cur = useAppStore.getState().settings
@@ -162,10 +168,52 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const handleAiProviderChange = (prov: string) => {
     setAiProvider(prov)
     const preset = aiPresets[prov]
-    if (preset) {
-      setAiUrl(preset.url)
-      setAiModel(preset.model)
+    if (!preset) return
+    // 切到「自定义」时保留已填的地址/模型名，方便在已有配置上改名试别的端点；
+    // 其余预设则套用该提供商的默认地址与默认模型。
+    const nextUrl = prov === 'custom' ? (aiUrl || preset.url) : preset.url
+    const nextModel = prov === 'custom' ? aiModel : preset.model
+    setAiUrl(nextUrl)
+    setAiModel(nextModel)
+    // 提供商本身也要落库：不能等输入框 onBlur（用户可能只切下拉就去点「测试连接」）
+    persist({
+      ai: {
+        provider: prov as any,
+        apiUrl: nextUrl,
+        model: nextModel,
+        apiKey: aiKey,
+        proxyUrl: aiProxyUrl,
+        configured: !!(nextUrl && aiKey)
+      } as any
+    })
+  }
+
+  /** 切换「模型」下拉：设为 __custom__ 时进入自由输入，其余选中即生效 */
+  const handleAiModelChange = (value: string) => {
+    if (value === CUSTOM_MODEL_OPTION) {
+      // 自由输入：清成空串让用户自己填，输入框走 aiModel state
+      setAiModel('')
+      return
     }
+    setAiModel(value)
+    if (aiProvider === 'opencode') {
+      const base = 'https://opencode.ai/zen/go/v1'
+      setAiUrl(anthropicModels.has(value) ? `${base}/messages` : `${base}/chat/completions`)
+    }
+    persist({
+      ai: {
+        provider: aiProvider as any,
+        apiUrl: aiProvider === 'opencode'
+          ? (anthropicModels.has(value)
+              ? 'https://opencode.ai/zen/go/v1/messages'
+              : 'https://opencode.ai/zen/go/v1/chat/completions')
+          : aiUrl,
+        model: value,
+        apiKey: aiKey,
+        proxyUrl: aiProxyUrl,
+        configured: !!(aiUrl && aiKey)
+      } as any
+    })
   }
 
   const saveAiConfig = () => {
@@ -251,24 +299,53 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               style={aiInputStyle}
             />
             <div style={{ marginBottom: 8 }}>
-              <select
-                value={aiModel}
-                onChange={(e) => {
-                  const m = e.target.value
-                  setAiModel(m)
-                  if (aiProvider === 'opencode') {
-                    const base = 'https://opencode.ai/zen/go/v1'
-                    setAiUrl(anthropicModels.has(m) ? `${base}/messages` : `${base}/chat/completions`)
-                  }
-                }}
-                onBlur={saveAiConfig}
-                className="settings-font-select"
-              >
-                {(aiModels[aiProvider] || aiModel ? [...new Set([...((aiModels[aiProvider] || [])), aiModel])] : []).map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>如需其他模型，切到自定义提供商手动输入</div>
+              {/* 预设提供商：下拉选模型 + 末尾「手动输入模型名」；自定义提供商没有预设列表 → 纯文本输入 */}
+              {showModelInput ? (
+                aiProvider !== 'custom' && (
+                  <select
+                    value={CUSTOM_MODEL_OPTION}
+                    onChange={(e) => {
+                      // 从手填切回预设：选中即生效；用户也可能取消（选回「手动输入」）
+                      if (e.target.value !== CUSTOM_MODEL_OPTION) handleAiModelChange(e.target.value)
+                    }}
+                    onBlur={saveAiConfig}
+                    className="settings-font-select"
+                    style={{ marginBottom: 8 }}
+                  >
+                    <option value={CUSTOM_MODEL_OPTION}>手动输入模型名</option>
+                    {aiModelOptions.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                )
+              ) : (
+                <select
+                  value={aiModel}
+                  onChange={(e) => handleAiModelChange(e.target.value)}
+                  onBlur={saveAiConfig}
+                  className="settings-font-select"
+                >
+                  {aiModelOptions.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value={CUSTOM_MODEL_OPTION}>手动输入模型名…</option>
+                </select>
+              )}
+              {showModelInput && (
+                <input
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  onBlur={saveAiConfig}
+                  placeholder="模型名，如 gpt-4o-mini / deepseek-chat"
+                  autoComplete="off"
+                  style={aiInputStyle}
+                />
+              )}
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                {aiProvider === 'custom'
+                  ? '自定义提供商：请填写模型名与完整的 OpenAI 兼容地址（如 https://host/v1/chat/completions）'
+                  : '如需其他模型，在模型下拉里选「手动输入模型名」即可自己填'}
+              </div>
             </div>
             <input
               value={aiKey}

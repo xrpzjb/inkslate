@@ -44,8 +44,12 @@ function refreshOpenNoteFromPulledData(): void {
  *
  * 竞态根因：pull 把 A 端内容落到磁盘后，编辑器内存里仍是旧内容，若 autosave 在
  * pull → commitAll 的窗口写回文件，commitAll+push 会把旧内容推上远程覆盖 A 的更新。
- * 这里在同步开始前先把当前编辑落盘（合并冲突由 pull 的 theirs 优先处理），
- * 配合编辑器在 syncing 期间禁写，彻底关掉这个窗口。
+ *
+ * 修复思路（2026-09-20 起）：不再用"同步期间禁止编辑器写盘"这种粗粒度开关
+ * （Git 服务端挂掉时它会长时间禁写，导致本地内容丢失），改成两件事：
+ *   1. 进同步前先落盘当前编辑（本函数）——把本地修改交给 pull 的合并逻辑处理；
+ *   2. 编辑器只在"检测到磁盘内容真被外部改过、且本地还有未保存修改"时暂停写盘，
+ *      并把两份内容都保留下来让用户选择（见 Editor 的冲突条）。
  */
 async function flushCurrentNoteBeforeSync(): Promise<void> {
   const state = useAppStore.getState()
@@ -565,17 +569,26 @@ export default function App() {
 
   // 自动同步：每 5 分钟检测一次，有未同步数据时自动先拉后推
   useEffect(() => {
+    // 失败退避：Git 服务端不可达时不要每 5 分钟就反复进一次"同步中"。
+    // 本地保存已经完全不依赖同步状态（见 Editor 的本地优先写入），退避只是为了少打扰用户。
+    let failStreak = 0
+    let skipUntil = 0
     const autoSync = async () => {
       try {
         const s = useAppStore.getState().settings
         if (!s?.gitSync?.configured || !s?.gitSync?.initialized) return
+        if (Date.now() < skipUntil) return
         await refreshSyncStatus()
         const status = useAppStore.getState().syncStatus
         const pending = status.pendingFiles ?? 0
         if (pending > 0 && status.state !== 'syncing') {
+          // 关键：进入"同步中"之前先把当前编辑落盘（pull 会把远端内容写到磁盘）
+          await flushCurrentNoteBeforeSync()
           setSyncStatus({ state: 'syncing', message: '自动同步中...', pendingFiles: pending })
           const r = await window.inkslateApi.git.sync()
           if (r.ok) {
+            failStreak = 0
+            skipUntil = 0
             setSyncStatus({ state: 'success', message: r.message, lastSyncAt: Date.now() })
             // 自动同步拉到新数据（含删除墓碑）后同样要重载笔记树，否则要重启才显示
             if (r.pulled) {
@@ -584,7 +597,11 @@ export default function App() {
               refreshOpenNoteFromPulledData()
             }
           } else {
-            setSyncStatus({ state: 'error', message: '自动同步失败', detail: r.message })
+            failStreak++
+            // 1 次失败等 5 分钟，之后 10/20/30 分钟（上限 30 分钟）
+            const backoffMin = Math.min(30, 5 * 2 ** Math.max(0, failStreak - 1))
+            skipUntil = Date.now() + backoffMin * 60_000
+            setSyncStatus({ state: 'error', message: '自动同步失败', detail: `${r.message}（本地编辑不受影响，${backoffMin} 分钟后重试）` })
           }
           await refreshSyncStatus()
         }
@@ -596,6 +613,29 @@ export default function App() {
     const timer = setInterval(autoSync, 300_000) // 5 分钟
     return () => clearInterval(timer)
   }, [])
+
+  // 同步看门狗：Git 服务端不可达时，主进程里的请求可能长时间不返回（默认单次请求超时 30 分钟）。
+  // 界面会一直显示"同步中"，让人误以为在忙。超过 10 分钟就复位状态并说明本地保存不受影响。
+  useEffect(() => {
+    let syncingSince: number | null = null
+    const timer = setInterval(() => {
+      const st = useAppStore.getState().syncStatus
+      if (st.state === 'syncing') {
+        if (syncingSince == null) syncingSince = Date.now()
+        else if (Date.now() - syncingSince > 10 * 60_000) {
+          syncingSince = null
+          setSyncStatus({
+            state: 'error',
+            message: '同步超时',
+            detail: '同步长时间没有返回结果（通常是 Git 服务端不可达）。本地编辑不受影响，内容已保存在本地。'
+          })
+        }
+      } else {
+        syncingSince = null
+      }
+    }, 30_000)
+    return () => clearInterval(timer)
+  }, [setSyncStatus])
 
   return (
     <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

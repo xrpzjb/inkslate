@@ -118,9 +118,15 @@ interface AppState {
   viewMode: 'notes' | 'recycle-bin' | 'flash-thoughts'
   setViewMode: (mode: 'notes' | 'recycle-bin' | 'flash-thoughts') => void
 
-  // 淇濆瓨鐘舵€?  saveStatus: { saving: boolean; lastSaved: number | null }
-  saveStatus: { saving: boolean; lastSaved: number | null }
-  setSaveStatus: (status: { saving?: boolean; lastSaved?: number | null }) => void
+  /**
+   * 保存状态。
+   *  - saving：正在写本地库
+   *  - lastSaved：最近一次成功写本地库的时间
+   *  - dirty：编辑器里有尚未落盘的本地修改（本地优先，跟 git 同步状态无关）
+   *  - error：最近一次写本地库失败的原因（写失败必须让用户看见，不能静默丢内容）
+   */
+  saveStatus: { saving: boolean; lastSaved: number | null; dirty: boolean; error: string | null }
+  setSaveStatus: (status: { saving?: boolean; lastSaved?: number | null; dirty?: boolean; error?: string | null }) => void
 
   // 同步状态字段（之前在原文件里被注释吃掉了，导致 TS 编译报"Property 'syncStatus' does not exist"。
   //   这里显式声明，加上后面我新增的 refreshSyncStatus action。）
@@ -583,9 +589,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateNote: async (id, updates) => {
     get().setSaveStatus({ saving: true })
     try {
-      console.log('[store] updateNote called', id, 'content length:', updates.content?.length)
       const updated = await window.inkslateApi.notes.update(id, updates)
-      console.log('[store] updateNote IPC done, updated.path:', updated.path)
       const cur = get().currentNote
       // 始终同步 title 和 updatedAt（来自服务端），但保留 content 为用户最新输入
       // 避免保存后 currentNote.content 被服务端旧值覆盖（用户可能还在敲）
@@ -602,13 +606,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       set((state) => ({
         notes: state.notes.map((n) => (n.id === id ? { ...n, title: updated.title, content: updated.content, url: updated.url, updatedAt: updated.updatedAt } : n))
       }))
-      get().setSaveStatus({ saving: false, lastSaved: Date.now() })
+      get().setSaveStatus({ saving: false, lastSaved: Date.now(), error: null })
       // 同步状态：内容/title 改了 → 磁盘文件被重写 → 视作"待同步"
-      console.log('[store] about to refreshSyncStatus')
       await get().refreshSyncStatus()
-      console.log('[store] refreshSyncStatus done, new status:', get().syncStatus)
-    } catch {
-      get().setSaveStatus({ saving: false })
+    } catch (e: any) {
+      // 关键：写本地库失败必须让用户看见。
+      // 历史上这里静默 catch，用户以为已保存，切走笔记才发现内容没了 —— 数据丢失事故的直接成因之一。
+      const msg = (e?.message ?? String(e ?? '未知错误'))
+        .replace(/^Error invoking remote method '[^']*':\s*/, '')
+        .replace(/^Error:\s*/, '')
+      console.error('[store] updateNote failed:', id, e)
+      get().setSaveStatus({ saving: false, error: msg })
+      toast.error('保存到本地失败：' + msg + '（内容仍保留在编辑器草稿里，请重试或另存）', 6000)
     }
   },
   updateCurrentNoteDraft: (updates) => {
@@ -875,7 +884,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   viewMode: 'notes',
   setViewMode: (mode) => set({ viewMode: mode }),
 
-  saveStatus: { saving: false, lastSaved: null },
+  saveStatus: { saving: false, lastSaved: null, dirty: false, error: null },
   setSaveStatus: (status) => set(s => ({
     saveStatus: { ...s.saveStatus, ...status }
   })),

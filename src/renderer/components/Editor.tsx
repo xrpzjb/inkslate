@@ -1,20 +1,62 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect, forwardRef, useImperativeHandle } from 'react'
 
 // ============ 草稿安全网：localStorage 备份 ============
+// 设计原则（2026-09-20「切换笔记内容丢失」事故后重写）：
+//   1. 本地写盘不依赖网络、也不依赖 git 同步状态 —— 同步服务端挂了同样必须能存到本地；
+//   2. 只要草稿还没被「成功写库」覆盖，就绝不清除它（恢复后也不清）；
+//   3. 不能用 updatedAt 判断草稿是否过期：改标题/图标这类元数据写入也会推进 updatedAt，
+//      会把更新的正文草稿判成"过期"而丢掉。改用 base —— 起草时磁盘上的内容：
+//      base === 当前磁盘内容 ⇒ 本地修改还建立在同一基线上，草稿有效。
 const DRAFT_NS = 'inkslate:draft:'
-const saveDraft = (noteId: string, title: string, content: string) => {
-  try { localStorage.setItem(DRAFT_NS + noteId, JSON.stringify({ title, content, t: Date.now() })) } catch {}
+/** 冲突时把「外部写入的那一份」单独存一份，保证任何一方都不会被静默丢弃 */
+const REMOTE_STASH_NS = 'inkslate:remote:'
+
+interface DraftRecord {
+  title: string
+  content: string
+  /** 起草时磁盘上的内容（判断草稿是否还建立在同一基线上） */
+  base: string
+  /** 写入时间戳 */
+  t: number
 }
-const getDraft = (noteId: string): { title: string; content: string; t: number } | null => {
+
+const readDraft = (noteId: string): DraftRecord | null => {
   try {
     const raw = localStorage.getItem(DRAFT_NS + noteId)
     if (!raw) return null
     const d = JSON.parse(raw)
-    return d?.content && typeof d.content === 'string' ? d : null
+    if (!d || typeof d.content !== 'string') return null
+    return { title: typeof d.title === 'string' ? d.title : '', content: d.content, base: typeof d.base === 'string' ? d.base : '', t: typeof d.t === 'number' ? d.t : 0 }
   } catch { return null }
+}
+const saveDraft = (noteId: string, title: string, content: string, base: string) => {
+  try {
+    localStorage.setItem(DRAFT_NS + noteId, JSON.stringify({ title, content, base, t: Date.now() }))
+  } catch {}
+}
+/** 只在草稿内容与刚成功写库的内容一致时清除，避免清掉更新的草稿 */
+const clearDraftIf = (noteId: string, savedContent: string) => {
+  try {
+    const prev = readDraft(noteId)
+    if (!prev || prev.content === savedContent) localStorage.removeItem(DRAFT_NS + noteId)
+  } catch {}
 }
 const clearDraft = (noteId: string) => {
   try { localStorage.removeItem(DRAFT_NS + noteId) } catch {}
+}
+const stashRemote = (noteId: string, content: string, local?: string) => {
+  try { localStorage.setItem(REMOTE_STASH_NS + noteId, JSON.stringify({ content, local, t: Date.now() })) } catch {}
+}
+const readStashedRemote = (noteId: string): string | null => {
+  try {
+    const raw = localStorage.getItem(REMOTE_STASH_NS + noteId)
+    if (!raw) return null
+    const d = JSON.parse(raw)
+    return typeof d?.content === 'string' ? d.content : null
+  } catch { return null }
+}
+const clearStashedRemote = (noteId: string) => {
+  try { localStorage.removeItem(REMOTE_STASH_NS + noteId) } catch {}
 }
 import { createPortal } from 'react-dom'
 import { useAppStore, protectedRootOf, looksLikeCiphertext, withLockGuard } from '../store/app'
@@ -57,18 +99,13 @@ export function Editor() {
   const codeEditorRef = useRef<import('./CodeEditor').CodeEditorHandle>(null)
   const richtextEditorRef = useRef<{ setHTML: (html: string) => void }>(null)
 
-  // Git 同步状态：同步进行中时禁止编辑器自动写盘，
-  // 否则 pull 把远端（A 端）内容落到磁盘后，编辑器里残留的旧内容会在
-  // pull → commitAll 的窗口里被 autosave 写回文件，随后被 push 覆盖远程。
-  const syncState = useAppStore(s => s.syncStatus.state)
-  const isSyncingRef = useRef(false)
-  isSyncingRef.current = syncState === 'syncing'
-  // 同步开始时：清掉已挂起的防抖定时器，避免旧内容在窗口期触发写盘
-  useEffect(() => {
-    if (syncState !== 'syncing') return
-    if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
-    if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
-  }, [syncState])
+  // CodeEditor 的 onSave / 防抖里读到的必须是最新值，用 ref 兜住（在声明处就同步，别等下文的重新赋值）
+  const contentRef = useRef(content)
+  contentRef.current = content
+  const titleRef = useRef(title)
+  titleRef.current = title
+  const currentNoteRef = useRef(currentNote)
+  currentNoteRef.current = currentNote
 
   // 关键防御：跟踪"本组件正在为哪个 note 持有本地 title/content 草稿"。
   // 切笔记时：旧 note 的草稿用完即弃，新 note 的同步效果跑完后才允许写入。
@@ -76,6 +113,50 @@ export function Editor() {
   const editingNoteIdRef = useRef<string | null>(null)
   // 缓存上一个 note 的草稿（用于切换时 flush 保存）
   const lastDraftRef = useRef<{ id: string; title: string; content: string } | null>(null)
+  /** 当前笔记"磁盘上已知内容"：用来识别外部写入（git pull / 另一端同步 / 外部程序改文件） */
+  const baselineRef = useRef<string>('')
+  /** 检测到「外部写入 vs 本地未保存修改」冲突的笔记 id；置位期间暂停自动写盘，避免用旧内容覆盖远端 */
+  const conflictNoteIdRef = useRef<string | null>(null)
+  const [conflictNoteId, setConflictNoteId] = useState<string | null>(null)
+
+  const clearTimers = useCallback(() => {
+    if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
+    if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
+  }, [])
+
+  /**
+   * 把一个笔记的本地草稿写入本地库。
+   * 本地优先：不看 git 同步状态 —— 同步服务端挂掉 / 同步卡住时，本地照样必须落盘。
+   * 唯一例外是这篇笔记处在"外部冲突"状态（外部已写入新内容），此时写回会覆盖远端，
+   * 由界面上的冲突条让用户显式选择。
+   */
+  const flushDraft = useCallback((draft: { id: string; title: string; content: string }) => {
+    if (!draft) return
+    if (conflictNoteIdRef.current === draft.id) {
+      toast.info('该笔记检测到外部更新，本地修改已保留为草稿，请先在编辑器顶部选择保留哪一份', 5000)
+      return
+    }
+    // 没有本地修改就不写盘：切换笔记很频繁，空写会产生无谓的 git 噪声
+    const cached = useAppStore.getState().notes.find(n => n.id === draft.id)
+    const contentChanged = draft.content !== baselineRef.current
+    const titleChanged = !!draft.title && draft.title.trim() !== '' && draft.title !== cached?.title
+    if (!contentChanged && !titleChanged) return
+    const updates: { title?: string; content: string } = { content: draft.content }
+    // 防御：不保存空标题，避免把标题清成空
+    if (draft.title && draft.title.trim()) updates.title = draft.title
+    // 标题 + 正文一次写完：走单次 IPC，主进程里就是一次原子的"改名 + 写文件"
+    updateNote(draft.id, updates)
+      .then(() => {
+        clearDraftIf(draft.id, draft.content)
+        // 只有 flush 的正是当前正在编辑的笔记时才动基线/脏标记，
+        // 否则会把 A 的内容当成 B 的磁盘基线
+        if (editingNoteIdRef.current === draft.id) {
+          baselineRef.current = draft.content
+          setSaveStatus({ dirty: false })
+        }
+      })
+      .catch(() => { /* 失败已由 store.updateNote 提示 + 草稿仍在 localStorage */ })
+  }, [updateNote, setSaveStatus])
 
   // 同步当前笔记（切换时 + 外部重命名时）
   // 用 useLayoutEffect：在浏览器绘制前同步 content/title，避免切换到笔记时先闪一帧空白
@@ -84,51 +165,55 @@ export function Editor() {
       // 切到新 note 前：把上一个 note 的草稿 flush 一次（清掉 timer 立即写库）
       const last = lastDraftRef.current
       if (last && last.id !== currentNote.id) {
-        // 切走了。先清掉两个 timer（避免 timer 触发时错误写入）
-        if (titleTimerRef.current) {
-          clearTimeout(titleTimerRef.current)
-          titleTimerRef.current = null
-        }
-        if (contentTimerRef.current) {
-          clearTimeout(contentTimerRef.current)
-          contentTimerRef.current = null
-        }
-        // 异步 flush（不 await，避免阻塞 UI）
-        // —— 把上一个 note 的最终草稿一次性写入库
-        // 防御：不保存空标题，不覆盖已有标题；同步进行中不写盘（避免旧内容污染）
-        if (last.title !== undefined && last.title.trim() && !isSyncingRef.current) {
-          updateNote(last.id, { title: last.title }).catch(() => {})
-        }
-        if (last.content !== undefined && !isSyncingRef.current) {
-          updateNote(last.id, { content: last.content }).catch(() => {})
-        }
+        clearTimers()
+        flushDraft(last)
       }
 
       // 检查 localStorage 是否有未保存的草稿（安全网恢复）
       const dbContent = currentNote.content ?? ''
-      const draft = getDraft(currentNote.id)
-      const hasDraft = draft && draft.content && draft.content !== dbContent && draft.t > (currentNote.updatedAt ?? 0)
-      const activeContent = hasDraft ? draft.content : dbContent
+      const draft = readDraft(currentNote.id)
+      let activeContent = dbContent
+      let restored = false
+      // 切进来时先清掉上一个笔记遗留的冲突标记
+      conflictNoteIdRef.current = null
+      setConflictNoteId(null)
+      if (draft && draft.content && draft.content !== dbContent) {
+        if (draft.base === dbContent) {
+          // 草稿建立在当前磁盘内容之上 ⇒ 就是还没写成功的本地修改，恢复出来
+          activeContent = draft.content
+          restored = true
+        } else {
+          // 磁盘在本地编辑期间被外部改过（git pull / 另一端 / 外部程序）：
+          // 两份内容都有价值 —— 本地那份继续显示在编辑器里，外部那份另存一份，
+          // 绝不像以前那样"直接丢弃本地、按 updatedAt 判草稿过期"。由用户选择保留哪份。
+          stashRemote(currentNote.id, dbContent)
+          activeContent = draft.content
+          restored = true
+          conflictNoteIdRef.current = currentNote.id
+          setConflictNoteId(currentNote.id)
+          toast.info(`「${currentNote.title || '笔记'}」检测到外部更新：已保留你的本地修改，外部版本已备份，请在编辑器顶部确认`, 6000)
+        }
+      } else if (draft && draft.content === dbContent) {
+        // 草稿内容已经落盘 → 清理（说明之前保存成功过）
+        clearDraft(currentNote.id)
+      }
 
+      baselineRef.current = dbContent
       setContent(activeContent)
       setTitle(currentNote.title ?? '')
       editingNoteIdRef.current = currentNote.id
       spreadsheetDirtyRef.current = false
       lastDraftRef.current = { id: currentNote.id, title: currentNote.title ?? '', content: activeContent }
-      if (hasDraft) {
-        clearDraft(currentNote.id)
+      if (restored) {
+        // 注意：草稿不清除 —— 还没写库成功，清了就等于把安全网拆了
         toast.info('已恢复未保存的编辑内容')
       }
     } else {
       // 切到无选中状态：也 flush 一次
       const last = lastDraftRef.current
       if (last) {
-        if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
-        if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
-        if (!isSyncingRef.current) {
-          updateNote(last.id, { title: last.title }).catch(() => {})
-          updateNote(last.id, { content: last.content }).catch(() => {})
-        }
+        clearTimers()
+        flushDraft(last)
       }
 
       setContent('')
@@ -136,7 +221,7 @@ export function Editor() {
       editingNoteIdRef.current = null
       lastDraftRef.current = null
     }
-    // 注意：故意不把 updateNote 加进依赖——updateNote 来自 store，引用稳定
+    // 注意：故意不把 flushDraft 加进依赖——它依赖的 updateNote 来自 store，引用稳定
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentNote?.id])
 
@@ -177,28 +262,45 @@ export function Editor() {
     }
   }, [currentNote?.title])
 
-  // 当前 content 同步：selectNote 异步 fetch 返回后 currentNote.content 更新，
-  // 但 Editor 本地 content 还是之前的缓存旧值，需要刷过来。
-  // 加入 currentNote.id 依赖：在同一笔记内 currentNote 对象被替换（updateNote 后）
-  // 且 content 字符串相同时也能保持同步。
-  // contentTimerRef 只阻塞长度相似的编辑（防抖窗口内不打断用户打字），
-  // 内容是空字符串或差异很大时强制同步。
+  // 当前 content 同步：外部（git pull / 另一端 / store 重新拉取）改了磁盘内容时，
+  // 判断要不要跟随。核心约束：绝不静默丢掉用户还没落盘的修改。
   useEffect(() => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
     if (currentNote.content === content) return
     if (currentNote.content == null) return
-    if (!currentNote.content) {
-      if (!content) return
-    }
     // 智能表格：用户一旦通过 SpreadsheetEditor 编辑过（dirty），
     // currentNote.content 仍是磁盘旧值，用它覆盖会回滚用户的新增 sheet / 编辑。
     // 仅当从未编辑过时才允许同步（外部更新 / git pull 恢复）。
     if (currentNote.format === 'spreadsheet' && spreadsheetDirtyRef.current) return
-    // 有活跃防抖 timer 说明用户正在输入；
-    // 此时不覆盖本地编辑，避免 selectNote 异步 fetch 返回的旧内容冲掉用户正在写的内容
+    // 有活跃防抖 timer 说明用户正在输入；此时不覆盖本地编辑
     if (contentTimerRef.current) return
-    setContent(currentNote.content)
+
+    const external = currentNote.content
+    const locallyDirty = content !== baselineRef.current
+    if (external !== baselineRef.current) {
+      // 磁盘内容确实被外部改过
+      if (locallyDirty) {
+        // 本地有未保存修改 + 外部也写了：两边都有价值。
+        // 暂停自动写盘（写回会覆盖外部那份），把外部内容备份下来，等用户选择。
+        stashRemote(currentNote.id, external)
+        conflictNoteIdRef.current = currentNote.id
+        setConflictNoteId(currentNote.id)
+        toast.info(`「${currentNote.title || '笔记'}」检测到外部更新：已保留你的本地修改，外部版本已备份，请在编辑器顶部确认`, 6000)
+        return
+      }
+      // 本地没有未保存修改 → 直接跟随外部内容
+      baselineRef.current = external
+      clearDraft(currentNote.id)
+      setContent(external)
+      return
+    }
+
+    // 外部内容没变（例如空内容兜底 / store 回填旧值）：只在本地干净时跟随，
+    // 本地脏就保持用户输入，避免把正在写的内容冲掉
+    if (locallyDirty) return
+    if (!external && content) return
+    setContent(external)
   }, [currentNote?.id, currentNote?.content])
 
   // 即时同步草稿到 store（不进库），让 Preview 实时看到最新内容
@@ -212,10 +314,15 @@ export function Editor() {
     updateCurrentNoteDraft({ content, title })
   }, [content, title])
 
-  // 每次编辑即时备份到 localStorage（安全网：即使写库失败也能恢复）
+  // 每次编辑即时备份到 localStorage（安全网：写库失败 / 崩溃 / 断电都能恢复）
+  // 注意：只备份"有本地修改"的状态，且带 base（起草时的磁盘内容），
+  // 这样恢复时能判断磁盘有没有被外部改过，也不会把空白状态盖到好草稿上。
   useEffect(() => {
     if (!currentNote || currentNote.id !== editingNoteIdRef.current) return
-    saveDraft(currentNote.id, title, content)
+    const baseline = baselineRef.current
+    if (content === baseline && title === currentNote.title) return
+    saveDraft(currentNote.id, title, content, baseline)
+    setSaveStatus({ dirty: true })
   }, [content, title])
 
   // 标题：立即写库（单行输入，成本低，用户期望即时反馈）
@@ -227,32 +334,42 @@ export function Editor() {
     titleTimerRef.current = setTimeout(() => {
       // 二次 guard：timer 触发时再次确认还在编辑同一个 note
       if (currentNote.id !== editingNoteIdRef.current) return
-      // 同步进行中不写盘（内容已在同步前落盘，此时旧 title 写回会污染文件）
-      if (isSyncingRef.current) return
       // 防御：不保存空标题
       if (!title?.trim()) return
-      // 只传 title，避免覆盖 content
-      updateNote(currentNote.id, { title }).catch(() => { /* 错误已在 updateNote 内部处理 */ })
+      // 只传 title，避免覆盖 content。
+      // 注意：这里不看 git 同步状态 —— 改标题是纯本地写盘，同步卡住也必须落盘。
+      updateNote(currentNote.id, { title }).catch(() => { /* 错误已由 store.updateNote 提示 */ })
     }, 300) // 300ms 防抖，避免连续按键触发多次写入
     return () => {
       if (titleTimerRef.current) clearTimeout(titleTimerRef.current)
     }
   }, [title, currentNote?.id])
 
-  // 正文：2s 防抖写库
+  // 正文：2s 防抖写库（纯本地写盘，与 git 同步状态无关）
   useEffect(() => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
-    if (content === currentNote.content) return
+    if (content === baselineRef.current) return
+    // 外部冲突未决：不自动写盘（会用本地旧内容覆盖外部已写入的新内容）
+    if (conflictNoteIdRef.current === currentNote.id) return
     if (contentTimerRef.current) clearTimeout(contentTimerRef.current)
     contentTimerRef.current = setTimeout(() => {
       // 二次 guard：timer 触发时再次确认还在编辑同一个 note
       if (currentNote.id !== editingNoteIdRef.current) return
-      // 同步进行中不写盘（pull 已把远端内容落到磁盘，旧 content 写回会覆盖远端）
-      if (isSyncingRef.current) return
-      // 只传 content，避免覆盖 title
+      if (conflictNoteIdRef.current === currentNote.id) return
       const noteId = currentNote.id
-      updateNote(noteId, { content }).then(() => clearDraft(noteId)).catch(() => {})
+      const payload = content
+      updateNote(noteId, { content: payload })
+        .then(() => {
+          // 只有"写进去的就是当前编辑器内容"时才更新基线 / 清草稿，
+          // 否则会把用户在保存期间新敲的内容判成已保存
+          if (editingNoteIdRef.current === noteId && contentRef.current === payload) {
+            baselineRef.current = payload
+            clearDraftIf(noteId, payload)
+            setSaveStatus({ dirty: false })
+          }
+        })
+        .catch(() => { /* 失败已提示，草稿仍在 localStorage */ })
     }, 2000)
     return () => {
       if (contentTimerRef.current) clearTimeout(contentTimerRef.current)
@@ -261,24 +378,14 @@ export function Editor() {
 
   // 组件卸载时 flush 草稿到库
   // 修复：切换 md 笔记时 selectNote 同时改 currentNote + editorVisible=false，
-  // Editor 被卸载，上面的 flush effect（line 37）来不及跑，内容丢失。
-  // 此 effect 的 cleanup 在卸载时触发，保证草稿不丢。
+  // Editor 被卸载，上面的 flush effect 来不及跑，内容丢失。
+  // 此 effect 的 cleanup 在卸载时触发，保证草稿不丢（本地优先，不看同步状态）。
   useEffect(() => {
     return () => {
       const last = lastDraftRef.current
       if (!last) return
-      if (titleTimerRef.current) {
-        clearTimeout(titleTimerRef.current)
-        titleTimerRef.current = null
-      }
-      if (contentTimerRef.current) {
-        clearTimeout(contentTimerRef.current)
-        contentTimerRef.current = null
-      }
-      // 同步进行中不写盘（pull 后编辑器卸载，旧内容写回会覆盖远端）
-      if (isSyncingRef.current) return
-      updateNote(last.id, { title: last.title }).catch(() => {})
-      updateNote(last.id, { content: last.content }).catch(() => {})
+      clearTimers()
+      flushDraft(last)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -308,24 +415,26 @@ export function Editor() {
     return () => window.removeEventListener('inkslate:ai-replace', onReplace)
   }, [])
 
+  /** 手动保存（菜单 / Ctrl+S / 窗口失焦）：显式写盘，不看同步状态；冲突时以用户意图为准 */
   const handleSave = async () => {
     if (!currentNote) return
     if (currentNote.id !== editingNoteIdRef.current) return
-    // 同步进行中不写盘（同步前已统一落盘）
-    if (isSyncingRef.current) return
-    // 清掉两个防抖 timer，避免重复保存
-    if (titleTimerRef.current) {
-      clearTimeout(titleTimerRef.current)
-      titleTimerRef.current = null
-    }
-    if (contentTimerRef.current) {
-      clearTimeout(contentTimerRef.current)
-      contentTimerRef.current = null
+    clearTimers()
+    // 用户显式保存 = 明确要保留本地这一份：解除冲突保护，
+    // 外部那一份已经在 localStorage 里备份，不会丢
+    if (conflictNoteIdRef.current === currentNote.id) {
+      conflictNoteIdRef.current = null
+      setConflictNoteId(null)
+      toast.info('已按你的选择保留本地版本，外部版本仍备份在本地草稿中')
     }
     setSaveStatus({ saving: true })
     try {
-      await updateNote(currentNote.id, { content, title })
-      clearDraft(currentNote.id)
+      const updates: { title?: string; content: string } = { content }
+      if (title && title.trim()) updates.title = title
+      await updateNote(currentNote.id, updates)
+      baselineRef.current = content
+      clearDraftIf(currentNote.id, content)
+      setSaveStatus({ dirty: false })
     } finally {
       setSaveStatus({ saving: false })
     }
@@ -351,25 +460,24 @@ export function Editor() {
   }
 
   // CodeEditor 的 onSave 在 useEffect 内闭包，不会随 title/content 变化更新。
-  // 用 ref 持有最新值，传给 CodeEditor 的始终是最新值。
-  const contentRef = useRef(content)
-  contentRef.current = content
-  const titleRef = useRef(title)
-  titleRef.current = title
-  const currentNoteRef = useRef(currentNote)
-  currentNoteRef.current = currentNote
+  // 用 ref 持有最新值（声明见组件顶部），传给 CodeEditor 的始终是最新值。
 
   const stableSave = useCallback(() => {
     const cn = currentNoteRef.current
     if (!cn || cn.id !== editingNoteIdRef.current) return
-    // 同步进行中不写盘（避免把编辑器里的旧内容写回文件）
-    if (isSyncingRef.current) return
-    if (titleTimerRef.current) { clearTimeout(titleTimerRef.current); titleTimerRef.current = null }
-    if (contentTimerRef.current) { clearTimeout(contentTimerRef.current); contentTimerRef.current = null }
+    clearTimers()
     setSaveStatus({ saving: true })
-    updateNote(cn.id, { content: contentRef.current, title: titleRef.current })
-      .then(() => clearDraft(cn.id))
+    const payload = contentRef.current
+    const updates: { title?: string; content: string } = { content: payload }
+    if (titleRef.current && titleRef.current.trim()) updates.title = titleRef.current
+    updateNote(cn.id, updates)
+      .then(() => {
+        baselineRef.current = payload
+        clearDraftIf(cn.id, payload)
+        setSaveStatus({ dirty: false })
+      })
       .finally(() => setSaveStatus({ saving: false }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 监听菜单触发的保存事件
@@ -378,7 +486,6 @@ export function Editor() {
     window.addEventListener('inkslate:save-current', onSaveEvent)
     return () => window.removeEventListener('inkslate:save-current', onSaveEvent)
   }, [currentNote, content, title])
-
   // 窗口失焦时强制保存（用户切到其他应用）
   useEffect(() => {
     const onVisibility = () => {
@@ -387,6 +494,56 @@ export function Editor() {
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [])
+
+  // ============ 「外部写入 vs 本地未保存修改」冲突处理 ============
+  // 场景：git pull 把另一端的内容落到磁盘，而本地编辑器里还有没写库的修改。
+  // 以前的做法是同步期间一律禁写 + 按 updatedAt 丢草稿（内容会无声消失）。
+  // 现在：两份都留着，由用户选 —— 选哪一份都不会丢内容（另一份进 localStorage 备份）。
+
+  /** 保留本地版本（把本地内容写回文件，可能覆盖外部版本） */
+  const resolveKeepLocal = async () => {
+    if (!currentNote) return
+    conflictNoteIdRef.current = null
+    setConflictNoteId(null)
+    clearTimers()
+    setSaveStatus({ saving: true })
+    try {
+      const updates: { title?: string; content: string } = { content }
+      if (title && title.trim()) updates.title = title
+      await updateNote(currentNote.id, updates)
+      baselineRef.current = content
+      clearDraftIf(currentNote.id, content)
+      setSaveStatus({ dirty: false })
+      toast.success('已保留你的本地版本（外部版本仍备份在本地草稿里）')
+    } finally {
+      setSaveStatus({ saving: false })
+    }
+  }
+
+  /** 采用外部版本（本地版本转存为备份，不清空） */
+  const resolveUseRemote = async () => {
+    if (!currentNote) return
+    const noteId = currentNote.id
+    const remote = readStashedRemote(noteId)
+    const localCopy = content
+    conflictNoteIdRef.current = null
+    setConflictNoteId(null)
+    clearTimers()
+    const next = remote ?? (currentNote.content ?? '')
+    // 本地那一份转存到备份里，然后清掉草稿（避免下次切回来又被当成新冲突弹出来）
+    stashRemote(noteId, next, localCopy)
+    clearDraft(noteId)
+    setContent(next)
+    baselineRef.current = next
+    setSaveStatus({ saving: true })
+    try {
+      await updateNote(noteId, { content: next })
+      setSaveStatus({ dirty: false })
+      toast.success('已改用外部版本（你的本地版本备份在本地草稿里，需要时可找回）')
+    } finally {
+      setSaveStatus({ saving: false })
+    }
+  }
 
   const insertText = useCallback((before: string, after: string, placeholder: string, cursorOffset?: number) => {
     codeEditorRef.current?.insertText(before, after, placeholder, cursorOffset)
@@ -513,6 +670,39 @@ export function Editor() {
             style={{ marginTop: 4, padding: '8px 20px', fontSize: 13, borderRadius: 6, border: 'none', background: 'var(--accent-color)', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
           >
             <Unlock size={14} /> 输入密码
+          </button>
+        </div>
+      )}
+      {conflictNoteId === currentNote.id && !needsUnlock && (
+        // 冲突条：外部（git pull / 另一端）改了内容，本地还有未保存修改。
+        // 两份都保留着，等用户显式选择，绝不静默丢内容。
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '6px 16px',
+          flexShrink: 0,
+          fontSize: 12,
+          color: 'var(--text-primary)',
+          background: appIsDark ? 'rgba(245, 158, 11, 0.18)' : 'rgba(245, 158, 11, 0.14)',
+          borderBottom: '1px solid rgba(245, 158, 11, 0.45)',
+          zIndex: 11
+        }}>
+          <AlertCircle size={14} color="#f59e0b" />
+          <span style={{ flex: 1, minWidth: 0 }}>
+            这篇笔记在外部被更新过（git 同步 / 另一端），而你本地还有未保存的修改。两份都已保留，请选择以哪一份为准。
+          </span>
+          <button
+            onClick={resolveKeepLocal}
+            style={{ padding: '3px 10px', fontSize: 12, borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--accent-color)', color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+          >
+            保留我的版本
+          </button>
+          <button
+            onClick={resolveUseRemote}
+            style={{ padding: '3px 10px', fontSize: 12, borderRadius: 4, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0 }}
+          >
+            用外部版本
           </button>
         </div>
       )}

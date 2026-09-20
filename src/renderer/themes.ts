@@ -15,6 +15,11 @@ export interface AppThemePalette {
   'bg-hover': string
   'bg-active': string
   'bg-tabbar': string
+  /**
+   * 预览区底色。**必须与 bg-primary 同档**：
+   * 编辑区、预览区、闪念页面都是"内容表面"，底色要一致（默认亮色主题里三者都是 #ffffff）。
+   * 历史上这里被错填成 bg-sidebar 的值，导致预览区和树状图糊成一片、跟闪念底色对不上。
+   */
   'bg-preview': string
   'text-primary': string
   'text-secondary': string
@@ -77,7 +82,7 @@ const darknight: AppThemePalette = {
   'bg-hover': '#2d2d2e',
   'bg-active': '#094771',
   'bg-tabbar': '#1a1a1a',
-  'bg-preview': '#252525',
+  'bg-preview': '#1e1e1e',
   'text-primary': '#e8e8e8',
   'text-secondary': '#b0b0b0',
   'text-tertiary': '#808080',
@@ -108,7 +113,7 @@ const dracula: AppThemePalette = {
   'bg-hover': '#44475a',
   'bg-active': '#44475a',
   'bg-tabbar': '#343746',
-  'bg-preview': '#21222c',
+  'bg-preview': '#282a36',
   'text-primary': '#f8f8f2',
   'text-secondary': '#bd93f9',
   'text-tertiary': '#6272a4',
@@ -138,7 +143,7 @@ const dune: AppThemePalette = {
   'bg-hover': '#d9c088',
   'bg-active': '#c9a96e',
   'bg-tabbar': '#e0cba0',
-  'bg-preview': '#e6d3a3',
+  'bg-preview': '#f4e4bc',
   'text-primary': '#3d2817',
   'text-secondary': '#6b4a2b',
   'text-tertiary': '#8b6a45',
@@ -168,7 +173,7 @@ const monet: AppThemePalette = {
   'bg-hover': '#ddd0ec',
   'bg-active': '#cab8e0',
   'bg-tabbar': '#e0d8f2',
-  'bg-preview': '#ebe4f7',
+  'bg-preview': '#f5f1ff',
   'text-primary': '#3d3a5c',
   'text-secondary': '#5b5780',
   'text-tertiary': '#7d7a9e',
@@ -199,7 +204,7 @@ const newspaper: AppThemePalette = {
   'bg-hover': '#d9caa0',
   'bg-active': '#c9b888',
   'bg-tabbar': '#e0d4b0',
-  'bg-preview': '#e8dec0',
+  'bg-preview': '#f4ecd8',
   'text-primary': '#3a2a18',
   'text-secondary': '#5c4530',
   'text-tertiary': '#8a7050',
@@ -229,7 +234,7 @@ const forest: AppThemePalette = {
   'bg-hover': '#345a45',
   'bg-active': '#467057',
   'bg-tabbar': '#2d4638',
-  'bg-preview': '#243a2e',
+  'bg-preview': '#1a2820',
   'text-primary': '#d8e4dc',
   'text-secondary': '#a8c0b0',
   'text-tertiary': '#7a9484',
@@ -259,7 +264,7 @@ const sunset: AppThemePalette = {
   'bg-hover': '#ffcca8',
   'bg-active': '#ffb088',
   'bg-tabbar': '#ffd8b8',
-  'bg-preview': '#ffe0c8',
+  'bg-preview': '#fff0e5',
   'text-primary': '#5c2818',
   'text-secondary': '#8a4028',
   'text-tertiary': '#b86850',
@@ -289,7 +294,7 @@ const nordic: AppThemePalette = {
   'bg-hover': '#d8dfe6',
   'bg-active': '#c0cad4',
   'bg-tabbar': '#e0e6ec',
-  'bg-preview': '#e8ecf1',
+  'bg-preview': '#f5f7fa',
   'text-primary': '#2c3e50',
   'text-secondary': '#4a5d72',
   'text-tertiary': '#7a8a9c',
@@ -319,7 +324,7 @@ const pastoral: AppThemePalette = {
   'bg-hover': '#d8dcb0',
   'bg-active': '#c0c890',
   'bg-tabbar': '#e2e6c0',
-  'bg-preview': '#e8ecd0',
+  'bg-preview': '#f5f7e8',
   'text-primary': '#3a4818',
   'text-secondary': '#5a6828',
   'text-tertiary': '#7a8850',
