@@ -4,6 +4,7 @@ import { setupIpcHandlers } from './ipc'
 import { buildMenuData, handleMenuClick, installAppMenu, setMenuThemeId } from './menu'
 import { initDatabase, closeDatabase, dbApi, repairNotePaths } from './db'
 import { OssManager } from './oss/manager'
+import { resolveDevServerOrigin, resolveDevServerUrl } from '../shared/devServer'
 
 // Electron 30+ webSecurity 行为变更：单设 webPreferences.webSecurity: false 不再
 // 完全关掉 CSP/frame-ancestors 检查。需要同时加 Chromium 命令行开关。
@@ -13,6 +14,48 @@ app.commandLine.appendSwitch('disable-features', 'BlockInsecurePrivateNetworkReq
 let mainWindow: BrowserWindow | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+/**
+ * dev 模式下主窗口加载的地址。
+ *
+ * 曾经这里是写死的 `http://localhost:5173`：Vite 端口被别的项目占用时会静默换到
+ * 5174，而主进程仍然去 5173 拉页面 —— 结果窗口里显示的是"占用 5173 的那个项目"
+ * （曾把 Voxel English 游戏的界面当成 Inkslate 显示出来）。
+ * 现在地址与 Vite 共用 src/shared/devServer.ts 里的同一份定义，可用
+ * `MDTEXT_DEV_PORT` / `MDTEXT_DEV_URL` 覆盖，两边不会再错位。
+ */
+const devServerUrl = resolveDevServerUrl()
+/** `will-navigate` 白名单用的 origin（解析失败时为空串 → 只允许 file://） */
+const devServerOrigin = resolveDevServerOrigin()
+
+/** dev 模式等待 Vite 就绪：重试间隔 / 最大次数（约 20s） */
+const DEV_LOAD_RETRY_MS = 500
+const DEV_LOAD_MAX_RETRIES = 40
+
+/**
+ * dev 模式下重试加载 dev server。
+ *
+ * `npm run dev` 里 Vite 与 Electron 是并行的，dev server 还没 listen 时 loadURL 会
+ * 直接失败（白屏 + ERR_CONNECTION_REFUSED）；Vite 中途重启也一样。
+ * 这里只重试"主文档加载失败"，-3（ERR_ABORTED，被新的加载顶掉）不重试。
+ */
+function attachDevLoadRetry(win: BrowserWindow): void {
+  let retries = 0
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return
+    if (retries >= DEV_LOAD_MAX_RETRIES) {
+      console.error(
+        `[dev] 加载 ${devServerUrl} 失败（${errorDescription}）。` +
+        `请确认 Vite 已在监听该端口（端口可用 MDTEXT_DEV_PORT 覆盖）。`
+      )
+      return
+    }
+    retries++
+    setTimeout(() => {
+      win.loadURL(devServerUrl).catch(() => {})
+    }, DEV_LOAD_RETRY_MS)
+  })
+}
 
 function createMainWindow(): void {
   const iconPath = path.join(__dirname, '../../resources/icon.png')
@@ -39,10 +82,14 @@ function createMainWindow(): void {
   })
 
   const loadMode = process.env.MDTEXT_LOAD
-  if (loadMode === 'dev' || (loadMode !== 'file' && isDev)) {
-    mainWindow.loadURL('http://localhost:5173')
+  const useDevServer = loadMode === 'dev' || (loadMode !== 'file' && isDev)
+  if (useDevServer) {
+    // 打出真实地址：以后"界面怎么不是笔记"这类问题看日志一眼就能定位
+    console.log('[dev] loading renderer from', devServerUrl)
+    mainWindow.loadURL(devServerUrl).catch(() => {})
+    attachDevLoadRetry(mainWindow)
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html')).catch(() => {})
   }
   // 始终打开开发者工具（调试用，后续可关闭）
   mainWindow.webContents.openDevTools({ mode: 'detach' })
@@ -169,7 +216,9 @@ app.on('activate', () => {
 app.on('web-contents-created', (_, contents) => {
   contents.on('will-navigate', (event, navigationUrl) => {
     const parsedUrl = new URL(navigationUrl)
-    if (parsedUrl.origin !== 'http://localhost:5173' && parsedUrl.origin !== 'file://') {
+    // 白名单与上面加载的地址同源（同样来自 src/shared/devServer.ts）：
+    // 端口换了以后站内跳转不会被误判成外链丢给系统浏览器。
+    if (parsedUrl.origin !== devServerOrigin && parsedUrl.origin !== 'file://') {
       event.preventDefault()
       shell.openExternal(navigationUrl)
     }
