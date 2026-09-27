@@ -90,10 +90,13 @@
   color: var(--text-primary);
 }
 
-/* 单元格编辑框（textbox 覆盖层） */
+/* 单元格编辑框（textbox 覆盖层）。
+ * 背景必须不透明：进入编辑时单元格原文字仍由下层 canvas 绘制，
+ * 编辑框透明会让两份文字叠加成"双影"。用 --bg-primary 与默认
+ * 单元格底色一致，暗色主题下也不会突兀。 */
 .spreadsheet-view .x-spreadsheet-editor textarea {
   color: var(--text-primary);
-  background: transparent;
+  background: var(--bg-primary);
 }
 
 /* 日历 / 日期选择器 */
