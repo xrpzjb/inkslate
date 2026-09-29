@@ -4,6 +4,7 @@ import Spreadsheet from 'x-data-spreadsheet'
 import zhCN from 'x-data-spreadsheet/src/locale/zh-cn'
 import { SpreadsheetData } from '@shared/types'
 import { useAppStore } from '../store/app'
+import { installCrossSheetClipboardFix } from '../utils/spreadsheetClipboard'
 import '../styles/spreadsheet.css'
 
 // 启用中文界面（右键菜单 / 工具栏 / 弹窗等）
@@ -318,6 +319,9 @@ export function SpreadsheetEditor({
     }
 
     loadingRef.current = true
+    // 跨工作表复制粘贴修复：必须在 loadData 之前安装，这样 loadData 新建的
+    // 各个工作表 DataProxy 也会被标记（库自身只有表内剪贴板，切表即失效）
+    installCrossSheetClipboardFix(sheet)
     try {
       sheet.loadData(data)
     } finally {
