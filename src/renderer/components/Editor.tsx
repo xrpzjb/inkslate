@@ -269,10 +269,12 @@ export function Editor() {
     if (currentNote.id !== editingNoteIdRef.current) return
     if (currentNote.content === content) return
     if (currentNote.content == null) return
-    // 智能表格：用户一旦通过 SpreadsheetEditor 编辑过（dirty），
-    // currentNote.content 仍是磁盘旧值，用它覆盖会回滚用户的新增 sheet / 编辑。
-    // 仅当从未编辑过时才允许同步（外部更新 / git pull 恢复）。
-    if (currentNote.format === 'spreadsheet' && spreadsheetDirtyRef.current) return
+    // 智能表格：store 里的 currentNote.content 是全量表格 JSON，直接 setContent 会把用户
+    // 新增/编辑的 sheet 整块回滚 —— 所以"是否允许用外部内容刷新编辑器"要挡住。
+    // ⚠️ 但只是挡住 setContent，不能连"外部改过磁盘"的检测一起跳过：
+    // 一旦跳过，下面 2 秒防抖的自动保存就会把编辑器里这份（建立在旧基线之上的）表格写回文件，
+    // 覆盖另一端刚同步过来的内容（2026-10-08 周报被整份覆盖就是这条路径）。
+    const spreadsheetDirty = currentNote.format === 'spreadsheet' && spreadsheetDirtyRef.current
     // 有活跃防抖 timer 说明用户正在输入；此时不覆盖本地编辑
     if (contentTimerRef.current) return
 
@@ -280,7 +282,7 @@ export function Editor() {
     const locallyDirty = content !== baselineRef.current
     if (external !== baselineRef.current) {
       // 磁盘内容确实被外部改过
-      if (locallyDirty) {
+      if (locallyDirty || spreadsheetDirty) {
         // 本地有未保存修改 + 外部也写了：两边都有价值。
         // 暂停自动写盘（写回会覆盖外部那份），把外部内容备份下来，等用户选择。
         stashRemote(currentNote.id, external)
@@ -298,7 +300,7 @@ export function Editor() {
 
     // 外部内容没变（例如空内容兜底 / store 回填旧值）：只在本地干净时跟随，
     // 本地脏就保持用户输入，避免把正在写的内容冲掉
-    if (locallyDirty) return
+    if (locallyDirty || spreadsheetDirty) return
     if (!external && content) return
     setContent(external)
   }, [currentNote?.id, currentNote?.content])

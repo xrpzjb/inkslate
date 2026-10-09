@@ -14,6 +14,7 @@ import { confirm } from './ConfirmDialog'
 import { IconPicker } from './IconPicker'
 import { PasswordDialog } from './PasswordDialog'
 import { richTextJsonToHtml } from './Preview'
+import { useAutoHideScrollbar } from '../utils/autoHideScrollbar'
 
 /** 笔记本图标：从 DB 图标名渲染 MatIcon / IonIcon 组件。
  *  - mat:icon_name (轮廓) 或 mat:icon_name:fill (填充)
@@ -180,6 +181,10 @@ export function Sidebar() {
   }, [storedExpanded])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: NoteTreeNode | null } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+
+  // 笔记树滚动区：滚动条自动隐藏（悬停 / 滚动中 / 指针在滚动条上才显示）
+  const treeScrollRef = useRef<HTMLDivElement>(null)
+  useAutoHideScrollbar(treeScrollRef)
 
   useEffect(() => {
     if (!contextMenu) return
@@ -1157,7 +1162,13 @@ export function Sidebar() {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 0 4px 0' }} onClick={closeContextMenu}>
+      {/* 笔记树滚动区：滚动条自动隐藏（悬停/滚动时才出现，见 useAutoHideScrollbar） */}
+      <div
+        ref={treeScrollRef}
+        className="auto-hide-scrollbar"
+        style={{ flex: 1, overflowY: 'auto', padding: '0 0 4px 0' }}
+        onClick={closeContextMenu}
+      >
         <div
           className="tree"
           style={{ padding: '0 0 4px 0', marginTop: -2, minHeight: '100%' }}

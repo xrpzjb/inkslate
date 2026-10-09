@@ -218,6 +218,25 @@ body {
   background: var(--scrollbar-thumb-hover);
 }
 
+/* ============ 自动隐藏滚动条 ============
+   给滚动容器加 class="auto-hide-scrollbar" + 用 useAutoHideScrollbar(ref) 挂行为：
+   - 默认 thumb 透明（槽位宽度保留 → 内容不会因滚动条出现/消失而左右跳）
+   - 只有 .is-scrollbar-visible 时才画出来（悬停 / 滚动中 / 指针在滚动条槽位上）
+   显隐走 background-color，所以能淡入淡出。 */
+.auto-hide-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background-color 180ms ease;
+}
+
+.auto-hide-scrollbar.is-scrollbar-visible::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+
+/* 指针停在滚动条上：加亮一点，提示可以拖 */
+.auto-hide-scrollbar.is-scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
 /* ============ 通用按钮 ============ */
 button {
   font-family: inherit;

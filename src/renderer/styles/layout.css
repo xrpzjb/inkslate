@@ -155,11 +155,39 @@
   color: #e8e8e8;
 }
 
-/* 编辑器工具栏按钮（ToolbarBtn 等内联 style 使用 CSS 变量，在此重写变量值） */
+/* 编辑器工具栏按钮（ToolbarBtn 等内联 style 使用 CSS 变量，在此重写变量值）
+ *
+ * ⚠️ 必须"成对"覆盖（底色 + 文字 + 边框），不能只改文字色。
+ * 历史 bug：这里原来只改了 --text-primary / --text-secondary / --bg-hover，
+ * 底色仍是亮色主题的值 —— 于是所有"底色用 var(--bg-*) + 文字用 var(--text-*)"配对写的
+ * 组件（典型：智能表格 x-data-spreadsheet 的工具栏 / 工作表标签 / 右键菜单 / 弹窗）
+ * 变成"浅底浅字"，字体完全看不清。这里补齐暗夜主题整套变量。 */
 [data-editor-dark="true"] {
-  --text-secondary: #b0b0b0;
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #202020;
+  --bg-tertiary: #2a2a2b;
+  /* 智能表格工具栏 / 底部工作表栏在 preview.css 里用的是 --bg-sidebar，
+     这里一并覆盖，避免"两条同优先级规则谁赢"的不确定性 */
+  --bg-sidebar: #181818;
+  --bg-titlebar: #111111;
+  --bg-tabbar: #1a1a1a;
+  --bg-iconbar: #121212;
+  --bg-tree-child: #1c1c1c;
+  --bg-preview: #1e1e1e;
+  --bg-hover: #2d2d2e;
+  --bg-active: #094771;
   --text-primary: #e8e8e8;
-  --bg-hover: #3a3a3a;
+  --text-secondary: #b0b0b0;
+  --text-tertiary: #808080;
+  --text-inverse: #1a1a1a;
+  --border-color: #3a3a3a;
+  --border-strong: #505050;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --scrollbar-thumb: #4a4a4a;
+  --scrollbar-thumb-hover: #6a6a6a;
+  /* 原生控件（select 弹出层、滚动条、日期选择器等）跟随暗色 */
+  color-scheme: dark;
 }
 
 /* 收起/展开状态 - 有过渡动画 */

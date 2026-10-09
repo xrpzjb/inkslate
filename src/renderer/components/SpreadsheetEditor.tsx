@@ -135,6 +135,10 @@ export function SpreadsheetEditor({
 
   // ===== 跟随应用主题 =====
   const theme = useAppStore(s => s.theme)
+  // 「暗黑编辑器」是独立于应用主题的开关（Editor.tsx 里靠 [data-editor-dark] 覆盖 CSS 变量
+  // 把编辑区变暗）。智能表格必须把它也算作暗色，否则表格会保持浅色外壳 / 浅色画布，
+  // 和周围的深色编辑区割裂，文字还会因为变量只被改了一半而看不清。
+  const editorDark = useAppStore(s => s.settings?.editorDark === true)
   const [systemDark, setSystemDark] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -144,13 +148,17 @@ export function SpreadsheetEditor({
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
   }, [])
-  // 有效明暗：显式暗色主题 + auto 跟随系统
+  // 有效明暗：暗黑编辑器 / 显式暗色主题 + auto 跟随系统
   const isDark =
-    theme === 'dark' || theme === 'dracula' || theme === 'forest' || (theme === 'auto' && systemDark)
-  // 读取当前主题的 CSS 变量（各主题都会注入 --bg-primary / --text-primary 等）
+    editorDark || theme === 'dark' || theme === 'dracula' || theme === 'forest' || (theme === 'auto' && systemDark)
+  // 读取当前主题的 CSS 变量（各主题都会注入 --bg-primary / --text-primary 等）。
+  // 必须读"表格所在容器"而不是 <html>：暗黑编辑器模式是在编辑区容器上覆盖变量实现的，
+  // 读 <html> 会拿到亮色主题的值，画布就会是浅色而外围是深色。
   const readThemeColor = (name: string, fallback: string): string => {
     if (typeof document === 'undefined') return fallback
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+    const scope = (containerRef.current ?? document.querySelector('.spreadsheet-view')) as HTMLElement | null
+    const el = scope ?? document.documentElement
+    return getComputedStyle(el).getPropertyValue(name).trim() || fallback
   }
 
   onChangeRef.current = onChange
@@ -207,7 +215,6 @@ export function SpreadsheetEditor({
         font: { name: 'Helvetica', size: 12, bold: false, italic: false }
       }
     })
-
     // 全量序列化当前所有 sheet 写回 content。
     // 注意：库的 change 回调参数只带"当前激活 sheet"的数据（单对象），
     // 直接序列化它会丢掉其他 sheet；这里统一用 getData() 拿全量数组。
@@ -348,7 +355,7 @@ export function SpreadsheetEditor({
       container.innerHTML = ''
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noteId, theme, systemDark])
+  }, [noteId, theme, systemDark, editorDark])
 
   // 容器尺寸变化时（预览面板收起/展开的过渡动画、侧栏开关、窗口宽度变化等）
   // 触发 x-data-spreadsheet 重新测量并重排。库默认只在 window resize 时 reload，

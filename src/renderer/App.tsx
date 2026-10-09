@@ -59,6 +59,32 @@ async function flushCurrentNoteBeforeSync(): Promise<void> {
   // 仅当两者不一致（存在未保存编辑）才写盘，避免每次同步都制造 git 噪声。
   const saved = state.notes.find(n => n.id === cn.id)
   if (saved && saved.content === cn.content && saved.title === cn.title) return
+
+  // ⚠️ 只有编辑器确实存在"未落盘的本地修改"时才允许落盘（saveStatus.dirty 由编辑器在
+  // content/title 与它加载时的磁盘基线不一致时置位）。
+  // 若它没置位，说明 currentNote 里这份内容只是内存残留：磁盘早就被 pull / 另一端改过，
+  // 这时候"saved !== cn.content"并不代表有本地改动，写回去就是把新内容整份覆盖掉
+  // （2026-10-08 周报智能表格被旧内容覆盖就是这条路径）。此时只刷新，不写盘。
+  if (!state.saveStatus?.dirty) {
+    console.warn('[sync] 编辑器没有未保存修改，跳过同步前落盘（避免用内存残留覆盖磁盘）')
+    await state.loadNotes()
+    refreshOpenNoteFromPulledData()
+    return
+  }
+
+  // ⚠️ 写盘前再问一次磁盘：若磁盘内容已经变了（pull / 另一端 / 手动改文件），
+  // 说明我们手上这份草稿建立在旧内容之上，直接写回同样会覆盖新内容 ——
+  // 改为刷新列表，让编辑器走"外部更新 vs 本地草稿"的冲突流程，由用户决定保留哪一份。
+  try {
+    const fresh = await window.inkslateApi.notes.get(cn.id)
+    if (fresh && saved && typeof fresh.content === 'string' && fresh.content !== saved.content) {
+      console.warn('[sync] 磁盘内容已变化，放弃同步前落盘，改为刷新编辑器（避免用旧内容覆盖）')
+      await state.loadNotes()
+      refreshOpenNoteFromPulledData()
+      return
+    }
+  } catch { /* 读不到就按原逻辑落盘 */ }
+
   await state.updateNote(cn.id, { content: cn.content, title: cn.title }).catch(() => {})
 }
 

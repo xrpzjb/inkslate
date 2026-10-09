@@ -8,6 +8,24 @@
 .spreadsheet-view {
   background: var(--bg-primary);
   color: var(--text-primary);
+  /* ⚠️ 把整块智能表格关进它自己的层叠上下文（z-index 5 < 编辑器标题栏的 10）。
+   *
+   * 起因：x-data-spreadsheet 的点击层 `.x-spreadsheet-overlayer` 是 z-index:10 的
+   * 透明全尺寸浮层（库靠它接收网格的 mousedown，pointer-events 必须是 auto，
+   * 不能改成 none）。它和编辑器标题栏的「更多」下拉同处一个层叠上下文，
+   * z-index 相同（10 vs 10）时按 DOM 顺序决定 —— 表格在标题栏之后渲染 → 表格点击层压在下拉菜单上面。
+   *
+   * 后果：智能表格笔记里点开「更多」，面板下半部分的条目（「导出为 Excel」「保存」）
+   * 看得见却点不动、悬停也不高亮（elementFromPoint 命中的是 .x-spreadsheet-overlayer）。
+   * markdown/html/code 笔记没有这个浮层，所以只有智能表格中招。
+   *
+   * 修法：给表格容器一个独立的层叠上下文，库内部的 z-index（10/11/20/100/200…）
+   * 就再也溢不出去压到应用自己的浮层（下拉 / 菜单 / 侧栏 / 标签栏 / 标题栏）。
+   * 用 position:relative + z-index:5（不靠"flex item 的 z-index"这类隐式行为），
+   * isolation 再兜一层，避免将来有人删掉 z-index 时又漏出去。 */
+  position: relative;
+  z-index: 5;
+  isolation: isolate;
 }
 
 .spreadsheet-view .x-spreadsheet {
@@ -126,4 +144,133 @@
 /* 暗色主题下把工具栏图标反色（sprite 是黑色线条） */
 .spreadsheet-view[data-xspreadsheet-dark='true'] .x-spreadsheet-icon-img {
   filter: invert(1);
+}
+
+/* ============ 库内部仍有写死浅色的 DOM 部分 ============
+ * 这些类名库自带的样式是 #fff / rgba(0,0,0,.87) 一类的固定值，
+ * 不覆盖的话在暗色主题（含「暗黑编辑器」）下会出现浅底浅字看不清。
+ * 统一改用主题变量，亮色主题下取值不变、观感不受影响。 */
+
+/* 通用菜单项（工具栏"更多"菜单等） */
+.spreadsheet-view .x-spreadsheet-menu > li {
+  color: var(--text-secondary);
+}
+.spreadsheet-view .x-spreadsheet-menu > li:hover {
+  background: var(--bg-hover);
+}
+.spreadsheet-view .x-spreadsheet-menu > li.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* 下拉里的标题 / 分组头（字体、格式、字号…） */
+.spreadsheet-view .x-spreadsheet-dropdown-title,
+.spreadsheet-view .x-spreadsheet-dropdown-header,
+.spreadsheet-view .x-spreadsheet-item .label {
+  color: var(--text-primary);
+}
+
+/* 色板 / 边框面板：库写成 background:#fff，边框 #ddd/#eee */
+.spreadsheet-view .x-spreadsheet-color-palette,
+.spreadsheet-view .x-spreadsheet-border-palette,
+.spreadsheet-view .x-spreadsheet-color-palette table,
+.spreadsheet-view .x-spreadsheet-border-palette table {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-border-palette-left {
+  border-right-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-border-palette-cell {
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-border-palette-cell:hover {
+  background-color: var(--bg-hover);
+}
+.spreadsheet-view .x-spreadsheet-color-palette-cell,
+.spreadsheet-view .x-spreadsheet-color-palette-cell:hover {
+  border-color: var(--border-color);
+}
+
+/* 勾选态方块（筛选 / 数据验证列表）：库用 rgba(0,0,0,.08)，暗色下几乎不可见 */
+.spreadsheet-view .x-spreadsheet-item.state:before,
+.spreadsheet-view .x-spreadsheet-header.state:before {
+  background: var(--border-strong);
+}
+.spreadsheet-view .x-spreadsheet-item.state.checked:before,
+.spreadsheet-view .x-spreadsheet-header.state.checked:before {
+  background: var(--accent-color);
+}
+
+/* 弹窗 / 轻提示（数据验证、打印提示等） */
+.spreadsheet-view .x-spreadsheet-modal,
+.spreadsheet-view .x-spreadsheet-toast {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  box-shadow: var(--shadow-md);
+}
+.spreadsheet-view .x-spreadsheet-modal .x-spreadsheet-modal-header,
+.spreadsheet-view .x-spreadsheet-toast .x-spreadsheet-toast-header {
+  background-color: var(--bg-secondary);
+  border-bottom-color: var(--border-color);
+  color: var(--text-primary);
+}
+.spreadsheet-view .x-spreadsheet-modal .x-spreadsheet-modal-content,
+.spreadsheet-view .x-spreadsheet-toast .x-spreadsheet-toast-content {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+/* 弹窗内的表单控件与 label */
+.spreadsheet-view .x-spreadsheet-modal label,
+.spreadsheet-view .x-spreadsheet-form-field .label,
+.spreadsheet-view form fieldset label {
+  color: var(--text-secondary);
+}
+.spreadsheet-view .x-spreadsheet-modal input,
+.spreadsheet-view .x-spreadsheet-modal select,
+.spreadsheet-view .x-spreadsheet-modal textarea,
+.spreadsheet-view .x-spreadsheet-form-field input,
+.spreadsheet-view .x-spreadsheet-form-field select,
+.spreadsheet-view form fieldset select {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.spreadsheet-view .x-spreadsheet-modal input::placeholder,
+.spreadsheet-view .x-spreadsheet-form-field input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* 遮罩（打印预览等）在暗色下不需要再叠一层亮色 */
+.spreadsheet-view .x-spreadsheet-dimmer {
+  background-color: rgba(0, 0, 0, 0.6);
+}
+
+/* 打印预览：库写死 #424242 / #d0d0d0 / #fff */
+.spreadsheet-view .x-spreadsheet-print-content {
+  background: var(--bg-tertiary);
+}
+.spreadsheet-view .x-spreadsheet-print-content .-sider,
+.spreadsheet-view .x-spreadsheet-canvas-card {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+/* 滚动条：底色与滑块都用主题变量，暗色下不再是一条亮带 */
+.spreadsheet-view .x-spreadsheet-scrollbar {
+  background-color: var(--bg-tertiary);
+}
+.spreadsheet-view .x-spreadsheet-scrollbar > div {
+  background: var(--scrollbar-thumb);
+}
+.spreadsheet-view .x-spreadsheet-scrollbar:hover > div {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* 列宽/行高拖拽手柄 */
+.spreadsheet-view .x-spreadsheet-resizer-hover {
+  background-color: var(--accent-color);
 }

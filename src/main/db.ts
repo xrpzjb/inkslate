@@ -1936,6 +1936,47 @@ export function findFileRecursively(dir: string, fileName: string): string | nul
  * 读取笔记内容，同时修复失效的 path。
  * 返回 { content, fixedPath }，其中 fixedPath 为实际找到的文件路径（如有）。
  */
+/** 同步等待（毫秒）：用于"文件正在被外部重写"时的极短重试 */
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  } catch { /* 不支持就退化成忙等 */ 
+    const until = Date.now() + ms
+    while (Date.now() < until) { /* spin */ }
+  }
+}
+
+/** 文件写入窗口内的重试次数 / 间隔 */
+const NOTE_FILE_READ_RETRIES = 3
+const NOTE_FILE_READ_RETRY_MS = 15
+
+/**
+ * 读笔记内容文件，避开"外部正在重写该文件"的截断窗口。
+ *
+ * 为什么要重试：git pull 的 checkout、编辑器的落盘都是"先截断再写"，
+ * 并发的读取会在这几毫秒里读到一个 0 字节文件，于是笔记被当成空的 ——
+ * 之后的兜底逻辑会拿 SQLite 里的副本顶上（可能是很旧的内容），
+ * 用户一编辑就把旧内容整份写回文件、再被同步推上远端。
+ * 2026-10-08 的「周报/2026年9月」智能表格就是被这条路径整份覆盖的。
+ */
+function readNoteFile(filePath: string): string {
+  let last = ''
+  for (let attempt = 1; attempt <= NOTE_FILE_READ_RETRIES; attempt++) {
+    let text = ''
+    let readOk = false
+    try { text = fs.readFileSync(filePath, 'utf-8'); readOk = true } catch { readOk = false }
+    if (readOk && text !== '') return text
+    // 读到空：确认它是不是真的空文件（size = 0）——真空白笔记直接返回，
+    // 否则再等一帧重读（大概率是别人正在写）
+    let size = -1
+    try { size = fs.statSync(filePath).size } catch { size = -1 }
+    if (readOk && size === 0) return ''
+    last = text
+    if (attempt < NOTE_FILE_READ_RETRIES) sleepSync(NOTE_FILE_READ_RETRY_MS)
+  }
+  return last
+}
+
 function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
   let content = ''
   let fixedPath: string | undefined
@@ -1945,7 +1986,7 @@ function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
   // 若只读 DB content 列，重开笔记/另一端拉取后会丢失编辑与图片。
   if (row.format !== 'file' && row.format !== 'url' && row.path) {
     if (fs.existsSync(row.path)) {
-      try { content = fs.readFileSync(row.path, 'utf-8') } catch {}
+      content = readNoteFile(row.path)
     }
     // path 失效：尝试在当前 notebook 目录甚至全局搜索
     if (!content) {
@@ -1957,7 +1998,7 @@ function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
         found = findFileRecursively(getNotesDir(), fileName)
       }
       if (found) {
-        try { content = fs.readFileSync(found, 'utf-8') } catch {}
+        content = readNoteFile(found)
         if (content) fixedPath = found
       }
     }
@@ -1971,6 +2012,18 @@ function resolveNoteContent(row: any): { content: string; fixedPath?: string } {
   // 此时以 DB 中的加密内容为准，保证锁屏生效、真实内容不外泄
   if (row.is_encrypted === 1 && row.content && isEncryptedContent(row.content) && !isEncryptedContent(content)) {
     content = row.content
+  }
+
+  // 兜底副本保持新鲜：DB 里的 content 列只是"文件读不到时的备份"，
+  // 但一旦它变旧，就可能被上面这条兜底当成正文交给界面，接着被写回文件 ——
+  // 这正是 2026-10-08 周报智能表格被旧内容整份覆盖的成因。
+  // 所以：文件里读到了权威内容时，顺手把旧副本刷新掉（只在实际不一致时写一次，
+  // 之后 file 与 DB 相等，不再产生任何写操作）。
+  // 加密笔记跳过：DB 列里存的是密文，明文不能落库。
+  if (content && content !== row.content && row.is_encrypted !== 1) {
+    try {
+      getDatabase().prepare('UPDATE notes SET content = ? WHERE id = ?').run(content, row.id)
+    } catch { /* 刷新失败不影响本次读取 */ }
   }
   return { content, fixedPath }
 }
