@@ -51,6 +51,18 @@ export async function exportSpreadsheetToXlsx(title: string, content: string): P
         const excelCell = ws.getCell(ri + 1, ci + 1)
         excelCell.value = cell.text ?? ''
 
+        const cellStyle = typeof cell.style === 'number' ? styles[cell.style] : null
+        // 自动换行 / 垂直对齐：与编辑器一致（编辑器默认 textwrap: true，
+        // 行高按内容自适应；Excel 里对未显式设行高的行也会自动适配）
+        if (cellStyle?.textwrap === true || cellStyle?.valign) {
+          excelCell.alignment = {
+            wrapText: cellStyle?.textwrap === true,
+            vertical: cellStyle?.valign === 'top' ? 'top'
+              : cellStyle?.valign === 'bottom' ? 'bottom'
+                : 'middle',
+          }
+        }
+
         if (typeof cell.style === 'number' && styles[cell.style]?.bgcolor) {
           const bgcolor = String(styles[cell.style].bgcolor).replace(/^#/, '')
           if (/^[0-9a-fA-F]{6}$/.test(bgcolor)) {

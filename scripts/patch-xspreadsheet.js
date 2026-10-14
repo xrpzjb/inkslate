@@ -162,6 +162,37 @@ const V1_HELPER = `function spreadsheetThemeCss(name, fallback) {
 
 const V2_MARKER = 'inkslate-spreadsheet-theme-patch v2'
 
+/**
+ * v3：draw.text 里"自动换行"的循环。
+ *
+ * 库的原始版本是在累计宽度**已经超过**盒宽时，才把当前字符挪到下一行，
+ * 于是每行末尾都会比格子宽出约一个字符；画布从左到右绘制，溢出部分被
+ * 右边格子的底色盖住 → 看起来每行结尾都被切掉一截。
+ * 这里改成先判断"加上这个字会不会超宽"，超了就换行，保证每行都在格内。
+ */
+const WRAP_LOOSE = `        let textLine = { w: 0, len: 0, start: 0 };
+        for (let i = 0; i < it.length; i += 1) {
+          if (textLine.w >= npx(biw)) {
+            ntxts.push(it.substr(textLine.start, textLine.len));
+            textLine = { w: 0, len: 0, start: i };
+          }
+          textLine.len += 1;
+          textLine.w += ctx.measureText(it[i]).width + 1;
+        }`
+
+const WRAP_STRICT = `        let textLine = { w: 0, len: 0, start: 0 };
+        for (let i = 0; i < it.length; i += 1) {
+          const charWidth = ctx.measureText(it[i]).width + 1;
+          // inkslate-wrap-v3：先判断"加上这个字符是否超宽"，超了就换行；
+          // 库原本是"已经超宽"之后才换行，会让每行溢出一个字符。
+          if (textLine.len > 0 && textLine.w + charWidth > npx(biw)) {
+            ntxts.push(it.substr(textLine.start, textLine.len));
+            textLine = { w: 0, len: 0, start: i };
+          }
+          textLine.len += 1;
+          textLine.w += charWidth;
+        }`
+
 const PATCHES = [
   {
     file: 'src/component/table.js',
@@ -207,6 +238,11 @@ const PATCHES = [
       { from: '/* global window */\n', to: '/* global window */\n' + THEME_HELPER, label: 'theme helper (draw)' },
       { from: "    this.bgcolor = '#ffffff';", to: "    this.bgcolor = spreadsheetThemeCss('--bg-primary', '#ffffff');", label: 'drawbox default bgcolor' },
       { from: "    ctx.fillStyle = bgcolor || '#fff';", to: "    ctx.fillStyle = bgcolor || spreadsheetThemeCss('--bg-primary', '#fff');", label: 'rect fallback bgcolor' },
+      // v3：换行改成"严格不超宽"
+      // 库原本的逻辑是在累计宽度**已经超过**盒宽之后，才把当前字符挪到下一行，
+      // 于是每一行末尾都会比格子宽出约一个字符；画布按从左到右绘制，
+      // 溢出部分被右边格子的底色盖住 → 视觉上每行末尾都被切掉一截（用户报的"看不全"）。
+      { from: WRAP_LOOSE, to: WRAP_STRICT, label: 'strict text wrap (v3)' },
     ],
   },
 ]
@@ -219,23 +255,25 @@ function applyFile(patch) {
   }
   let src = fs.readFileSync(target, 'utf-8')
 
-  if (src.includes(V2_MARKER)) {
-    console.log(`[patch-xspreadsheet] ${patch.file}: already v2, skip`)
-    return { file: patch.file, status: 'current', applied: 0 }
-  }
-
+  // 注意：不再因为"已经打过 v2"就整体跳过——补丁会不断加新项（例如 v3 的严格换行），
+  // 必须能对已装好的库做增量升级。每一项都会先看目标态是否已存在。
   let applied = 0
   for (const edit of patch.edits) {
     if (src.includes(edit.to)) continue // 已是目标态（含 v1 已打过的项）→ 跳过
     if (!src.includes(edit.from)) {
       // optional 的项（v1 专用替换、库原始常量块）在另一种起点下本来就不存在 → 跳过，
-      // 由文件末尾的标记校验兜底；非 optional 的项缺失说明库版本变了 → 放弃本文件。
+      // 由文件末尾的校验兜底；非 optional 的项缺失说明库版本变了 → 放弃本文件。
       if (edit.optional) continue
       console.warn(`[patch-xspreadsheet] ${patch.file}: pattern not found (${edit.label}), leave file untouched`)
       return { file: patch.file, status: 'aborted', applied: 0 }
     }
     src = edit.all ? src.split(edit.from).join(edit.to) : src.replace(edit.from, edit.to)
     applied += 1
+  }
+
+  if (applied === 0) {
+    console.log(`[patch-xspreadsheet] ${patch.file}: up to date, skip`)
+    return { file: patch.file, status: 'current', applied: 0 }
   }
 
   fs.writeFileSync(target, src, 'utf-8')
@@ -251,6 +289,7 @@ const checks = [
   ['src/component/table.js', "spreadsheetThemeCss('--bg-primary', '#fff')"],
   ['src/core/data_proxy.js', 'spreadsheetReadableStyle(merged)'],
   ['src/canvas/draw.js', "spreadsheetThemeCss('--bg-primary', '#ffffff')"],
+  ['src/canvas/draw.js', 'inkslate-wrap-v3'],
 ]
 let ok = true
 for (const [file, needle] of checks) {
@@ -270,5 +309,27 @@ if (!ok) {
     '  排查：node scripts/check-spreadsheet-theme.js'
   )
 } else {
-  console.log('[patch-xspreadsheet] canvas colors + text contrast now follow the app theme (v2)')
+  console.log('[patch-xspreadsheet] canvas colors + text contrast now follow the app theme (v2), strict text wrap (v3)')
+}
+
+/**
+ * 清掉 Vite 的依赖预打包缓存。
+ *
+ * 这一步是必须的：Vite 会把 node_modules 里的依赖预打包到 node_modules/.vite/deps
+ * 并长期复用；我们打的补丁改的是库源码，**不会**触发重新预打包。
+ * 不清缓存的话，dev 模式下跑的还是补丁前的旧代码（"补丁明明打了却没生效"）。
+ */
+try {
+  const viteCacheDirs = [
+    path.join(LIB, '..', '.vite'),
+    path.join(LIB, '..', '.vite-temp'),
+  ]
+  for (const dir of viteCacheDirs) {
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true })
+      console.log(`[patch-xspreadsheet] cleared Vite dep cache: ${path.relative(path.join(LIB, '..', '..'), dir)}`)
+    }
+  }
+} catch (e) {
+  console.warn('[patch-xspreadsheet] 清理 Vite 缓存失败（下次启动会自动重建）：', e.message)
 }

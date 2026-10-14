@@ -5,6 +5,8 @@ import zhCN from 'x-data-spreadsheet/src/locale/zh-cn'
 import { SpreadsheetData } from '@shared/types'
 import { useAppStore } from '../store/app'
 import { installCrossSheetClipboardFix } from '../utils/spreadsheetClipboard'
+import { installSpreadsheetAutoRowHeight } from '../utils/spreadsheetAutoRowHeight'
+import { installSpreadsheetEditorStyle } from '../utils/spreadsheetEditorStyle'
 import '../styles/spreadsheet.css'
 
 // 启用中文界面（右键菜单 / 工具栏 / 弹窗等）
@@ -209,12 +211,20 @@ export function SpreadsheetEditor({
         color: readThemeColor('--text-primary', '#111827'),
         align: 'left',
         valign: 'middle',
-        textwrap: false,
+        // 默认开启自动换行：文字超出列宽时自动折行，并由
+        // utils/spreadsheetAutoRowHeight 把行高撑到容得下折行后的内容。
+        // 不想换行的单元格可用工具栏「自动换行」单独关掉。
+        textwrap: true,
         strike: false,
         underline: false,
         font: { name: 'Helvetica', size: 12, bold: false, italic: false }
       }
     })
+    // 文字超出单元格时自动换行并撑高行高（详见 utils/spreadsheetAutoRowHeight）。
+    // 库每次切换 / 载入工作表都会走 sheet.resetData，工具内部已逐个挂好。
+    const uninstallAutoRowHeight = installSpreadsheetAutoRowHeight(sheet)
+    // 双击编辑时让编辑框的字体/颜色/对齐跟随单元格（库默认写死 13px Arial，会"看起来格式变了"）
+    const uninstallEditorStyle = installSpreadsheetEditorStyle(sheet)
     // 全量序列化当前所有 sheet 写回 content。
     // 注意：库的 change 回调参数只带"当前激活 sheet"的数据（单对象），
     // 直接序列化它会丢掉其他 sheet；这里统一用 getData() 拿全量数组。
@@ -344,6 +354,9 @@ export function SpreadsheetEditor({
     initializedRef.current = true
 
     return () => {
+      // 卸掉自动行高 / 编辑框样式的补丁，再清空 DOM
+      try { uninstallAutoRowHeight() } catch {}
+      try { uninstallEditorStyle() } catch {}
       // x-data-spreadsheet 无官方销毁 API，清空 DOM 防止重复挂载
       if (sheetRef.current) {
         try { (sheetRef.current as any).destroy?.() } catch {}

@@ -45,6 +45,7 @@ nbdist/
 .mimocode
 .workbuddy
 .commandcode
+.tmp-git-diag
 node_modules/*
 
 !*/build/*.java
@@ -57,3 +58,7 @@ release
 release_installer
 release_manual
 release_new
+
+# 开发/沙箱环境用的应用数据目录：本机沙箱里 electron 只能写工作区，
+# 用它启动时不会碰 %APPDATA% 里的真实数据，也不该进版本库
+.inkslate-dev-data

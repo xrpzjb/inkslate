@@ -102,6 +102,27 @@
   border-color: var(--border-color);
 }
 
+/* 底部工作表标签的行内重命名输入框（双击 "Sheet1" 改名时出现）。
+ * ⚠️ 必须单独覆盖内层 <input>，只改外层容器是不够的：
+ *  - 库自带 `.x-spreadsheet-form-input input { background: #fff; border-color: #e9e9e9 }`
+ *    （权重 0-1-1）压过全局的 `input`（0-0-1），所以底色始终是写死的白；
+ *  - 而全局 `input { color: inherit }` 让它继承父容器的文字色，父容器的色又被上面那条
+ *    规则改成了 var(--text-primary)。
+ *  两者叠加 → 暗色主题 / 暗黑编辑器下这个输入框是"白底浅字"，
+ *  编辑工作表名称时字几乎看不见（亮色主题恰好是深字白底，所以只有暗色才暴露）。
+ * 这里按主题变量成对覆盖底色 + 文字 + 边框，亮色主题取值不变、观感不受影响。 */
+.spreadsheet-view .x-spreadsheet-form-input input {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.spreadsheet-view .x-spreadsheet-form-input input:focus {
+  border-color: var(--accent-color);
+}
+.spreadsheet-view .x-spreadsheet-form-input input::placeholder {
+  color: var(--text-tertiary);
+}
+
 /* 按钮 */
 .spreadsheet-view .x-spreadsheet-button {
   background: var(--bg-tertiary);

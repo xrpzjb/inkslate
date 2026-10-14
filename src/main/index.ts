@@ -5,11 +5,35 @@ import { buildMenuData, handleMenuClick, installAppMenu, setMenuThemeId } from '
 import { initDatabase, closeDatabase, dbApi, repairNotePaths } from './db'
 import { OssManager } from './oss/manager'
 import { resolveDevServerOrigin, resolveDevServerUrl } from '../shared/devServer'
+import { installGpuCacheSelfHeal } from './gpuCacheSelfHeal'
+import { installStartupErrorLogging, logStartup, startupLogPath } from './startupLog'
+
+// 启动黑匣子：从第一行代码就开始记录，崩在哪一步都有据可查
+// （Electron 主进程原生崩溃时 stdout 往往什么都留不下来）
+installStartupErrorLogging()
+logStartup('module-loaded', { electron: process.versions.electron, node: process.versions.node, log: startupLogPath() })
 
 // Electron 30+ webSecurity 行为变更：单设 webPreferences.webSecurity: false 不再
 // 完全关掉 CSP/frame-ancestors 检查。需要同时加 Chromium 命令行开关。
+logStartup('electron-app-object', { available: !!app, hasWhenReady: typeof app?.whenReady === 'function' })
 app.commandLine.appendSwitch('disable-web-security')
 app.commandLine.appendSwitch('disable-features', 'BlockInsecurePrivateNetworkRequests')
+
+// 硬件加速兜底开关（排查用，默认不开）：
+// 少数 Windows 机器上 Electron 会在 GPU / 显示初始化阶段原生崩溃
+// （进程退出码 0x80000003 = STATUS_BREAKPOINT，日志里连 app ready 都到不了，
+// 也不会打印任何业务日志）。这类问题与业务代码无关，用 MDTEXT_DISABLE_GPU=1
+// 启动即可关闭硬件加速绕开；必须在 app ready 之前调用才生效。
+if (process.env.MDTEXT_DISABLE_GPU === '1') {
+  app.disableHardwareAcceleration()
+  logStartup('hardware-acceleration-disabled')
+}
+
+// Ctrl+C 掐掉 dev 进程会 TerminateProcess 掉 electron，可能留下只写了一半的
+// GPU/WebGPU 磁盘缓存，导致之后每次启动都在 Chromium 初始化阶段原生崩溃
+// （0x80000003，没有任何日志）。这里在 GPU 进程起来之前做自愈，详见该模块注释。
+installGpuCacheSelfHeal()
+logStartup('selfheal-done')
 
 let mainWindow: BrowserWindow | null = null
 
@@ -58,6 +82,7 @@ function attachDevLoadRetry(win: BrowserWindow): void {
 }
 
 function createMainWindow(): void {
+  logStartup('window-create-start')
   const iconPath = path.join(__dirname, '../../resources/icon.png')
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -83,6 +108,7 @@ function createMainWindow(): void {
 
   const loadMode = process.env.MDTEXT_LOAD
   const useDevServer = loadMode === 'dev' || (loadMode !== 'file' && isDev)
+  logStartup('window-created', { useDevServer, devServerUrl })
   if (useDevServer) {
     // 打出真实地址：以后"界面怎么不是笔记"这类问题看日志一眼就能定位
     console.log('[dev] loading renderer from', devServerUrl)
@@ -109,16 +135,21 @@ function createMainWindow(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  logStartup('bootstrap-start')
   // 初始化本地数据库
   await initDatabase()
+  logStartup('db-ready')
 
   // 启动时修复因移动/删除笔记本导致的路径错乱
   try { repairNotePaths() } catch (e) { console.error('[db] repairNotePaths failed:', e) }
+  logStartup('paths-repaired')
 
   OssManager.getInstance()
+  logStartup('oss-manager-ready')
 
   // 注册所有业务 IPC handler
   setupIpcHandlers()
+  logStartup('ipc-ready')
 
   // CSP 放宽：把主窗口响应的 frame-src 改成 *
   // —— 网址笔记的 iframe 需要主窗口允许加载任意外部 URL
@@ -195,12 +226,17 @@ async function bootstrap(): Promise<void> {
   mainWindow?.on('unmaximize', () => { mainWindow?.webContents.send('window:maximize-change', false) })
 }
 
-app.whenReady().then(bootstrap).catch((err) => {
+app.whenReady().then(() => {
+  logStartup('app-ready')
+  return bootstrap()
+}).catch((err) => {
+  logStartup('bootstrap-failed', err)
   console.error('[inkslate] bootstrap failed:', err)
   app.quit()
 })
 
 app.on('window-all-closed', () => {
+  logStartup('window-all-closed')
   closeDatabase()
   if (process.platform !== 'darwin') {
     app.quit()

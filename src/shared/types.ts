@@ -9,10 +9,18 @@ export type NoteFormat = 'markdown' | 'html' | 'richtext' | 'code' | 'url' | 'fi
  */
 export const UNLOCK_TTL_MS = 10 * 60 * 1000
 
+export interface SpreadsheetCellStyle {
+  bgcolor?: string
+  /** 自动换行（表格默认开启；开启时行高按内容自适应） */
+  textwrap?: boolean
+  /** 垂直对齐：top | middle | bottom */
+  valign?: 'top' | 'middle' | 'bottom'
+}
+
 /** 智能表格笔记的内部数据格式（对应 x-data-spreadsheet 的 getData() 输出） */
 export interface SpreadsheetSheetData {
   name?: string
-  styles?: Array<{ bgcolor?: string }>
+  styles?: Array<SpreadsheetCellStyle>
   merges?: string[]
   rows?: Record<number, { cells?: Record<number, { text?: string; style?: number }> }>
   cols?: Record<number, { width?: number }>
