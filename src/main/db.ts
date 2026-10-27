@@ -2041,9 +2041,33 @@ export function repairNotePaths(): void {
     if (note.format === 'url') continue
 
     if (note.format === 'file') {
-      if (note.file_path && fs.existsSync(note.file_path)) continue
-      const fileName = note.file_path ? path.basename(note.file_path) : `${note.title || 'untitled'}.bin`
       const nbDir = getNotebookFilePath(note.notebook_id)
+      if (note.file_path && fs.existsSync(note.file_path)) {
+        // 老版本可能直接引用用户选择的原始路径（库外文件），这种文件不会进 git，
+        // 换机器/原文件移动后就无法预览。这里把它复制进笔记文件库并改库。
+        const notesRoot = path.resolve(getNotesDir())
+        const resolved = path.resolve(note.file_path)
+        const inLibrary = resolved === notesRoot || resolved.startsWith(notesRoot + path.sep)
+        if (inLibrary) continue
+        try {
+          fs.mkdirSync(nbDir, { recursive: true })
+          const ext = path.extname(note.file_path).slice(1).toLowerCase() || 'bin'
+          const originalName = path.basename(note.file_path)
+          const baseName = path.basename(note.file_path, path.extname(note.file_path))
+          const destName = getUniqueFileName(slugify(baseName), ext, nbDir)
+          const dest = path.join(nbDir, destName)
+          fs.copyFileSync(note.file_path, dest)
+          const stat = fs.statSync(dest)
+          d.prepare('UPDATE notes SET file_path = ?, file_name = ?, file_size = ?, file_ext = ? WHERE id = ?')
+            .run(dest, originalName, stat.size, ext, note.id)
+          console.log('[db] repairNotePaths: imported external file into library for', note.title, '->', dest)
+          fixed++
+        } catch (e) {
+          console.warn('[db] repairNotePaths: failed to import external file for', note.title, e)
+        }
+        continue
+      }
+      const fileName = note.file_path ? path.basename(note.file_path) : `${note.title || 'untitled'}.bin`
       let found = findFileRecursively(nbDir, fileName)
       if (!found) {
         found = findFileRecursively(getFilesDir(), fileName)

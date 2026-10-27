@@ -35,7 +35,7 @@ export default defineConfig({
     // 需要主窗口允许加载任意外部 URL，但 Vite dev 默认 CSP 会通过 frame-src 拒绝。
     // 只影响 dev server；生产构建用 dist 时由主进程 webRequest 兜底。
     headers: {
-      'Content-Security-Policy': "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-src *;"
+      'Content-Security-Policy': "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; img-src * data: blob: file:; frame-src *;"
     }
   }
 })

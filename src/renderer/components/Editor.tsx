@@ -1118,16 +1118,26 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
 
   // 弹窗状态
   const [linkDlg, setLinkDlg] = useState({ open: false, url: '', text: '' })
-  const [imageDlg, setImageDlg] = useState<{ open: boolean; url: string; alt: string; busy: boolean; sourcePath?: string }>({ open: false, url: '', alt: '', busy: false })
+  const [imageDlg, setImageDlg] = useState<{ open: boolean; url: string; alt: string; busy: boolean; sourcePath?: string; localName?: string }>({ open: false, url: '', alt: '', busy: false })
   const [tableDlg, setTableDlg] = useState({ open: false, rows: 3, cols: 3 })
+
+  // 绝对路径 → 可被 Chromium 正确加载的 file:// URL（编码中文/空格等字符）
+  const toFileUrl = (absPath: string): string => {
+    let normalized = absPath.replace(/\\/g, '/')
+    if (!normalized.startsWith('/')) normalized = `/${normalized}`
+    return `file://${encodeURI(normalized).replace(/#/g, '%23').replace(/\?/g, '%3F')}`
+  }
 
   // 相对路径（assets/xxx.png）→ file:// 绝对路径用于显示；data/http/file 原样返回
   const resolveImageSrc = (rawSrc: string): string => {
-    if (rawSrc && !rawSrc.startsWith('data:') && !rawSrc.startsWith('http') && !rawSrc.startsWith('file:') && noteFilePath) {
-      const noteDir = noteFilePath.replace(/[\\/][^\\/]+$/, '')
-      return `file:///${noteDir.replace(/\\/g, '/')}/${rawSrc.replace(/\\/g, '/')}`
-    }
-    return rawSrc
+    if (!rawSrc) return ''
+    if (/^(?:data|https?|blob|file):/i.test(rawSrc)) return rawSrc
+    // Windows 绝对路径 / POSIX 绝对路径直接转 file://
+    if (/^[a-zA-Z]:[\\/]/.test(rawSrc) || rawSrc.startsWith('/')) return toFileUrl(rawSrc)
+    if (!noteFilePath) return rawSrc
+    const noteDir = noteFilePath.replace(/[\\/][^\\/]+$/, '')
+    const rel = rawSrc.replace(/^\.?[\\/]/, '').replace(/\\/g, '/')
+    return toFileUrl(`${noteDir}/${rel}`)
   }
 
   // ===== 图片选中 / 拖动缩放 =====
@@ -1443,22 +1453,35 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
       properties: ['openFile']
     })
     if (!filePath) return
-    setImageDlg(d => ({ ...d, busy: true }))
-    try {
-      const { base64, mime } = await window.inkslateApi.file.readAsBase64(filePath)
-      setImageDlg(d => ({ ...d, url: `data:${mime};base64,${base64}`, sourcePath: filePath, busy: false }))
-    } catch (e) {
-      toast.error('读取图片失败：' + (e as Error).message)
-      setImageDlg(d => ({ ...d, busy: false }))
-    }
+    const localName = filePath.split(/[\\/]/).pop() || filePath
+    setImageDlg(d => ({ ...d, url: '', localName, sourcePath: filePath, busy: false }))
   }
 
   const confirmImage = async () => {
-    if (!imageDlg.url) return
     const alt = imageDlg.alt || 'image'
 
-    // 直接内嵌 base64 data URL：内容自包含，随笔记一起同步，
-    // 不依赖本地 assets 目录，保证在其它端同步后图片仍可见。
+    // 本地图片：先复制进笔记文件库（笔记同级的 assets/），正文只保存相对路径，
+    // 这样图片会跟着笔记一起被 git 同步，而不是引用用户电脑上的原始路径。
+    if (imageDlg.sourcePath) {
+      if (!noteFilePath) {
+        toast.error('当前笔记还没有保存路径，暂时无法导入图片')
+        return
+      }
+      setImageDlg(d => ({ ...d, busy: true }))
+      try {
+        const relativePath = await window.inkslateApi.file.saveAsset(noteFilePath, imageDlg.sourcePath)
+        if (!relativePath) throw new Error('无法读取源图片')
+        const displaySrc = resolveImageSrc(relativePath)
+        exec('insertHTML', `<img src="${escapeHtml(displaySrc)}" alt="${escapeHtml(alt)}" draggable="false" data-richtext-image="1" data-richtext-src="${escapeHtml(relativePath)}" style="max-width: 100%;">`)
+        setImageDlg(d => ({ ...d, open: false, busy: false, url: '', sourcePath: undefined, localName: undefined }))
+      } catch (e) {
+        toast.error('保存图片到笔记失败：' + (e as Error).message)
+        setImageDlg(d => ({ ...d, busy: false }))
+      }
+      return
+    }
+
+    if (!imageDlg.url) return
     exec('insertHTML', `<img src="${escapeHtml(imageDlg.url)}" alt="${escapeHtml(alt)}" draggable="false" data-richtext-image="1" style="max-width: 100%;">`)
     setImageDlg(d => ({ ...d, open: false }))
   }
@@ -1575,14 +1598,14 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
           onClose={() => setImageDlg(d => ({ ...d, open: false }))}
           onConfirm={confirmImage}
           confirmText="插入"
-          confirmDisabled={!imageDlg.url || imageDlg.busy}
+          confirmDisabled={(!imageDlg.url && !imageDlg.sourcePath) || imageDlg.busy}
         >
           <Field label="图片来源">
             <div style={{ display: 'flex', gap: 6 }}>
               <input
-                value={imageDlg.url.startsWith('data:') ? `（已选择本地文件）` : imageDlg.url}
-                readOnly={imageDlg.url.startsWith('data:')}
-                onChange={e => setImageDlg(d => ({ ...d, url: e.target.value }))}
+                value={imageDlg.sourcePath ? `（本地文件）${imageDlg.localName ?? ''}` : imageDlg.url}
+                readOnly={!!imageDlg.sourcePath}
+                onChange={e => setImageDlg(d => ({ ...d, url: e.target.value, sourcePath: undefined, localName: undefined }))}
                 onKeyDown={e => { if (e.key === 'Enter') confirmImage() }}
                 placeholder="https://example.com/image.png"
                 style={{ ...inputStyle, flex: 1 }}
@@ -1592,12 +1615,12 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
                 disabled={imageDlg.busy}
                 style={btnStyle}
               >
-                {imageDlg.busy ? '读取中...' : '本地文件'}
+                {imageDlg.busy ? '保存中...' : '本地文件'}
               </button>
             </div>
-            {imageDlg.url.startsWith('data:') && (
+            {imageDlg.sourcePath && (
               <button
-                onClick={() => setImageDlg(d => ({ ...d, url: '' }))}
+                onClick={() => setImageDlg(d => ({ ...d, url: '', sourcePath: undefined, localName: undefined }))}
                 style={{ ...btnStyle, marginTop: 6, fontSize: 12 }}
               >
                 清除并改用 URL
@@ -1613,10 +1636,10 @@ const RichTextEditor = forwardRef<{ setHTML: (html: string) => void }, {
               style={inputStyle}
             />
           </Field>
-          {imageDlg.url && (
+          {(imageDlg.sourcePath || imageDlg.url) && (
             <div style={{ marginTop: 12, padding: 8, background: 'var(--bg-secondary)', borderRadius: 4, textAlign: 'center' }}>
               <img
-                src={imageDlg.url}
+                src={imageDlg.sourcePath ? toFileUrl(imageDlg.sourcePath) : imageDlg.url}
                 alt="预览"
                 style={{ maxWidth: '100%', maxHeight: 160 }}
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}

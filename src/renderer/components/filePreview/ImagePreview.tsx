@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ZoomIn, ZoomOut, RotateCw, Download, Maximize2 } from 'lucide-react'
 
-/** 图片预览：直接用 file:// 协议加载 app data 里的文件
+/** 图片预览：优先通过 IPC 读取源文件并生成 blob URL
+ *  （不依赖 file:// 协议，避免 CSP/本地资源限制导致图片空白）
  *  支持缩放、旋转、原图大小、另存为 */
 export function ImagePreview({ noteId, filePath, fileName }: {
   noteId: string
@@ -10,15 +11,43 @@ export function ImagePreview({ noteId, filePath, fileName }: {
 }) {
   const [zoom, setZoom] = useState(1)
   const [rotation, setRotation] = useState(0)
-  // 用 file:// 协议直接加载本地文件；加 cache buster 防止 replace 后还显示旧图
   const [src, setSrc] = useState('')
 
   useEffect(() => {
-    // Electron 关了 webSecurity，file:// 直接可用
-    // 注意：filePath 是 Windows 反斜杠路径，要编码
-    const encoded = filePath.replace(/\\/g, '/')
-    setSrc(`file:///${encoded}?t=${Date.now()}`)
-  }, [filePath])
+    let cancelled = false
+    let objectUrl = ''
+    const mimeMap: Record<string, string> = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+      gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+      bmp: 'image/bmp', ico: 'image/x-icon'
+    }
+    const ext = (fileName?.split('.').pop() || filePath.split('.').pop() || '').toLowerCase()
+    const mime = mimeMap[ext] || 'application/octet-stream'
+    setSrc('')
+
+    ;(async () => {
+      try {
+        const data = await window.inkslateApi.fileNote.read(noteId)
+        if (cancelled) return
+        if (!data) throw new Error('empty file')
+        const blob = new Blob([data], { type: mime })
+        objectUrl = URL.createObjectURL(blob)
+        setSrc(objectUrl)
+      } catch {
+        if (cancelled) return
+        // 兜底：直接走 file://（路径里的中文/空格需编码）
+        let normalized = filePath.replace(/\\/g, '/')
+        if (!normalized.startsWith('/')) normalized = `/${normalized}`
+        const encoded = encodeURI(normalized).replace(/#/g, '%23').replace(/\?/g, '%3F')
+        setSrc(`file://${encoded}?t=${Date.now()}`)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [noteId, filePath, fileName])
 
   const handleSaveAs = async () => {
     await window.inkslateApi.fileNote.saveAs(noteId)
