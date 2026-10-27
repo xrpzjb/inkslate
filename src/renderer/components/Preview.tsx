@@ -5,6 +5,10 @@ import { useAppStore, looksLikeCiphertext } from '../store/app'
 import { FileText, Maximize2, Loader2, ExternalLink, Copy, Check, Lock } from 'lucide-react'
 import { attachHeadingIds } from '../utils/headings'
 import { md } from '../utils/markdown'
+import { copyText } from '../utils/clipboard'
+import { decorateCodeBlocks } from '../utils/codeBlockCopy'
+import { registerSyncPane, notifyPaneScroll, collectPreviewAnchors } from '../utils/scrollSync'
+import { toast } from './Toast'
 import hljs from 'highlight.js'
 import { TableOfContents } from './TableOfContents'
 import { PreviewSearchBar } from './PreviewSearch'
@@ -103,23 +107,47 @@ export function Preview() {
   const codePreviewRef = useRef<HTMLPreElement>(null)
   const htmlIframeRef = useRef<HTMLIFrameElement>(null)
   const [tocOpen, setTocOpen] = useState(false)
+  // 代码笔记预览：「复制代码」后的勾选反馈
+  const [codeCopied, setCodeCopied] = useState(false)
+  const codeCopiedTimerRef = useRef<number | undefined>(undefined)
 
-  // 监听编辑器滚动：把"最靠上标题"的 id 同步到预览位置
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const id = (e as CustomEvent<string | null>).detail
-      const container = containerRef.current
-      if (!container || !id) return
-      const el = container.querySelector(`#${CSS.escape(id)}`) as HTMLElement | null
-      if (!el) return
-      const containerRect = container.getBoundingClientRect()
-      const elRect = el.getBoundingClientRect()
-      const offset = elRect.top - containerRect.top + container.scrollTop - 12
-      container.scrollTo({ top: offset, behavior: 'auto' })
+  const copyCodeNote = async () => {
+    const text = currentNote?.content ?? ''
+    const ok = await copyText(text)
+    if (!ok) {
+      toast.error('复制失败，请手动选中代码复制')
+      return
     }
-    window.addEventListener('inkslate:editor-top-heading', handler)
-    return () => window.removeEventListener('inkslate:editor-top-heading', handler)
-  }, [currentNote?.id])
+    setCodeCopied(true)
+    if (codeCopiedTimerRef.current) window.clearTimeout(codeCopiedTimerRef.current)
+    codeCopiedTimerRef.current = window.setTimeout(() => setCodeCopied(false), 1500)
+  }
+
+  // 卸载时清掉反馈定时器
+  useEffect(() => () => {
+    if (codeCopiedTimerRef.current) window.clearTimeout(codeCopiedTimerRef.current)
+  }, [])
+
+  // 编辑区 ↔ 预览区 双向同步滚动：这里把预览滚动容器登记为 "preview" 一侧，
+  // 锚点用标题元素（id 由 attachHeadingIds 注入，与编辑器侧 id 一致）。
+  // 换算法见 utils/scrollSync.ts：按相邻标题之间的段内进度插值，不走整体百分比。
+  useEffect(() => {
+    if (currentNote?.format !== 'markdown') return
+    const container = containerRef.current
+    const body = markdownBodyRef.current
+    if (!container || !body) return
+
+    const unregister = registerSyncPane('preview', {
+      el: container,
+      anchors: () => collectPreviewAnchors(body, container),
+    })
+    const onScroll = () => notifyPaneScroll('preview')
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      container.removeEventListener('scroll', onScroll)
+      unregister()
+    }
+  }, [currentNote?.id, currentNote?.format])
 
   // 渲染 mermaid：每次 markdown 内容/主题变化时重跑
   useEffect(() => {
@@ -215,6 +243,15 @@ export function Preview() {
     return ''
   }, [currentNote?.content, currentNote?.format])
 
+  // 代码块右上角「复制」按钮：预览 HTML 经过 DOMPurify 清洗，按钮无法写在
+  // markdown 产物里，所以每次内容变化后给每个 <pre> 补一个按钮。
+  useEffect(() => {
+    if (currentNote?.format !== 'markdown') return
+    const root = markdownBodyRef.current
+    if (!root) return
+    return decorateCodeBlocks(root)
+  }, [html, currentNote?.id, currentNote?.format])
+
   if (!currentNote) {
     return (
       <div className="preview">
@@ -268,6 +305,15 @@ export function Preview() {
       <div className="preview code-note-preview">
         <div className="code-preview-header">
           <span className="code-preview-lang">{lang}</span>
+          <button
+            type="button"
+            className={`code-preview-copy${codeCopied ? ' is-copied' : ''}`}
+            onClick={copyCodeNote}
+            title={codeCopied ? '已复制' : '复制代码'}
+            aria-label="复制代码"
+          >
+            {codeCopied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
         </div>
         <PreviewSearchBar
           key={`code-${currentNote.id}`}

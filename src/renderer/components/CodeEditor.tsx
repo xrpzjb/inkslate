@@ -26,7 +26,7 @@ import { format as formatSql } from 'sql-formatter'
 // @ts-ignore - js-beautify 没有官方的 ESM 类型，但 default 导出是 CJS 互操作
 import beautify from 'js-beautify'
 import { useAppStore } from '../store/app'
-import { uniqueSlug } from '../utils/headings'
+import { registerSyncPane, notifyPaneScroll, scanEditorHeadings, type ScrollAnchor } from '../utils/scrollSync'
 
 // ============ 缂栬緫鍣ㄤ富棰橈細涓?appTheme id 涓€涓€瀵瑰簲 ============
 import type { AppThemeId } from '../themes'
@@ -45,6 +45,22 @@ function readMonoFont(): string {
 function readMonoWeight(): string {
   if (typeof document === 'undefined') return '400'
   return getComputedStyle(document.documentElement).getPropertyValue('--editor-font-weight').trim() || '400'
+}
+
+/** 收集 markdown 编辑器里的标题锚点（文档坐标），供与预览区双向同步滚动用。
+ *  标题扫描结果按文档对象缓存（CodeMirror 的 doc 不可变，改一次就换新对象），
+ *  滚动时只重算标题行的坐标，不用每帧重扫全文。 */
+function createEditorAnchorSource(view: EditorView): () => ScrollAnchor[] {
+  let cachedDoc: typeof view.state.doc | null = null
+  let cachedHeadings: Array<{ id: string; line: number }> = []
+  return () => {
+    const doc = view.state.doc
+    if (cachedDoc !== doc) {
+      cachedDoc = doc
+      cachedHeadings = scanEditorHeadings({ lines: doc.lines, lineText: (i) => doc.line(i).text })
+    }
+    return cachedHeadings.map(h => ({ id: h.id, top: view.lineBlockAt(doc.line(h.line).from).top }))
+  }
 }
 
 function makeEditorTheme(opts: {
@@ -657,36 +673,26 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
     viewRef.current = view
 
-    // 同步滚动：编辑器滚动时把"最靠近顶部的标题"id 派发给 Preview
-    // 复用 utils/headings.ts 的 uniqueSlug，id 跟 attachHeadingIds 注入到 DOM 的一致
-    let scrollTimer: number | null = null
+    // 双向同步滚动：编辑器一侧登记滚动容器 + 标题锚点，用户滚动时通知协调器
+    // （预览区滚动也会反过来调用，见 utils/scrollSync.ts）。仅 markdown 需要。
+    const editorAnchors = format === 'markdown' ? createEditorAnchorSource(view) : null
+    const unregisterSync = format === 'markdown'
+      ? registerSyncPane('editor', {
+          el: view.scrollDOM,
+          anchors: editorAnchors!,
+        })
+      : null
+
     const onEditorScroll = () => {
-      if (scrollTimer !== null) window.clearTimeout(scrollTimer)
-      scrollTimer = window.setTimeout(() => {
-        const doc = view.state.doc
-        const scrollTop = view.scrollDOM.scrollTop
-        const usedIds = new Set<string>()
-        let topId: string | null = null
-        for (let i = 1; i <= doc.lines; i++) {
-          const lineText = doc.line(i).text
-          const m = /^(#{1,6})\s+(.+?)\s*$/.exec(lineText)
-          if (!m) continue
-          const id = uniqueSlug(m[2], usedIds)
-          const block = view.lineBlockAt(i)
-          if (block.top <= scrollTop + 30) {
-            topId = id
-          } else {
-            break
-          }
-        }
-        window.dispatchEvent(new CustomEvent('inkslate:editor-top-heading', { detail: topId }))
-      }, 60)
+      if (unregisterSync) notifyPaneScroll('editor')
     }
-    view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
+    if (unregisterSync) view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
 
     return () => {
-      view.scrollDOM.removeEventListener('scroll', onEditorScroll)
-      if (scrollTimer !== null) window.clearTimeout(scrollTimer)
+      if (unregisterSync) {
+        view.scrollDOM.removeEventListener('scroll', onEditorScroll)
+        unregisterSync()
+      }
       view.destroy()
       viewRef.current = null
     }
