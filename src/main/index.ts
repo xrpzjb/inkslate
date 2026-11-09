@@ -117,8 +117,10 @@ function createMainWindow(): void {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html')).catch(() => {})
   }
-  // 始终打开开发者工具（调试用，后续可关闭）
-  mainWindow.webContents.openDevTools({ mode: 'detach' })
+  // 仅开发模式自动打开开发者工具；打包后的正式版绝不自动打开
+  if (isDev) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
+  }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
