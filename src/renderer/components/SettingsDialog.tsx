@@ -114,8 +114,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [aiTesting, setAiTesting] = useState(false)
   // 当前提供商的预设模型列表（自定义提供商没有 → 空数组）
   const aiModelOptions = aiModels[aiProvider] ?? []
-  // 自定义提供商一律走手填输入框；预设提供商上出现列表外的模型名（历史配置/手填）也走输入框
-  const showModelInput = aiProvider === 'custom' || !aiModelOptions.includes(aiModel)
+  /** OpenCode Go 根据模型名决定走 Anthropic 还是 OpenAI 兼容端点 */
+  const opencodeEndpointFor = (model: string) =>
+    anthropicModels.has(model)
+      ? 'https://opencode.ai/zen/go/v1/messages'
+      : 'https://opencode.ai/zen/go/v1/chat/completions'
+  // OpenCode Go 的模型清单在服务端实时更新，因此不做下拉、一律手动输入；
+  // 自定义提供商同样手填；预设提供商上出现列表外的模型名（历史配置/手填）也走输入框
+  const showModelInput =
+    aiProvider === 'custom' ||
+    aiProvider === 'opencode' ||
+    !aiModelOptions.includes(aiModel)
 
   const persist = (patch: Record<string, unknown>) => {
     const cur = useAppStore.getState().settings
@@ -196,18 +205,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       return
     }
     setAiModel(value)
-    if (aiProvider === 'opencode') {
-      const base = 'https://opencode.ai/zen/go/v1'
-      setAiUrl(anthropicModels.has(value) ? `${base}/messages` : `${base}/chat/completions`)
-    }
+    const nextUrl = aiProvider === 'opencode' ? opencodeEndpointFor(value) : aiUrl
+    if (aiProvider === 'opencode') setAiUrl(nextUrl)
     persist({
       ai: {
         provider: aiProvider as any,
-        apiUrl: aiProvider === 'opencode'
-          ? (anthropicModels.has(value)
-              ? 'https://opencode.ai/zen/go/v1/messages'
-              : 'https://opencode.ai/zen/go/v1/chat/completions')
-          : aiUrl,
+        apiUrl: nextUrl,
         model: value,
         apiKey: aiKey,
         proxyUrl: aiProxyUrl,
@@ -301,7 +304,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <div style={{ marginBottom: 8 }}>
               {/* 预设提供商：下拉选模型 + 末尾「手动输入模型名」；自定义提供商没有预设列表 → 纯文本输入 */}
               {showModelInput ? (
-                aiProvider !== 'custom' && (
+                aiProvider !== 'custom' && aiProvider !== 'opencode' && (
                   <select
                     value={CUSTOM_MODEL_OPTION}
                     onChange={(e) => {
@@ -334,7 +337,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               {showModelInput && (
                 <input
                   value={aiModel}
-                  onChange={(e) => setAiModel(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setAiModel(v)
+                    // OpenCode Go 的端点随模型格式（Anthropic / OpenAI）变化
+                    if (aiProvider === 'opencode') setAiUrl(opencodeEndpointFor(v))
+                  }}
                   onBlur={saveAiConfig}
                   placeholder="模型名，如 gpt-4o-mini / deepseek-chat"
                   autoComplete="off"
@@ -344,7 +352,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
                 {aiProvider === 'custom'
                   ? '自定义提供商：请填写模型名与完整的 OpenAI 兼容地址（如 https://host/v1/chat/completions）'
-                  : '如需其他模型，在模型下拉里选「手动输入模型名」即可自己填'}
+                  : aiProvider === 'opencode'
+                    ? 'OpenCode Go 的模型清单在服务端实时更新，请直接填写模型名（如 deepseek-v4-flash）'
+                    : '如需其他模型，在模型下拉里选「手动输入模型名」即可自己填'}
               </div>
             </div>
             <input

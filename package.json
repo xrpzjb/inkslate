@@ -91,7 +91,8 @@
   },
   "build": {
     "appId": "com.inkslate.app",
-    "productName": "Inkslate",
+    "productName": "墨与石板",
+    "executableName": "Inkslate",
     "directories": {
       "output": "release"
     },
@@ -118,7 +119,10 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Inkslate Setup ${version}.${ext}",
+      "shortcutName": "墨与石板",
+      "uninstallDisplayName": "墨与石板 ${version}"
     }
   }
 }

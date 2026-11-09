@@ -1,6 +1,7 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { IPC_CHANNELS, Notebook, Note, AppSettings, AssetUploadResult, PdfPageSize, getPdfPageSizeInfo, getPdfContentDimensions } from '../shared/types'
 import { dbApi, getFilesDir, slugify, getUniqueFileName } from './db'
 import { OssManager } from './oss/manager'
@@ -16,6 +17,9 @@ let ProxyAgent: any = undefined
 try {
   ;({ ProxyAgent } = require('undici'))
 } catch {}
+
+// OpenCode Go 要求客户端提供稳定的会话 ID 以优化路由与提示词缓存
+const OPENCODE_SESSION_ID = randomUUID()
 
 export function setupIpcHandlers(): void {
   const gitMgr = GitManager.getInstance()
@@ -1102,6 +1106,11 @@ ${watermarkHtml}
         try { dispatcher = new ProxyAgent({ uri: ai.proxyUrl }) } catch {}
       }
       const fetchOpts: Record<string, any> = { dispatcher }
+      // OpenCode Go 额外要求自定义 User-Agent 与稳定会话头
+      const isOpencode = ai.apiUrl.includes('opencode.ai')
+      const opencodeHeaders: Record<string, string> = isOpencode
+        ? { 'User-Agent': 'Inkslate/1.0', 'x-opencode-session': OPENCODE_SESSION_ID }
+        : {}
 
       for (let round = 0; round < 100; round++) {
         const ac = new AbortController()
@@ -1118,7 +1127,8 @@ ${watermarkHtml}
             headers: {
               'Content-Type': 'application/json',
               'anthropic-version': '2023-06-01',
-              'x-api-key': ai.apiKey
+              'x-api-key': ai.apiKey,
+              ...opencodeHeaders
             },
             body: JSON.stringify({
               model: ai.model || 'deepseek-v4-flash',
@@ -1138,7 +1148,8 @@ ${watermarkHtml}
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${ai.apiKey}`
+              'Authorization': `Bearer ${ai.apiKey}`,
+              ...opencodeHeaders
             },
             body: JSON.stringify({
               model: ai.model || 'deepseek-v4-flash',
