@@ -27,8 +27,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 // 库位置：默认 node_modules/x-data-spreadsheet；
-// 可用 INKSLATE_XSPREADSHEET_DIR 指向别处（scripts/check-spreadsheet-theme.js
-// 用它在一份"未打过补丁"的拷贝上验证首次安装路径）。
+// 可用 INKSLATE_XSPREADSHEET_DIR 指向别处（便于在一份未打过补丁的拷贝上验证首次安装路径）。
 const LIB = process.env.INKSLATE_XSPREADSHEET_DIR
   ? path.resolve(process.env.INKSLATE_XSPREADSHEET_DIR)
   : path.join(__dirname, '..', 'node_modules', 'x-data-spreadsheet')
@@ -305,8 +304,7 @@ if (!ok) {
   // 不该把 npm install 整个卡住（沿用原有安全策略：宁可不打补丁，也不写坏 bundle）。
   console.warn(
     '[patch-xspreadsheet] ⚠️ 补丁未完全生效（多半是 x-data-spreadsheet 升级后源码变了）：\n' +
-    '  表格画布的底色/网格/表头会退回库自带的浅色，暗色主题下观感会不一致。\n' +
-    '  排查：node scripts/check-spreadsheet-theme.js'
+    '  表格画布的底色/网格/表头会退回库自带的浅色，暗色主题下观感会不一致。'
   )
 } else {
   console.log('[patch-xspreadsheet] canvas colors + text contrast now follow the app theme (v2), strict text wrap (v3)')
