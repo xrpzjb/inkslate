@@ -2,7 +2,7 @@
 
 > 一款支持 HTML 显示的 Markdown 桌面笔记应用
 
-![Inkslate](./resources/icon.png)
+<img src="./resources/icon.png" alt="Inkslate" width="96" />
 
 ## 简介
 
