@@ -1,6 +1,6 @@
 {
   "name": "inkslate",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "墨与石板（Inkslate）— 一款支持 HTML 显示的 Markdown 桌面笔记应用",
   "main": "dist/main/index.js",
   "author": "heimin",

@@ -45,6 +45,8 @@ nbdist/
 .mimocode
 .workbuddy
 .commandcode
+.openidea
+.claude
 .tmp-git-diag
 node_modules/*
 

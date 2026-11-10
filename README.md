@@ -26,16 +26,6 @@
 
 **墨与石板**，意思是"把思想刻在可重写的石头上"——笔记的本质不是写完就定型的文章，而是持续被打磨的思考。
 
-## 截图
-
-| 默认主题 | 暗夜 |
-|---|---|
-| ![light](docs/screenshot-light.png) | ![dark](docs/screenshot-dark.png) |
-
-| 赛博朋克 | 沙丘 |
-|---|---|
-| ![cyberpunk](docs/screenshot-cyberpunk.png) | ![dune](docs/screenshot-dune.png) |
-
 ## 技术栈
 
 - **运行时**：Electron 33
