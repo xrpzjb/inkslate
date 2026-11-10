@@ -42,7 +42,7 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
 
           <div className="about-note">
             <Heart size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4, color: 'var(--accent-color)' }} />
-            本项目全程使用 <strong>minimax m3</strong> 开发
+            如果喜欢，欢迎到 GitHub 点个 Star
           </div>
         </div>
         <div className="shortcuts-footer">

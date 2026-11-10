@@ -48,7 +48,7 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <div className="shortcuts-footer">
-          作者：heimin · 本项目全程使用 minimax m3 开发
+          作者：heimin
         </div>
       </div>
       <style>{`
